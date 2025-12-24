@@ -46,7 +46,7 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
         spatial_dims=model_cfg.spatial_dims,
         in_channels=model_cfg.in_channels,
         out_channels=model_cfg.out_channels,
-        num_channels=channels,
+        channels=channels,
         attention_levels=attention_levels,
         num_res_blocks=model_cfg.num_res_blocks,
         num_head_channels=model_cfg.num_head_channels,

@@ -90,12 +90,15 @@ def process_subject(
     brain_threshold = slice_sampling.brain_threshold
     brain_min_fraction = slice_sampling.brain_min_fraction
     filter_empty = slice_sampling.filter_empty_brain
+    z_range = slice_sampling.z_range  # [min_z, max_z]
 
     slices_metadata = []
     subject_dir = output_dir / "slices"
     subject_dir.mkdir(parents=True, exist_ok=True)
 
-    for z_idx in range(n_slices):
+    # Use z_range to filter slices
+    min_z, max_z = z_range
+    for z_idx in range(min_z, min(max_z + 1, n_slices)):
         # Extract slice
         image_slice = extract_axial_slice(image_vol, z_idx)
         mask_slice = extract_axial_slice(mask_vol, z_idx)

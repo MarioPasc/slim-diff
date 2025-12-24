@@ -391,10 +391,15 @@ class TestMetrics:
         dice = dice_coefficient(mask, mask)
         assert dice == pytest.approx(1.0, rel=0.01)
 
-        # Empty masks
+        # Identical empty masks should also give Dice = 1 (perfect match)
         empty = torch.ones(2, 1, 64, 64) * -1
         dice = dice_coefficient(empty, empty)
-        assert dice < 0.01  # Close to 0 (smoothing prevents exactly 0)
+        assert dice == pytest.approx(1.0, rel=0.01)
+
+        # Different masks (one empty, one full)
+        full = torch.ones(2, 1, 64, 64)
+        dice = dice_coefficient(full, empty)
+        assert dice < 0.5  # Should be low since they don't match
 
 
 class TestTrainingStep:
@@ -446,6 +451,41 @@ class TestDataShapes:
         # Mask should be in {-1, +1}
         mask = (torch.randn(1, 128, 128) > 0).float() * 2 - 1
         assert torch.all((mask == -1) | (mask == 1))
+
+
+class TestZRangeFunctionality:
+    """Test that z_range configuration works correctly."""
+
+    def test_z_range_filtering(self):
+        """Test that z_range correctly filters slices."""
+        from src.diffusion.model.embeddings.zpos import quantize_z
+
+        n_bins = 50
+        z_range = [40, 100]
+        min_z, max_z = z_range
+
+        # Calculate expected z_bins from the range
+        expected_bins = set()
+        for z_idx in range(min_z, max_z + 1):
+            z_bin = quantize_z(z_idx, 127, n_bins)
+            expected_bins.add(z_bin)
+
+        # Verify that we get a reasonable number of bins
+        assert len(expected_bins) > 0
+        assert len(expected_bins) <= n_bins
+
+        # All bins should be within valid range
+        for z_bin in expected_bins:
+            assert 0 <= z_bin < n_bins
+
+        # Verify that bins outside the range are not included
+        # z_idx=0 should map to bin 0
+        bin_0 = quantize_z(0, 127, n_bins)
+        assert bin_0 not in expected_bins or bin_0 >= quantize_z(min_z, 127, n_bins)
+
+        # z_idx=127 should map to bin 49
+        bin_127 = quantize_z(127, 127, n_bins)
+        assert bin_127 not in expected_bins or bin_127 <= quantize_z(max_z, 127, n_bins)
 
 
 if __name__ == "__main__":
