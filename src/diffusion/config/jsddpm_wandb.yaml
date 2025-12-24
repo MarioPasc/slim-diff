@@ -1,0 +1,39 @@
+# JS-DDPM Configuration with W&B Logging (For SLURM)
+# Copy from jsddpm.yaml and modify logging section
+
+# Include all settings from jsddpm.yaml...
+# (You can use OmegaConf's composition to inherit from jsddpm.yaml)
+
+# =============================================================================
+# Logging Configuration - W&B for SLURM
+# =============================================================================
+logging:
+  log_every_n_steps: 50
+
+  # Logger type - USE WANDB FOR SLURM
+  logger:
+    type: "wandb"  # Better for remote/cluster computing
+    wandb:
+      project: "jsddpm-epilepsy"
+      entity: null  # Set to your wandb username/team
+      # Optional settings:
+      # name: null  # Run name (auto-generated if null)
+      # tags: ["epilepsy", "diffusion", "jsddpm"]
+      # notes: "Training JS-DDPM on cluster"
+      # offline: false  # Set true to sync later
+
+  # Checkpointing
+  checkpointing:
+    save_top_k: 3
+    monitor: "val/loss"
+    mode: "min"
+    save_last: true
+    every_n_epochs: 1
+    filename: "jsddpm-{epoch:04d}-{val_loss:.4f}"
+
+# W&B Benefits:
+# - View metrics in real-time from anywhere
+# - Automatic cloud sync
+# - No port forwarding needed
+# - Works perfectly with SLURM
+# - Free for academics

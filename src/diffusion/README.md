@@ -16,6 +16,13 @@ pip install -r requirements.txt
 pip install einops
 ```
 
+**For SLURM clusters**: Consider installing Weights & Biases for better monitoring:
+```bash
+pip install wandb
+wandb login  # One-time setup
+```
+See `LOGGING_GUIDE.md` and `QUICK_START_SLURM.md` for details.
+
 ### 2. Build Slice Cache
 
 Convert 3D volumes into 2D slices and cache them:
