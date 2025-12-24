@@ -42,7 +42,7 @@ data:
       clip: true
 
   slice_sampling:
-    z_range: [0, 127]  # Valid z indices after resampling [min_z, max_z] (inclusive)
+    z_range: [24, 93]  # Valid z indices after resampling [min_z, max_z] (inclusive)
                        # IMPORTANT: Only slices in this range will be cached and used for training/generation
                        # Example: [40, 100] will only use slices 40-100, ignoring top/bottom slices
     filter_empty_brain: true
