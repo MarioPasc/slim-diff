@@ -197,12 +197,17 @@ loss:
 logging:
   log_every_n_steps: 50
 
-  # Logger type
+  # Logger type - USE WANDB FOR SLURM
   logger:
-    type: "tensorboard"  # Options: "tensorboard", "wandb"
+    type: "wandb"  # Better for remote/cluster computing
     wandb:
       project: "jsddpm-epilepsy"
-      entity: null  # Your wandb username/team
+      entity: null  # Set to your wandb username/team
+      # Optional settings:
+      name: jsddpm_epilepsy_flair  # Run name (auto-generated if null)
+      tags: ["epilepsy", "diffusion", "jsddpm"]
+      notes: "Training JS-DDPM on cluster"
+      offline: true  # Set true to sync later (REQUIRED for cluster nodes without internet)
 
   # Checkpointing
   checkpointing:

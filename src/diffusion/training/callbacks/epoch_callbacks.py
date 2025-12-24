@@ -291,11 +291,23 @@ class VisualizationCallback(Callback):
             # Convert to format suitable for logging
             # Grid is in [0, 1], shape (H, W, 3)
             grid_tensor = torch.from_numpy(grid).permute(2, 0, 1)  # (3, H, W)
-            trainer.logger.experiment.add_image(
-                "samples/grid",
-                grid_tensor,
-                global_step=current_epoch,
-            )
+
+            # Handle different logger types
+            logger_type = type(trainer.logger).__name__
+            if logger_type == "WandbLogger":
+                # WandB expects images in HWC format as numpy arrays
+                import wandb
+                trainer.logger.experiment.log({
+                    "samples/grid": wandb.Image(grid, caption=f"Epoch {current_epoch}"),
+                    "epoch": current_epoch,
+                })
+            else:
+                # TensorBoard expects CHW format as tensors
+                trainer.logger.experiment.add_image(
+                    "samples/grid",
+                    grid_tensor,
+                    global_step=current_epoch,
+                )
 
 
 class EMACallback(Callback):

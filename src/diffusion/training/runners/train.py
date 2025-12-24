@@ -16,7 +16,6 @@ from pytorch_lightning.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
-    RichProgressBar,
 )
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 
@@ -57,8 +56,8 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
     # Learning rate monitor
     callbacks.append(LearningRateMonitor(logging_interval="step"))
 
-    # Progress bar
-    callbacks.append(RichProgressBar())
+    # Progress bar - DISABLED for supercomputer (tqdm is misleading in cluster environments)
+    # callbacks.append(RichProgressBar())
 
     # Visualization callback
     if cfg.visualization.enabled:
@@ -104,6 +103,9 @@ def build_logger(cfg: DictConfig) -> pl.loggers.Logger:
             entity=log_cfg.wandb.entity,
             name=cfg.experiment.name,
             save_dir=output_dir / "logs",
+            offline=log_cfg.wandb.get("offline", False),
+            tags=log_cfg.wandb.get("tags", None),
+            notes=log_cfg.wandb.get("notes", None),
         )
     else:
         raise ValueError(f"Unknown logger type: {log_cfg.type}")
@@ -155,7 +157,7 @@ def train(cfg: DictConfig) -> None:
         log_every_n_steps=cfg.logging.log_every_n_steps,
         callbacks=callbacks,
         logger=training_logger,
-        enable_progress_bar=True,
+        enable_progress_bar=False,  # Disabled for supercomputer (tqdm misleading in cluster)
         accelerator="auto",
         devices="auto",
         strategy="auto",

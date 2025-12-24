@@ -217,15 +217,18 @@ class JSDDPMLightningModule(pl.LightningModule):
         loss, loss_details = self.criterion(eps_pred, noise, mask)
 
         # Log metrics
-        self.log("train/loss", loss, prog_bar=True, sync_dist=True)
-        self.log("train/loss_image", loss_details["loss_image"], sync_dist=True)
-        self.log("train/loss_mask", loss_details["loss_mask"], sync_dist=True)
+        self.log("train/loss", loss, sync_dist=True, batch_size=B)
+        self.log("train/loss_image", loss_details["loss_image"], sync_dist=True, batch_size=B)
+        self.log("train/loss_mask", loss_details["loss_mask"], sync_dist=True, batch_size=B)
 
         # Log uncertainty weights if available
         log_vars = self.criterion.get_log_vars()
         if log_vars is not None:
-            self.log("train/log_var_image", log_vars[0], sync_dist=True)
-            self.log("train/log_var_mask", log_vars[1], sync_dist=True)
+            self.log("train/log_var_image", log_vars[0], sync_dist=True, batch_size=B)
+            self.log("train/log_var_mask", log_vars[1], sync_dist=True, batch_size=B)
+            # Also log the actual weights (exp of log_vars)
+            self.log("train/weight_image", torch.exp(-log_vars[0]), sync_dist=True, batch_size=B)
+            self.log("train/weight_mask", torch.exp(-log_vars[1]), sync_dist=True, batch_size=B)
 
         return loss
 
@@ -276,14 +279,21 @@ class JSDDPMLightningModule(pl.LightningModule):
         )
 
         # Log metrics
-        self.log("val/loss", loss, prog_bar=True, sync_dist=True)
-        self.log("val/loss_image", loss_details["loss_image"], sync_dist=True)
-        self.log("val/loss_mask", loss_details["loss_mask"], sync_dist=True)
-        self.log("val/psnr", metrics["psnr"], sync_dist=True)
-        self.log("val/ssim", metrics["ssim"], sync_dist=True)
-
+        self.log("val/loss", loss, sync_dist=True, batch_size=B)
+        self.log("val/loss_image", loss_details["loss_image"], sync_dist=True, batch_size=B)
+        self.log("val/loss_mask", loss_details["loss_mask"], sync_dist=True, batch_size=B)
+        self.log("val/psnr", metrics["psnr"], sync_dist=True, batch_size=B)
+        self.log("val/ssim", metrics["ssim"], sync_dist=True, batch_size=B)
         if "dice" in metrics:
-            self.log("val/dice", metrics["dice"], sync_dist=True)
+            self.log("val/dice", metrics["dice"], sync_dist=True, batch_size=B)
+
+        # Log uncertainty weights if available
+        log_vars = self.criterion.get_log_vars()
+        if log_vars is not None:
+            self.log("val/log_var_image", log_vars[0], sync_dist=True, batch_size=B)
+            self.log("val/log_var_mask", log_vars[1], sync_dist=True, batch_size=B)
+            self.log("val/weight_image", torch.exp(-log_vars[0]), sync_dist=True, batch_size=B)
+            self.log("val/weight_mask", torch.exp(-log_vars[1]), sync_dist=True, batch_size=B)
 
         return {"loss": loss, **metrics}
 
@@ -346,7 +356,22 @@ class JSDDPMLightningModule(pl.LightningModule):
         opt = self.optimizers()
         if isinstance(opt, torch.optim.Optimizer):
             lr = opt.param_groups[0]["lr"]
-            self.log("train/lr", lr, sync_dist=True)
+            self.log("train/lr", lr, sync_dist=True, batch_size=self.cfg.training.batch_size)
+
+    def on_validation_epoch_end(self) -> None:
+        """Called at the end of validation epoch.
+
+        Logs epoch summary for better tracking in cluster environments.
+        """
+        # Get current epoch
+        epoch = self.current_epoch
+
+        # Log epoch number for easier tracking
+        logger.info(f"Completed epoch {epoch}")
+
+        # The metrics are already logged via self.log() in validation_step
+        # Lightning will automatically aggregate them across batches
+        # This hook is just for additional logging/tracking if needed
 
     def get_model(self) -> nn.Module:
         """Get the underlying diffusion model.
