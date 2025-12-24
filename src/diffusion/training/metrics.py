@@ -1,6 +1,7 @@
 """Image quality metrics for JS-DDPM.
 
-Provides PSNR and SSIM metrics for evaluating generated images.
+Provides PSNR, SSIM, Dice, and Hausdorff Distance metrics
+for evaluating generated images and segmentation masks.
 """
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ from __future__ import annotations
 import logging
 import math
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -269,6 +271,80 @@ def dice_per_sample(
     return dice
 
 
+def hausdorff_distance_95(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    threshold: float = 0.0,
+    spacing: tuple[float, float] = (1.0, 1.0),
+) -> torch.Tensor:
+    """Compute 95th percentile Hausdorff Distance.
+
+    HD95 measures the 95th percentile of surface distances between prediction
+    and ground truth, providing a robust measure of boundary accuracy.
+
+    Args:
+        pred: Predicted masks in {-1, +1}, shape (B, 1, H, W).
+        target: Target masks in {-1, +1}, shape (B, 1, H, W).
+        threshold: Threshold for binarization (default 0.0 for {-1,+1} space).
+        spacing: Pixel spacing in (row, col) for real-world distances.
+
+    Returns:
+        HD95 distance (scalar tensor). Returns inf if masks are empty.
+    """
+    from scipy.ndimage import binary_erosion, distance_transform_edt
+
+    # Binarize
+    pred_binary = (pred > threshold).cpu().numpy().astype(bool)
+    target_binary = (target > threshold).cpu().numpy().astype(bool)
+
+    B = pred.shape[0]
+    hd95_values = []
+
+    for i in range(B):
+        pred_i = pred_binary[i, 0]
+        target_i = target_binary[i, 0]
+
+        # Skip if either mask is empty (no lesion to compare)
+        if not pred_i.any() or not target_i.any():
+            # If both empty, perfect match (distance = 0)
+            if not pred_i.any() and not target_i.any():
+                hd95_values.append(0.0)
+            else:
+                # One empty, one not: infinite distance
+                hd95_values.append(float('inf'))
+            continue
+
+        # Compute surface points (edges) via morphological erosion
+        pred_surface = pred_i ^ binary_erosion(pred_i)
+        target_surface = target_i ^ binary_erosion(target_i)
+
+        # Handle edge case: very small masks might erode to nothing
+        if not pred_surface.any() or not target_surface.any():
+            hd95_values.append(0.0)
+            continue
+
+        # Distance transforms from each surface
+        pred_dist = distance_transform_edt(~pred_surface, sampling=spacing)
+        target_dist = distance_transform_edt(~target_surface, sampling=spacing)
+
+        # Distances from pred surface to target
+        pred_to_target = pred_dist[pred_surface]
+        # Distances from target surface to pred
+        target_to_pred = target_dist[target_surface]
+
+        # Combine and compute 95th percentile
+        all_distances = np.concatenate([pred_to_target, target_to_pred])
+        hd95 = np.percentile(all_distances, 95)
+        hd95_values.append(hd95)
+
+    # Average across batch
+    mean_hd95 = np.mean([v for v in hd95_values if v != float('inf')])
+    if np.isnan(mean_hd95):
+        mean_hd95 = float('inf')
+
+    return torch.tensor(mean_hd95, device=pred.device)
+
+
 class MetricsCalculator:
     """Utility class for computing multiple metrics."""
 
@@ -317,5 +393,6 @@ class MetricsCalculator:
 
         if pred_mask is not None and target_mask is not None:
             metrics["dice"] = dice_coefficient(pred_mask, target_mask)
+            metrics["hd95"] = hausdorff_distance_95(pred_mask, target_mask)
 
         return metrics

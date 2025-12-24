@@ -18,6 +18,7 @@ from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 
 from src.diffusion.model.components.conditioning import get_visualization_tokens
+from src.diffusion.model.embeddings.zpos import quantize_z
 from src.diffusion.model.factory import DiffusionSampler
 
 logger = logging.getLogger(__name__)
@@ -202,11 +203,105 @@ class VisualizationCallback(Callback):
         self.output_dir = Path(cfg.experiment.output_dir) / "viz"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.z_bins = list(self.vis_cfg.z_bins_to_show)
+        # Compute valid z_bins from z_range to prevent generating
+        # slices outside the training distribution
+        self.z_bins = self._compute_valid_z_bins()
         self.every_n_epochs = self.vis_cfg.every_n_epochs
 
         self._sampler: DiffusionSampler | None = None
         logger.info(f"VisualizationCallback initialized, z_bins={self.z_bins}")
+
+    def _compute_valid_z_bins(self) -> list[int]:
+        """Compute valid z_bins from z_range to match training distribution.
+
+        This ensures visualization only requests slices the model has been
+        trained on, preventing extrapolation to unseen z-positions.
+
+        Returns:
+            List of valid z_bin indices for visualization.
+        """
+        # Get configuration
+        z_range = self.cfg.data.slice_sampling.z_range
+        min_z, max_z = z_range
+        n_bins = self.cfg.conditioning.z_bins
+        max_z_volume = 127  # Standard for 128-slice volumes
+
+        # Compute set of all valid z_bins from training data
+        valid_bins = set()
+        for z_idx in range(min_z, max_z + 1):
+            z_bin = quantize_z(z_idx, max_z_volume, n_bins)
+            valid_bins.add(z_bin)
+
+        valid_bins_sorted = sorted(list(valid_bins))
+        logger.info(
+            f"Computed {len(valid_bins_sorted)} valid z_bins from "
+            f"z_range=[{min_z}, {max_z}]: {valid_bins_sorted}"
+        )
+
+        # Get requested z_bins from config
+        requested_bins = self.vis_cfg.get("z_bins_to_show", None)
+
+        # If no bins specified or empty, auto-select evenly-spaced bins
+        if requested_bins is None or len(requested_bins) == 0:
+            n_to_show = 5  # Default to 5 bins
+            selected_bins = self._select_evenly_spaced_bins(
+                valid_bins_sorted, n_to_show
+            )
+            logger.info(
+                f"No z_bins_to_show specified. Auto-selected {n_to_show} "
+                f"evenly-spaced bins: {selected_bins}"
+            )
+            return selected_bins
+
+        # Filter requested bins to only include valid ones
+        filtered_bins = [zb for zb in requested_bins if zb in valid_bins]
+
+        # Warn if some bins were filtered out
+        if len(filtered_bins) != len(requested_bins):
+            invalid_bins = [zb for zb in requested_bins if zb not in valid_bins]
+            logger.warning(
+                f"Some z_bins_to_show are outside training range and will be skipped. "
+                f"Requested: {requested_bins}, Invalid: {invalid_bins}, "
+                f"Using: {filtered_bins}. "
+                f"Training data covers z_range=[{min_z}, {max_z}] → "
+                f"z_bins={valid_bins_sorted}"
+            )
+
+        # If all bins were filtered out, auto-select
+        if len(filtered_bins) == 0:
+            n_to_show = min(5, len(valid_bins_sorted))
+            filtered_bins = self._select_evenly_spaced_bins(
+                valid_bins_sorted, n_to_show
+            )
+            logger.warning(
+                f"All requested z_bins_to_show were invalid! "
+                f"Auto-selected {n_to_show} bins from valid range: {filtered_bins}"
+            )
+
+        return filtered_bins
+
+    def _select_evenly_spaced_bins(
+        self, valid_bins: list[int], n_to_show: int
+    ) -> list[int]:
+        """Select evenly-spaced bins from valid range.
+
+        Args:
+            valid_bins: Sorted list of valid z_bins.
+            n_to_show: Number of bins to select.
+
+        Returns:
+            List of evenly-spaced z_bin indices.
+        """
+        if len(valid_bins) == 0:
+            logger.error("No valid z_bins available! Using z_bin=0 as fallback.")
+            return [0]
+
+        if n_to_show >= len(valid_bins):
+            return valid_bins
+
+        # Select evenly-spaced indices
+        indices = [int(i * (len(valid_bins) - 1) / (n_to_show - 1)) for i in range(n_to_show)]
+        return [valid_bins[i] for i in indices]
 
     def _get_sampler(
         self,

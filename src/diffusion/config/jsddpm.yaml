@@ -125,7 +125,7 @@ scheduler:
 # =============================================================================
 sampler:
   type: "DDIM"
-  num_inference_steps: 100
+  num_inference_steps: 200  # Increased from 100 for smoother denoising
   eta: 0.0  # 0.0 = deterministic DDIM, 1.0 = DDPM
 
   # Classifier-free guidance scale
@@ -202,7 +202,7 @@ logging:
     type: "wandb"  # Better for remote/cluster computing
     wandb:
       project: "jsddpm-epilepsy"
-      entity: null  # Set to your wandb username/team
+      entity: "mario-pg02-icai-org"  # Set to your wandb username/team
       # Optional settings:
       name: jsddpm_epilepsy_flair  # Run name (auto-generated if null)
       tags: ["epilepsy", "diffusion", "jsddpm"]
@@ -225,8 +225,12 @@ visualization:
   enabled: true
   every_n_epochs: 1
 
-  # Fixed z-bins for consistent visualization across epochs
-  z_bins_to_show: [0, 12, 25, 37, 49]  # 5 z-levels across the volume
+  # Z-bins for visualization (automatically validated against z_range)
+  # - Bins outside the training range (z_range) will be filtered out with a warning
+  # - If all bins are invalid or null/empty, will auto-select 5 evenly-spaced bins
+  # - Set to null for automatic selection based on your z_range
+  z_bins_to_show: null  # Auto-select bins matching z_range
+  # z_bins_to_show: [0, 12, 25, 37, 49]  # Manual selection (full volume)
 
   # Number of samples per condition (for statistics; visualization uses 1)
   n_samples_per_condition: 1

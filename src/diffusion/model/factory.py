@@ -6,12 +6,11 @@ Builds the DiffusionModelUNet, scheduler, and inferer from configuration.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import torch
-import torch.nn as nn
-from monai.networks.nets import DiffusionModelUNet
-from monai.networks.schedulers import DDIMScheduler, DDPMScheduler
+from monai.networks.nets.diffusion_model_unet import DiffusionModelUNet
+from monai.networks.schedulers.ddim import DDIMScheduler
+from monai.networks.schedulers.ddpm import DDPMScheduler
 from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)

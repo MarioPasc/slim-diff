@@ -286,6 +286,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         self.log("val/ssim", metrics["ssim"], sync_dist=True, batch_size=B)
         if "dice" in metrics:
             self.log("val/dice", metrics["dice"], sync_dist=True, batch_size=B)
+        if "hd95" in metrics:
+            self.log("val/hd95", metrics["hd95"], sync_dist=True, batch_size=B)
 
         # Log uncertainty weights if available
         log_vars = self.criterion.get_log_vars()
