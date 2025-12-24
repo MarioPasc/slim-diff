@@ -186,6 +186,101 @@ ssh -L 6006:localhost:6006 user@cluster
 
 ---
 
+## Generating Synthetic Samples
+
+After training, use the generation script to create synthetic FLAIR/lesion samples:
+
+### Quick Start
+
+```bash
+# Generate samples from a trained checkpoint
+sbatch slurm/generate_jsddpm.sh /path/to/checkpoint.ckpt
+
+# Example:
+sbatch slurm/generate_jsddpm.sh \
+  /mnt/home/users/tic_163_uma/mpascual/fscratch/results/jsddpm/checkpoints/jsddpm-epoch=0050-val_loss=0.1234.ckpt
+```
+
+### Customizing Generation Parameters
+
+Edit `slurm/generate_jsddpm.sh` before submitting:
+
+```bash
+# In generate_jsddpm.sh, modify these variables:
+Z_BINS="0,12,25,37,49"       # Specific z-positions (or empty for all)
+CLASSES="0,1"                # 0=control, 1=lesion (or empty for both)
+N_PER_CONDITION="100"        # Samples per (z_bin, class) pair
+SEED="42"                    # Random seed for reproducibility
+```
+
+### Output Structure
+
+```
+/results/jsddpm/
+├── checkpoints/             # Training checkpoints
+│   └── jsddpm-epoch=0050-val_loss=0.1234.ckpt
+└── generated_samples/       # Generated output (created by generate script)
+    ├── samples/             # Individual .npz files
+    │   ├── z00_c0_s0000.npz
+    │   ├── z00_c0_s0001.npz
+    │   └── ...
+    ├── generated_samples.csv      # Index of all samples
+    └── generation_config.yaml     # Generation parameters used
+```
+
+### Generation Performance
+
+- **Time estimate**: ~0.5-1 second per sample on GPU
+- **Memory**: ~4-8 GB GPU memory
+- **Example**: 1000 samples = ~10-15 minutes
+
+---
+
+## Training Features
+
+### Automatic Cache Management
+
+The training script now intelligently handles dataset caching:
+
+- **First run**: Automatically creates cache from raw data
+- **Subsequent runs**: Detects existing cache and skips caching step
+- **Manual rebuild**: Delete `${DATA_SRC}/slice_cache` to force rebuild
+
+```bash
+# To rebuild cache:
+rm -rf /mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy/slice_cache
+sbatch slurm/train_jsddpm.sh
+```
+
+### WandB Offline Mode for Clusters
+
+The config is now set to use offline mode by default for cluster nodes without internet:
+
+- Logs saved locally: `/results/jsddpm/logs/wandb/offline-run-*`
+- Sync later from login node with internet:
+  ```bash
+  wandb sync /path/to/offline-run-*
+  ```
+
+### Disabled Progress Bars
+
+TQDM progress bars are disabled for SLURM (they're misleading in log files). Instead, all metrics are logged:
+
+**Training metrics logged:**
+- `train/loss`, `train/loss_image`, `train/loss_mask`
+- `train/psnr`, `train/ssim`
+- `train/log_var_image`, `train/log_var_mask` (uncertainty weights)
+- `train/weight_image`, `train/weight_mask` (actual weights = exp(-log_var))
+- `train/lr` (learning rate)
+
+**Validation metrics logged:**
+- `val/loss`, `val/loss_image`, `val/loss_mask`
+- `val/psnr`, `val/ssim`, `val/dice`
+- `val/log_var_image`, `val/log_var_mask`
+- `val/weight_image`, `val/weight_mask`
+
+---
+
 ## See Also
 
 - `LOGGING_GUIDE.md` - Detailed logging setup guide

@@ -94,11 +94,13 @@ echo "Copying config file to: ${MODIFIED_CONFIG}"
 cp "${CONFIG_FILE}" "${MODIFIED_CONFIG}"
 
 # 3. Modify the configuration file
-# Change data: root_dir: to DATA_SRC
-# Change logging: save_dir: to RESULTS_DST
+# Change data.root_dir to DATA_SRC
+# Change data.cache_dir to use DATA_SRC
+# Change experiment.output_dir to RESULTS_DST
 # We use | as delimiter for sed to handle slashes in paths safely
 echo "Modifying configuration file..."
 sed -i "s|  root_dir: .*|  root_dir: \"${DATA_SRC}\"|" "${MODIFIED_CONFIG}"
+sed -i "s|  cache_dir: .*|  cache_dir: \"${DATA_SRC}/slice_cache\"|" "${MODIFIED_CONFIG}"
 sed -i "s|  output_dir: .*|  output_dir: \"${RESULTS_DST}\"|" "${MODIFIED_CONFIG}"
 
 # 4. Run the training script
@@ -106,7 +108,21 @@ sed -i "s|  output_dir: .*|  output_dir: \"${RESULTS_DST}\"|" "${MODIFIED_CONFIG
 cd "${REPO_SRC}"
 echo "Working directory: $(pwd)"
 
-jsddpm-cache --config "${MODIFIED_CONFIG}"
+# Determine cache directory
+# The cache_dir is typically ${data.root_dir}/slice_cache
+CACHE_DIR="${DATA_SRC}/slice_cache"
+echo "Cache directory: ${CACHE_DIR}"
+
+# Only run caching if cache directory doesn't exist
+if [ ! -d "${CACHE_DIR}" ]; then
+    echo "Cache directory not found. Running caching step..."
+    jsddpm-cache --config "${MODIFIED_CONFIG}"
+    echo "Caching completed."
+else
+    echo "✅ Cache directory exists. Skipping caching step."
+    echo "   Found: ${CACHE_DIR}"
+    echo "   To rebuild cache, delete this directory and re-run."
+fi
 
 echo "Starting training with config: ${MODIFIED_CONFIG}"
 
