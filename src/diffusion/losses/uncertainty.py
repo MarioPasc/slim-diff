@@ -86,9 +86,10 @@ class UncertaintyWeightedLoss(nn.Module):
         details = {}
 
         for i, loss_i in enumerate(losses):
-            # Clamp log_var to prevent unbounded growth and negative total loss
-            # log_var ∈ [-2, 2] → weight ∈ [0.135, 7.39], regularization ∈ [-1, 1]
-            log_var_i = torch.clamp(self.log_vars[i], min=-2.0, max=2.0)
+            # Clamp log_var to prevent unbounded growth
+            # log_var ∈ [-5, 5] → weight ∈ [0.0067, 148.4], regularization ∈ [-2.5, 2.5]
+            # Wider range allows proper learning while preventing numerical instability
+            log_var_i = torch.clamp(self.log_vars[i], min=-5.0, max=5.0)
 
             # Weighted loss: exp(-log_var) * loss + 0.5 * log_var
             precision = torch.exp(-log_var_i)

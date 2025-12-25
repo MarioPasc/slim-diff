@@ -26,6 +26,7 @@ dependencies = [
     "tqdm>=4.65.0",
     "rich>=13.0.0",
     "wandb>=0.15.0",
+    "scipy>=1.10.0",
 ]
 
 [project.optional-dependencies]

@@ -202,7 +202,7 @@ logging:
     type: "wandb"  # Better for remote/cluster computing
     wandb:
       project: "jsddpm-epilepsy"
-      entity: "mario-pg02-icai-org"  # Set to your wandb username/team
+      entity: "mario-pg02-icai"  # Set to your wandb username/team
       # Optional settings:
       name: jsddpm_epilepsy_flair  # Run name (auto-generated if null)
       tags: ["epilepsy", "diffusion", "jsddpm"]

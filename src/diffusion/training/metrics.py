@@ -304,15 +304,10 @@ def hausdorff_distance_95(
         pred_i = pred_binary[i, 0]
         target_i = target_binary[i, 0]
 
-        # Skip if either mask is empty (no lesion to compare)
+        # Skip samples where either mask is empty
+        # Only compute HD95 on samples with actual lesions in both pred and target
         if not pred_i.any() or not target_i.any():
-            # If both empty, perfect match (distance = 0)
-            if not pred_i.any() and not target_i.any():
-                hd95_values.append(0.0)
-            else:
-                # One empty, one not: infinite distance
-                hd95_values.append(float('inf'))
-            continue
+            continue  # Skip empty masks entirely
 
         # Compute surface points (edges) via morphological erosion
         pred_surface = pred_i ^ binary_erosion(pred_i)
@@ -337,11 +332,13 @@ def hausdorff_distance_95(
         hd95 = np.percentile(all_distances, 95)
         hd95_values.append(hd95)
 
-    # Average across batch
-    mean_hd95 = np.mean([v for v in hd95_values if v != float('inf')])
-    if np.isnan(mean_hd95):
-        mean_hd95 = float('inf')
+    # Average across batch (only valid samples with lesions in both)
+    if len(hd95_values) == 0:
+        # No valid samples with lesions in both pred and target
+        # Return NaN to indicate HD95 is not applicable for this batch
+        return torch.tensor(float('nan'), device=pred.device)
 
+    mean_hd95 = np.mean(hd95_values)
     return torch.tensor(mean_hd95, device=pred.device)
 
 
@@ -392,7 +389,8 @@ class MetricsCalculator:
         }
 
         if pred_mask is not None and target_mask is not None:
-            metrics["dice"] = dice_coefficient(pred_mask, target_mask)
+            # Use per-sample averaging for more meaningful metrics
+            metrics["dice"] = dice_per_sample(pred_mask, target_mask).mean()
             metrics["hd95"] = hausdorff_distance_95(pred_mask, target_mask)
 
         return metrics
