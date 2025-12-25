@@ -72,6 +72,44 @@ class JSDDPMLightningModule(pl.LightningModule):
 
         logger.info(f"Initialized JSDDPMLightningModule with CFG={self.use_cfg}")
 
+    def setup(self, stage: str) -> None:
+        """Setup hook called at the beginning of fit/validate/test.
+
+        Logs model architecture and dataset statistics to wandb.
+
+        Args:
+            stage: Current stage ('fit', 'validate', 'test').
+        """
+        if stage == "fit":
+            self._log_model_architecture()
+
+    def _log_model_architecture(self) -> None:
+        """Log model architecture information to wandb."""
+        if not hasattr(self, "logger") or self.logger is None:
+            return
+
+        if not hasattr(self.logger, "experiment"):
+            return
+
+        # Count parameters
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+
+        # Log to wandb summary
+        self.logger.experiment.summary["model/total_parameters"] = total_params
+        self.logger.experiment.summary["model/trainable_parameters"] = trainable_params
+
+        # Log architecture details
+        logger.info(f"Model architecture: {self.cfg.model.type}")
+        logger.info(f"Total parameters: {total_params:,}")
+        logger.info(f"Trainable parameters: {trainable_params:,}")
+
+        # Log to wandb config (in case it wasn't already logged)
+        self.logger.experiment.config.update({
+            "model/total_parameters": total_params,
+            "model/trainable_parameters": trainable_params,
+        }, allow_val_change=True)
+
     def _register_scheduler_buffers(self) -> None:
         """Register scheduler tensors as buffers for device handling."""
         self.register_buffer(
@@ -226,9 +264,18 @@ class JSDDPMLightningModule(pl.LightningModule):
         if log_vars is not None:
             self.log("train/log_var_image", log_vars[0], sync_dist=True, batch_size=B)
             self.log("train/log_var_mask", log_vars[1], sync_dist=True, batch_size=B)
-            # Also log the actual weights (exp of log_vars)
+            # Also log the actual weights (precisions = exp(-log_var))
             self.log("train/weight_image", torch.exp(-log_vars[0]), sync_dist=True, batch_size=B)
             self.log("train/weight_mask", torch.exp(-log_vars[1]), sync_dist=True, batch_size=B)
+            # Log sigmas (more interpretable than log_var: sigma = exp(0.5 * log_var))
+            self.log("train/sigma_image", torch.exp(0.5 * log_vars[0]), sync_dist=True, batch_size=B)
+            self.log("train/sigma_mask", torch.exp(0.5 * log_vars[1]), sync_dist=True, batch_size=B)
+            # Log weighted losses (actual contributions to total loss)
+            if "loss_0" in loss_details and "loss_1" in loss_details:
+                weighted_loss_image = torch.exp(-log_vars[0]) * loss_details["loss_0"] + 0.5 * log_vars[0]
+                weighted_loss_mask = torch.exp(-log_vars[1]) * loss_details["loss_1"] + 0.5 * log_vars[1]
+                self.log("train/weighted_loss_image", weighted_loss_image, sync_dist=True, batch_size=B)
+                self.log("train/weighted_loss_mask", weighted_loss_mask, sync_dist=True, batch_size=B)
 
         return loss
 
@@ -296,6 +343,15 @@ class JSDDPMLightningModule(pl.LightningModule):
             self.log("val/log_var_mask", log_vars[1], sync_dist=True, batch_size=B)
             self.log("val/weight_image", torch.exp(-log_vars[0]), sync_dist=True, batch_size=B)
             self.log("val/weight_mask", torch.exp(-log_vars[1]), sync_dist=True, batch_size=B)
+            # Log sigmas
+            self.log("val/sigma_image", torch.exp(0.5 * log_vars[0]), sync_dist=True, batch_size=B)
+            self.log("val/sigma_mask", torch.exp(0.5 * log_vars[1]), sync_dist=True, batch_size=B)
+            # Log weighted losses
+            if "loss_0" in loss_details and "loss_1" in loss_details:
+                weighted_loss_image = torch.exp(-log_vars[0]) * loss_details["loss_0"] + 0.5 * log_vars[0]
+                weighted_loss_mask = torch.exp(-log_vars[1]) * loss_details["loss_1"] + 0.5 * log_vars[1]
+                self.log("val/weighted_loss_image", weighted_loss_image, sync_dist=True, batch_size=B)
+                self.log("val/weighted_loss_mask", weighted_loss_mask, sync_dist=True, batch_size=B)
 
         return {"loss": loss, **metrics}
 
