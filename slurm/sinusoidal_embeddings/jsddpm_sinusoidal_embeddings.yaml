@@ -63,9 +63,13 @@ conditioning:
   # class=1: lesion present
   # Total classes: 2 * z_bins = 100
 
+  # Z-position encoding options
+  use_sinusoidal: true  # Use sinusoidal position encoding for z-position (default: false)
+  max_z: 128  # Maximum z-index for sinusoidal encoding
+
   # Classifier-free guidance (CFG)
   cfg:
-    enabled: true  # Enable/disable CFG
+    enabled: false  # Enable/disable CFG
     null_token: 100  # Special token for unconditional generation (2*z_bins)
     dropout_prob: 0.1  # Probability of dropping condition during training
 
@@ -125,7 +129,7 @@ scheduler:
 # =============================================================================
 sampler:
   type: "DDIM"
-  num_inference_steps: 200  # Increased from 100 for smoother denoising
+  num_inference_steps: 250  # Increased from 100 for smoother denoising
   eta: 0.0  # 0.0 = deterministic DDIM, 1.0 = DDPM
 
   # Classifier-free guidance scale
@@ -188,7 +192,7 @@ loss:
   # Optional lesion-weighted mask loss
   lesion_weighted_mask:
     enabled: true
-    lesion_weight: 2.0  # Extra weight for lesion pixels
+    lesion_weight: 2.5  # Extra weight for lesion pixels
     background_weight: 1.0
 
 # =============================================================================
