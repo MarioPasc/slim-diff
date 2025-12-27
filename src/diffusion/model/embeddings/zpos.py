@@ -168,3 +168,110 @@ class ZPositionEncoder(nn.Module):
             return self.combine(combined)
 
         return bin_emb
+
+
+class ConditionalEmbeddingWithSinusoidal(nn.Module):
+    """Embedding module that handles both pathology class and z-position.
+
+    Designed to replace MONAI's class_embedding layer when sinusoidal
+    encoding is enabled. Handles tokens that encode both z_bin and
+    pathology_class: token = z_bin + pathology_class * z_bins.
+    """
+
+    def __init__(
+        self,
+        num_embeddings: int,
+        embedding_dim: int,
+        z_bins: int,
+        use_sinusoidal: bool = True,
+        max_z: int = 127,
+    ) -> None:
+        """Initialize the embedding module.
+
+        Args:
+            num_embeddings: Total number of token classes (2*z_bins or 2*z_bins+1).
+            embedding_dim: Output embedding dimension.
+            z_bins: Number of z-position bins.
+            use_sinusoidal: Whether to use sinusoidal encoding for z-position.
+            max_z: Maximum z-index for sinusoidal encoding.
+        """
+        super().__init__()
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        self.z_bins = z_bins
+        self.use_sinusoidal = use_sinusoidal
+        self.max_z = max_z
+
+        # Embeddings for pathology classes (control=0, lesion=1)
+        self.pathology_embedding = nn.Embedding(2, embedding_dim)
+
+        if use_sinusoidal:
+            # Sinusoidal encoding for z-position
+            self.z_encoder = ZPositionEncoder(
+                n_bins=z_bins,
+                embed_dim=embedding_dim,
+                use_sinusoidal=True,
+                max_z=max_z,
+            )
+            # Combine pathology and z-position embeddings
+            self.combine = nn.Linear(embedding_dim * 2, embedding_dim)
+        else:
+            # Standard learned embeddings for z-bins
+            self.z_embedding = nn.Embedding(z_bins, embedding_dim)
+            # Combine pathology and z-position embeddings
+            self.combine = nn.Linear(embedding_dim * 2, embedding_dim)
+
+        # Null embedding for CFG (classifier-free guidance)
+        self.null_embedding = nn.Parameter(
+            torch.randn(1, embedding_dim) * 0.02
+        )
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        """Compute embeddings from tokens.
+
+        Args:
+            tokens: Token indices, shape (B,).
+                    tokens = z_bin + pathology_class * z_bins
+
+        Returns:
+            Embeddings, shape (B, embedding_dim).
+        """
+        # Decode tokens into z_bin and pathology_class
+        # Handle null token (used for CFG): it's the last token
+        is_null = tokens >= (2 * self.z_bins)
+
+        # For null tokens, use dummy values (will be embedded separately)
+        safe_tokens = torch.where(is_null, torch.zeros_like(tokens), tokens)
+
+        pathology_class = safe_tokens // self.z_bins  # 0 or 1
+        z_bin = safe_tokens % self.z_bins  # 0 to z_bins-1
+
+        # Clamp to valid ranges
+        pathology_class = torch.clamp(pathology_class, 0, 1)
+        z_bin = torch.clamp(z_bin, 0, self.z_bins - 1)
+
+        # Get pathology embedding
+        path_emb = self.pathology_embedding(pathology_class)
+
+        # Get z-position embedding
+        if self.use_sinusoidal:
+            # Convert z_bin back to approximate z_index for sinusoidal encoding
+            z_indices = ((z_bin.float() + 0.5) / self.z_bins * self.max_z).long()
+            z_indices = torch.clamp(z_indices, 0, self.max_z)
+            z_emb = self.z_encoder(z_bin, z_indices)
+        else:
+            z_emb = self.z_embedding(z_bin)
+
+        # Combine embeddings
+        combined = torch.cat([path_emb, z_emb], dim=-1)
+        emb = self.combine(combined)
+
+        # Replace null token embeddings
+        if is_null.any():
+            emb = torch.where(
+                is_null.unsqueeze(-1),
+                self.null_embedding.expand(emb.shape[0], -1),
+                emb,
+            )
+
+        return emb

@@ -42,6 +42,7 @@ class UncertaintyWeightedLoss(nn.Module):
         """
         super().__init__()
         self.n_tasks = n_tasks
+        self.learnable = learnable
 
         # Initialize log variance parameters
         if initial_log_vars is None:
@@ -107,7 +108,10 @@ class UncertaintyWeightedLoss(nn.Module):
         return total_loss, details
 
     def get_log_vars(self) -> torch.Tensor:
-        """Get current log variance values.
+        """Get current log variance values (unclamped).
+
+        Note: These are the raw parameter values. For values that match
+        the optimization (clamped to [-5, 5]), use get_log_vars_clamped().
 
         Returns:
             Tensor of log variance values.
@@ -121,6 +125,19 @@ class UncertaintyWeightedLoss(nn.Module):
             Tensor of weights exp(-log_var).
         """
         return torch.exp(-self.log_vars).detach()
+
+    def get_log_vars_clamped(self) -> torch.Tensor | None:
+        """Get clamped log variance values used in forward pass.
+
+        Returns the same clamped values [-5, 5] that are used during
+        loss computation to ensure logging matches optimization.
+
+        Returns:
+            Clamped log variance tensor if learnable, None otherwise.
+        """
+        if not self.learnable:
+            return None
+        return torch.clamp(self.log_vars.detach(), -5.0, 5.0)
 
 
 class SimpleWeightedLoss(nn.Module):

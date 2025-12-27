@@ -191,7 +191,7 @@ loss:
 
   # Optional lesion-weighted mask loss
   lesion_weighted_mask:
-    enabled: true
+    enabled: false
     lesion_weight: 2.5  # Extra weight for lesion pixels
     background_weight: 1.0
 

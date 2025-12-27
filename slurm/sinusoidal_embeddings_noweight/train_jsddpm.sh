@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J log_jsddpm_sinusoidal_embeddings
+#SBATCH -J log_jsddpm_sinusoidal_embeddings_noweight
 #SBATCH --time=23:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -27,13 +27,13 @@ echo "Job started at: $(date)"
 # ========================================================================
 # DISTRIBUTED TRAINING CONFIGURATION
 # ========================================================================
-EXPERIMENT_NAME="jsddpm_sinusoidal_embeddings"
+EXPERIMENT_NAME="jsddpm_sinusoidal_embeddings_noweight"
 CONDA_ENV_NAME="jsddpm"
 
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
 RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}"
-CONFIG_FILE="${REPO_SRC}/slurm/sinusoidal_embeddings/${EXPERIMENT_NAME}.yaml"
+CONFIG_FILE="${REPO_SRC}/slurm/sinusoidal_embeddings_noweight/${EXPERIMENT_NAME}.yaml"
 
 # Dynamic GPU assignment
 export CUDA_VISIBLE_DEVICES=0

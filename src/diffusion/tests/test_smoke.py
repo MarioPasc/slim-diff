@@ -79,6 +79,8 @@ def test_config():
         },
         "conditioning": {
             "z_bins": 50,
+            "use_sinusoidal": False,
+            "max_z": 127,
             "cfg": {
                 "enabled": False,
                 "null_token": 100,
@@ -354,6 +356,41 @@ class TestLosses:
         assert total > 0
         assert "loss_image" in details
         assert "loss_mask" in details
+
+    def test_uncertainty_params_in_optimizer(self, test_config):
+        """Test that uncertainty log_vars are optimized when learnable=True."""
+        from src.diffusion.training.lit_modules import JSDDPMLightningModule
+
+        # Enable learnable uncertainty weighting
+        test_config.loss.uncertainty_weighting.enabled = True
+        test_config.loss.uncertainty_weighting.learnable = True
+
+        module = JSDDPMLightningModule(test_config)
+
+        # Get initial log_vars
+        initial_log_vars = module.criterion.uncertainty_loss.log_vars.clone()
+
+        # Create dummy batch
+        batch = {
+            "image": torch.randn(2, 1, 64, 64),
+            "mask": torch.randn(2, 1, 64, 64),
+            "token": torch.randint(0, 100, (2,)),
+            "metadata": {},
+        }
+
+        # Run one training step with manual optimization
+        optimizer_config = module.configure_optimizers()
+        optimizer = optimizer_config["optimizer"]
+
+        loss = module.training_step(batch, 0)
+        loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        # Check that log_vars changed
+        final_log_vars = module.criterion.uncertainty_loss.log_vars
+        assert not torch.allclose(initial_log_vars, final_log_vars), \
+            "log_vars did not change after optimization step"
 
 
 class TestMetrics:

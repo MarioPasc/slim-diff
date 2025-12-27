@@ -185,7 +185,7 @@ training:
 loss:
   # Uncertainty weighting (Kendall et al.)
   uncertainty_weighting:
-    enabled: false
+    enabled: true
     initial_log_vars: [0.0, 0.0]  # [image, mask]
     learnable: true
 

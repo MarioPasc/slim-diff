@@ -5,6 +5,8 @@ Builds the DiffusionModelUNet, scheduler, and inferer from configuration.
 
 from __future__ import annotations
 
+from typing import Union
+
 import logging
 
 import torch
@@ -12,6 +14,8 @@ from monai.networks.nets.diffusion_model_unet import DiffusionModelUNet
 from monai.networks.schedulers.ddim import DDIMScheduler
 from monai.networks.schedulers.ddpm import DDPMScheduler
 from omegaconf import DictConfig
+
+from src.diffusion.model.embeddings import ConditionalEmbeddingWithSinusoidal
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,28 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
         dropout_cattn=model_cfg.dropout,
     )
 
+    # Replace class embedding with custom sinusoidal embedding if enabled
+    if cond_cfg.use_sinusoidal and model_cfg.use_class_embedding:
+        # Get the embedding dimension from the model's class_embedding
+        embedding_dim = model.class_embedding.embedding_dim
+
+        # Create custom embedding module
+        custom_embedding = ConditionalEmbeddingWithSinusoidal(
+            num_embeddings=num_class_embeds,
+            embedding_dim=embedding_dim,
+            z_bins=z_bins,
+            use_sinusoidal=True,
+            max_z=cond_cfg.max_z,
+        )
+
+        # Replace the embedding layer
+        model.class_embedding = custom_embedding
+
+        logger.info(
+            f"Replaced class_embedding with ConditionalEmbeddingWithSinusoidal "
+            f"(z_bins={z_bins}, max_z={cond_cfg.max_z}, embed_dim={embedding_dim})"
+        )
+
     # Log model info
     n_params = sum(p.numel() for p in model.parameters())
     n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -64,7 +90,8 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
         f"Built DiffusionModelUNet: "
         f"{n_params:,} params ({n_trainable:,} trainable), "
         f"channels={channels}, "
-        f"num_class_embeds={num_class_embeds}"
+        f"num_class_embeds={num_class_embeds}, "
+        f"use_sinusoidal={cond_cfg.use_sinusoidal}"
     )
 
     return model
@@ -107,7 +134,7 @@ def build_scheduler(cfg: DictConfig) -> DDPMScheduler | DDIMScheduler:
     return scheduler
 
 
-def build_inferer(cfg: DictConfig) -> DDIMScheduler:
+def build_inferer(cfg: DictConfig) -> Union[DDIMScheduler, DDPMScheduler]:
     """Build the inference scheduler (DDIM) for sampling.
 
     Args:
@@ -119,15 +146,25 @@ def build_inferer(cfg: DictConfig) -> DDIMScheduler:
     sched_cfg = cfg.scheduler
     sampler_cfg = cfg.sampler
 
-    # Build DDIM scheduler for inference
-    inferer = DDIMScheduler(
-        num_train_timesteps=sched_cfg.num_train_timesteps,
-        beta_start=sched_cfg.beta_start,
-        beta_end=sched_cfg.beta_end,
-        schedule=sched_cfg.schedule,
-        prediction_type=sched_cfg.prediction_type,
-        clip_sample=sched_cfg.clip_sample,
-    )
+    if cfg.sampler.type == "DDIM":
+        # Build DDIM scheduler for inference
+        inferer = DDIMScheduler(
+            num_train_timesteps=sched_cfg.num_train_timesteps,
+            beta_start=sched_cfg.beta_start,
+            beta_end=sched_cfg.beta_end,
+            schedule=sched_cfg.schedule,
+            prediction_type=sched_cfg.prediction_type,
+            clip_sample=sched_cfg.clip_sample,
+        )
+    else:
+        inferer = DDPMScheduler(
+            num_train_timesteps=sched_cfg.num_train_timesteps,
+            beta_start=sched_cfg.beta_start,
+            beta_end=sched_cfg.beta_end,
+            schedule=sched_cfg.schedule,
+            prediction_type=sched_cfg.prediction_type,
+            clip_sample=sched_cfg.clip_sample,
+        )
 
     logger.info(
         f"Built DDIM inferer: "
@@ -237,7 +274,10 @@ class DiffusionSampler:
                 noise_pred = self.model(x_t, timesteps=timesteps, class_labels=tokens)
 
             # DDIM step
-            x_t, _ = self.scheduler.step(noise_pred, t, x_t, eta=self.eta)
+            if self.scheduler.__class__ == DDIMScheduler:
+                x_t, _ = self.scheduler.step(noise_pred, t, x_t, eta=self.eta)
+            else:
+                x_t, _ = self.scheduler.step(noise_pred, t, x_t)
 
         return x_t
 

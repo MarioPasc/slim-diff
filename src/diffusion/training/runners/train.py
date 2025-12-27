@@ -27,6 +27,7 @@ from src.diffusion.training.callbacks.diagnostics_callbacks import (
     SNRCallback,
     WandbSummaryCallback,
 )
+from src.diffusion.training.callbacks.csv_callback import CSVLoggingCallback
 from src.diffusion.training.callbacks.epoch_callbacks import VisualizationCallback
 from src.diffusion.training.callbacks.step_callbacks import GradientNormCallback
 from src.diffusion.training.lit_modules import JSDDPMLightningModule
@@ -106,6 +107,8 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
         n_samples=100,
         timestep_bins=10,
     ))
+
+    callbacks.append(CSVLoggingCallback(cfg=cfg))
 
     return callbacks
 

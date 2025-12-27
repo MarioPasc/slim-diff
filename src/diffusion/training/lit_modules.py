@@ -51,6 +51,10 @@ class JSDDPMLightningModule(pl.LightningModule):
         self.cfg = cfg
         self.save_hyperparameters(cfg)
 
+        # Validate configuration before building components
+        from src.diffusion.config.validation import validate_config
+        validate_config(cfg)
+
         # Build model components
         self.model = build_model(cfg)
         self.scheduler = build_scheduler(cfg)
@@ -255,27 +259,26 @@ class JSDDPMLightningModule(pl.LightningModule):
         loss, loss_details = self.criterion(eps_pred, noise, mask)
 
         # Log metrics
-        self.log("train/loss", loss, sync_dist=True, batch_size=B)
-        self.log("train/loss_image", loss_details["loss_image"], sync_dist=True, batch_size=B)
-        self.log("train/loss_mask", loss_details["loss_mask"], sync_dist=True, batch_size=B)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+        self.log("train/loss_image", loss_details["loss_image"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+        self.log("train/loss_mask", loss_details["loss_mask"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
 
-        # Log uncertainty weights if available
-        log_vars = self.criterion.get_log_vars()
-        if log_vars is not None:
-            self.log("train/log_var_image", log_vars[0], sync_dist=True, batch_size=B)
-            self.log("train/log_var_mask", log_vars[1], sync_dist=True, batch_size=B)
-            # Also log the actual weights (precisions = exp(-log_var))
-            self.log("train/weight_image", torch.exp(-log_vars[0]), sync_dist=True, batch_size=B)
-            self.log("train/weight_mask", torch.exp(-log_vars[1]), sync_dist=True, batch_size=B)
-            # Log sigmas (more interpretable than log_var: sigma = exp(0.5 * log_var))
-            self.log("train/sigma_image", torch.exp(0.5 * log_vars[0]), sync_dist=True, batch_size=B)
-            self.log("train/sigma_mask", torch.exp(0.5 * log_vars[1]), sync_dist=True, batch_size=B)
-            # Log weighted losses (actual contributions to total loss)
-            if "loss_0" in loss_details and "loss_1" in loss_details:
-                weighted_loss_image = torch.exp(-log_vars[0]) * loss_details["loss_0"] + 0.5 * log_vars[0]
-                weighted_loss_mask = torch.exp(-log_vars[1]) * loss_details["loss_1"] + 0.5 * log_vars[1]
-                self.log("train/weighted_loss_image", weighted_loss_image, sync_dist=True, batch_size=B)
-                self.log("train/weighted_loss_mask", weighted_loss_mask, sync_dist=True, batch_size=B)
+        # Log weighted loss metrics (always available when using multi-task loss)
+        if "weighted_loss_0" in loss_details:
+            self.log("train/weighted_loss_image", loss_details["weighted_loss_0"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/weighted_loss_mask", loss_details["weighted_loss_1"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+
+        # Log uncertainty-specific metrics (only when uncertainty weighting is enabled)
+        # Note: These keys come from UncertaintyWeightedLoss.forward() when enabled
+        if "log_var_0" in loss_details:
+            self.log("train/log_var_image", loss_details["log_var_0"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/log_var_mask", loss_details["log_var_1"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/sigma_image", loss_details["sigma_0"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/sigma_mask", loss_details["sigma_1"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+
+            # Log precision (exp(-log_var)) for interpretability
+            self.log("train/precision_image", torch.exp(-loss_details["log_var_0"]), on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/precision_mask", torch.exp(-loss_details["log_var_1"]), on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
 
         return loss
 
@@ -336,27 +339,31 @@ class JSDDPMLightningModule(pl.LightningModule):
         if "hd95" in metrics:
             self.log("val/hd95", metrics["hd95"], sync_dist=True, batch_size=B)
 
-        # Log uncertainty weights if available
-        log_vars = self.criterion.get_log_vars()
-        if log_vars is not None:
-            self.log("val/log_var_image", log_vars[0], sync_dist=True, batch_size=B)
-            self.log("val/log_var_mask", log_vars[1], sync_dist=True, batch_size=B)
-            self.log("val/weight_image", torch.exp(-log_vars[0]), sync_dist=True, batch_size=B)
-            self.log("val/weight_mask", torch.exp(-log_vars[1]), sync_dist=True, batch_size=B)
-            # Log sigmas
-            self.log("val/sigma_image", torch.exp(0.5 * log_vars[0]), sync_dist=True, batch_size=B)
-            self.log("val/sigma_mask", torch.exp(0.5 * log_vars[1]), sync_dist=True, batch_size=B)
-            # Log weighted losses
-            if "loss_0" in loss_details and "loss_1" in loss_details:
-                weighted_loss_image = torch.exp(-log_vars[0]) * loss_details["loss_0"] + 0.5 * log_vars[0]
-                weighted_loss_mask = torch.exp(-log_vars[1]) * loss_details["loss_1"] + 0.5 * log_vars[1]
-                self.log("val/weighted_loss_image", weighted_loss_image, sync_dist=True, batch_size=B)
-                self.log("val/weighted_loss_mask", weighted_loss_mask, sync_dist=True, batch_size=B)
+        # Log weighted loss metrics (always available when using multi-task loss)
+        if "weighted_loss_0" in loss_details:
+            self.log("val/weighted_loss_image", loss_details["weighted_loss_0"], sync_dist=True, batch_size=B)
+            self.log("val/weighted_loss_mask", loss_details["weighted_loss_1"], sync_dist=True, batch_size=B)
+
+        # Log uncertainty-specific metrics (only when uncertainty weighting is enabled)
+        # Note: These keys come from UncertaintyWeightedLoss.forward() when enabled
+        if "log_var_0" in loss_details:
+            self.log("val/log_var_image", loss_details["log_var_0"], sync_dist=True, batch_size=B)
+            self.log("val/log_var_mask", loss_details["log_var_1"], sync_dist=True, batch_size=B)
+            self.log("val/sigma_image", loss_details["sigma_0"], sync_dist=True, batch_size=B)
+            self.log("val/sigma_mask", loss_details["sigma_1"], sync_dist=True, batch_size=B)
+
+            # Log precision (exp(-log_var)) for interpretability
+            self.log("val/precision_image", torch.exp(-loss_details["log_var_0"]), sync_dist=True, batch_size=B)
+            self.log("val/precision_mask", torch.exp(-loss_details["log_var_1"]), sync_dist=True, batch_size=B)
 
         return {"loss": loss, **metrics}
 
     def configure_optimizers(self) -> dict[str, Any]:
-        """Configure optimizer and scheduler.
+        """Configure optimizer and learning rate scheduler.
+
+        When uncertainty weighting is enabled with learnable=True, the optimizer
+        will update both the model parameters AND the log variance parameters
+        (self.criterion.uncertainty_loss.log_vars).
 
         Returns:
             Optimizer configuration dictionary.
@@ -364,10 +371,28 @@ class JSDDPMLightningModule(pl.LightningModule):
         opt_cfg = self.cfg.training.optimizer
         lr_cfg = self.cfg.training.lr_scheduler
 
+        # Collect all trainable parameters
+        # This includes:
+        # 1. Model parameters (DiffusionModelUNet)
+        # 2. Uncertainty log_vars (if learnable=True in config)
+        params = self.parameters()
+
+        # Optional: Log what's being optimized
+        if self.cfg.loss.uncertainty_weighting.enabled and self.cfg.loss.uncertainty_weighting.learnable:
+            # Verify log_vars are trainable
+            if hasattr(self.criterion, 'uncertainty_loss'):
+                log_vars = self.criterion.uncertainty_loss.log_vars
+                if log_vars.requires_grad:
+                    total_params = sum(p.numel() for p in self.parameters())
+                    logger.info(
+                        f"Optimizer will update {total_params} parameters "
+                        f"including {log_vars.numel()} uncertainty log_vars"
+                    )
+
         # Build optimizer
         optimizer_cls = getattr(torch.optim, opt_cfg.type)
         optimizer = optimizer_cls(
-            self.parameters(),
+            params,
             lr=opt_cfg.lr,
             weight_decay=opt_cfg.weight_decay,
             betas=tuple(opt_cfg.betas),
