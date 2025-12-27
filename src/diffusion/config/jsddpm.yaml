@@ -63,6 +63,10 @@ conditioning:
   # class=1: lesion present
   # Total classes: 2 * z_bins = 100
 
+  # Z-position encoding options
+  use_sinusoidal: false  # Use sinusoidal position encoding for z-position (default: false)
+  max_z: 128  # Maximum z-index for sinusoidal encoding
+
   # Classifier-free guidance (CFG)
   cfg:
     enabled: false  # Enable/disable CFG
