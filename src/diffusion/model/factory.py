@@ -153,6 +153,62 @@ def build_scheduler(cfg: DictConfig) -> DDPMScheduler | DDIMScheduler:
     return scheduler
 
 
+def build_inferer(cfg: DictConfig) -> DDPMScheduler | DDIMScheduler:
+    """Build inference scheduler from configuration.
+
+    Uses cfg.sampler.type to determine scheduler type (DDIM or DDPM),
+    but inherits beta schedule parameters from cfg.scheduler to ensure
+    consistency with the training scheduler.
+
+    Args:
+        cfg: Configuration object.
+
+    Returns:
+        Configured inference scheduler instance.
+    """
+    sched_cfg = cfg.scheduler
+    sampler_cfg = cfg.sampler
+
+    # Base arguments from training scheduler config
+    kwargs = {
+        "num_train_timesteps": sched_cfg.num_train_timesteps,
+        "schedule": sched_cfg.schedule,
+        "prediction_type": sched_cfg.prediction_type,
+        "clip_sample": sched_cfg.clip_sample,
+    }
+
+    # Handle clipping range
+    if sched_cfg.clip_sample and "clip_sample_range" in sched_cfg:
+        kwargs["clip_sample_min"] = -sched_cfg.clip_sample_range
+        kwargs["clip_sample_max"] = sched_cfg.clip_sample_range
+
+    # Handle schedule-specific arguments
+    if sched_cfg.schedule == "sigmoid_beta":
+        kwargs["beta_start"] = sched_cfg.beta_start
+        kwargs["beta_end"] = sched_cfg.beta_end
+        kwargs["sig_range"] = sched_cfg.sig_range
+    elif sched_cfg.schedule != "cosine":
+        # linear_beta, scaled_linear_beta
+        kwargs["beta_start"] = sched_cfg.beta_start
+        kwargs["beta_end"] = sched_cfg.beta_end
+
+    # Build scheduler based on sampler type (not training scheduler type)
+    if sampler_cfg.type == "DDIM":
+        inferer = DDIMScheduler(**kwargs)
+    elif sampler_cfg.type == "DDPM":
+        inferer = DDPMScheduler(**kwargs)
+    else:
+        raise ValueError(f"Unknown sampler type: {sampler_cfg.type}")
+
+    logger.info(
+        f"Built {sampler_cfg.type} inferer for sampling: "
+        f"T={sched_cfg.num_train_timesteps}, "
+        f"schedule={sched_cfg.schedule}"
+    )
+
+    return inferer
+
+
 class DiffusionSampler:
     """Wrapper for DDIM/DDPM sampling with classifier-free guidance.
 

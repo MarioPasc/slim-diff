@@ -31,7 +31,7 @@ from src.diffusion.model.components.conditioning import (
 )
 from src.diffusion.model.embeddings.zpos import normalize_z_local, quantize_z
 from src.diffusion.model.factory import build_model, build_scheduler
-from src.diffusion.training.metrics import dice_coefficient, psnr, ssim
+from src.diffusion.training.metrics import MetricsCalculator
 
 
 @pytest.fixture
@@ -417,49 +417,67 @@ class TestLosses:
 
 
 class TestMetrics:
-    """Tests for image quality metrics."""
+    """Tests for MONAI-based metrics."""
 
-    def test_psnr(self):
-        """Test PSNR computation."""
-        # Same images should give inf PSNR
-        img = torch.randn(2, 1, 64, 64)
-        psnr_val = psnr(img, img)
-        assert psnr_val == float("inf")
+    def test_metrics_calculator(self):
+        """Test MONAI-based MetricsCalculator."""
+        # Create calculator
+        calc = MetricsCalculator(data_range=2.0, window_size=11, sigma=1.5)
 
-        # Different images should give finite PSNR
-        noisy = img + torch.randn_like(img) * 0.1
-        psnr_val = psnr(img, noisy)
-        assert psnr_val > 0
-        assert psnr_val < 100
+        # Create dummy data (B=2, C=1, H=128, W=128)
+        pred_image = torch.randn(2, 1, 128, 128) * 0.5
+        target_image = torch.randn(2, 1, 128, 128) * 0.5
 
-    def test_ssim(self):
-        """Test SSIM computation."""
-        # Same images should give SSIM = 1
-        img = torch.randn(2, 1, 64, 64)
-        ssim_val = ssim(img, img)
-        assert ssim_val == pytest.approx(1.0, rel=0.01)
+        pred_mask = torch.randn(2, 1, 128, 128)
+        target_mask = torch.randn(2, 1, 128, 128)
 
-        # Different images should give lower SSIM
-        noisy = img + torch.randn_like(img) * 0.5
-        ssim_val = ssim(img, noisy)
-        assert 0 < ssim_val < 1
+        # Compute all metrics
+        metrics = calc.compute_all(pred_image, target_image, pred_mask, target_mask)
 
-    def test_dice(self):
-        """Test Dice coefficient."""
-        # Same masks should give Dice = 1
-        mask = torch.ones(2, 1, 64, 64)
-        dice = dice_coefficient(mask, mask)
-        assert dice == pytest.approx(1.0, rel=0.01)
+        # Verify all metrics present
+        assert "psnr" in metrics
+        assert "ssim" in metrics
+        assert "dice" in metrics
+        assert "hd95" in metrics
 
-        # Identical empty masks should also give Dice = 1 (perfect match)
-        empty = torch.ones(2, 1, 64, 64) * -1
-        dice = dice_coefficient(empty, empty)
-        assert dice == pytest.approx(1.0, rel=0.01)
+        # Verify types and ranges
+        assert isinstance(metrics["psnr"], float)
+        assert isinstance(metrics["ssim"], float)
+        assert isinstance(metrics["dice"], float)
+        assert isinstance(metrics["hd95"], (float, type(float('nan'))))
 
-        # Different masks (one empty, one full)
-        full = torch.ones(2, 1, 64, 64)
-        dice = dice_coefficient(full, empty)
-        assert dice < 0.5  # Should be low since they don't match
+        # PSNR should be positive
+        assert metrics["psnr"] > 0
+
+        # SSIM should be in [-1, 1] (typically [0, 1] but can be negative for very different images)
+        assert -1 <= metrics["ssim"] <= 1
+
+        # Dice should be in [0, 1]
+        assert 0 <= metrics["dice"] <= 1
+
+        # HD95 can be NaN if no lesions
+        # If not NaN, should be non-negative
+        if not torch.isnan(torch.tensor(metrics["hd95"])):
+            assert metrics["hd95"] >= 0
+
+    def test_metrics_identical_images(self):
+        """Test metrics on identical images (should give perfect scores)."""
+        calc = MetricsCalculator(data_range=2.0)
+
+        # Same images
+        img = torch.randn(2, 1, 64, 64) * 0.5
+        mask = torch.randn(2, 1, 64, 64)
+
+        metrics = calc.compute_all(img, img, mask, mask)
+
+        # PSNR should be very high (approaching inf)
+        assert metrics["psnr"] > 100
+
+        # SSIM should be close to 1
+        assert metrics["ssim"] == pytest.approx(1.0, rel=0.01)
+
+        # Dice should be 1 (perfect match)
+        assert metrics["dice"] == pytest.approx(1.0, rel=0.01)
 
 
 class TestTrainingStep:

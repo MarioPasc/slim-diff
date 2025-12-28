@@ -17,7 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from src.diffusion.model.components.conditioning import get_token_for_condition
-from src.diffusion.model.factory import DiffusionSampler, build_inferer, build_model
+from src.diffusion.model.factory import DiffusionSampler
 from src.diffusion.training.lit_modules import JSDDPMLightningModule
 from src.diffusion.utils.io import save_sample_npz
 from src.diffusion.utils.logging import setup_logger

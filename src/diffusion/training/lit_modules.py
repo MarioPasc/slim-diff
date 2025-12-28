@@ -150,7 +150,7 @@ class JSDDPMLightningModule(pl.LightningModule):
         """
         return torch.randint(
             0,
-            self.cfg.scheduler.num_train_timesteps,
+            self.scheduler.num_train_timesteps,
             (batch_size,),
             device=self.device,
             dtype=torch.long,
@@ -174,6 +174,10 @@ class JSDDPMLightningModule(pl.LightningModule):
         Returns:
             Noisy samples x_t.
         """
+        # Use scheduler's add_noise if available (MONAI 1.0+)
+        if hasattr(self.scheduler, "add_noise"):
+            return self.scheduler.add_noise(original_samples=x0, noise=noise, timesteps=timesteps)
+
         alpha_bar_t = self.alphas_cumprod[timesteps]
 
         # Reshape for broadcasting
@@ -186,22 +190,62 @@ class JSDDPMLightningModule(pl.LightningModule):
         x_t = sqrt_alpha_bar * x0 + sqrt_one_minus_alpha_bar * noise
         return x_t
 
+    def _get_target(
+        self,
+        x0: torch.Tensor,
+        noise: torch.Tensor,
+        timesteps: torch.Tensor,
+    ) -> torch.Tensor:
+        """Get the target for loss computation based on prediction type.
+
+        Args:
+            x0: Original samples.
+            noise: Gaussian noise.
+            timesteps: Timesteps.
+
+        Returns:
+            Target tensor (noise, x0, or v).
+        """
+        prediction_type = self.scheduler.prediction_type
+
+        if prediction_type == "epsilon":
+            return noise
+        elif prediction_type == "sample":
+            return x0
+        elif prediction_type == "v_prediction":
+            # v = sqrt(alpha_bar) * noise - sqrt(1-alpha_bar) * x0
+            alpha_bar_t = self.alphas_cumprod[timesteps]
+            while alpha_bar_t.dim() < x0.dim():
+                alpha_bar_t = alpha_bar_t.unsqueeze(-1)
+            
+            sqrt_alpha_bar = torch.sqrt(alpha_bar_t)
+            sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar_t)
+            
+            return sqrt_alpha_bar * noise - sqrt_one_minus_alpha_bar * x0
+        else:
+            raise ValueError(f"Unknown prediction type: {prediction_type}")
+
     def _predict_x0(
         self,
         x_t: torch.Tensor,
-        eps_pred: torch.Tensor,
+        model_output: torch.Tensor,
         timesteps: torch.Tensor,
     ) -> torch.Tensor:
-        """Predict x0 from noisy sample and predicted noise.
+        """Predict x0 from noisy sample and model output.
 
         Args:
             x_t: Noisy samples.
-            eps_pred: Predicted noise.
+            model_output: Model prediction (epsilon, x0, or v).
             timesteps: Timesteps.
 
         Returns:
             Predicted x0.
         """
+        prediction_type = self.scheduler.prediction_type
+
+        if prediction_type == "sample":
+            return model_output
+
         alpha_bar_t = self.alphas_cumprod[timesteps]
 
         while alpha_bar_t.dim() < x_t.dim():
@@ -210,7 +254,14 @@ class JSDDPMLightningModule(pl.LightningModule):
         sqrt_alpha_bar = torch.sqrt(alpha_bar_t)
         sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar_t)
 
-        x0_hat = (x_t - sqrt_one_minus_alpha_bar * eps_pred) / sqrt_alpha_bar
+        if prediction_type == "epsilon":
+            x0_hat = (x_t - sqrt_one_minus_alpha_bar * model_output) / sqrt_alpha_bar
+        elif prediction_type == "v_prediction":
+            # x0 = sqrt(alpha_bar) * x_t - sqrt(1-alpha_bar) * v
+            x0_hat = sqrt_alpha_bar * x_t - sqrt_one_minus_alpha_bar * model_output
+        else:
+            raise ValueError(f"Unknown prediction type: {prediction_type}")
+            
         return x0_hat
 
     def training_step(
@@ -252,11 +303,14 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Add noise to get x_t
         x_t = self._add_noise(x0, noise, timesteps)
 
-        # Predict noise
-        eps_pred = self(x_t, timesteps, tokens)
+        # Predict
+        model_output = self(x_t, timesteps, tokens)
+
+        # Get target for loss
+        target = self._get_target(x0, noise, timesteps)
 
         # Compute loss
-        loss, loss_details = self.criterion(eps_pred, noise, mask)
+        loss, loss_details = self.criterion(model_output, target, mask)
 
         # Log metrics
         self.log("train/loss", loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
@@ -311,14 +365,17 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Add noise
         x_t = self._add_noise(x0, noise, timesteps)
 
-        # Predict noise
-        eps_pred = self(x_t, timesteps, tokens)
+        # Predict
+        model_output = self(x_t, timesteps, tokens)
+
+        # Get target for loss
+        target = self._get_target(x0, noise, timesteps)
 
         # Compute loss
-        loss, loss_details = self.criterion(eps_pred, noise, mask)
+        loss, loss_details = self.criterion(model_output, target, mask)
 
         # Predict x0 for metrics
-        x0_hat = self._predict_x0(x_t, eps_pred, timesteps)
+        x0_hat = self._predict_x0(x_t, model_output, timesteps)
         x0_hat_image = x0_hat[:, 0:1]
         x0_hat_mask = x0_hat[:, 1:2]
 
