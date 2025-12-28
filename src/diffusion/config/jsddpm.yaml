@@ -141,7 +141,8 @@ sampler:
 training:
   # Batch size and workers
   batch_size: 32
-  num_workers: 4
+  num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues (was 4)
+                   # Can increase to 1-2 if using spawn method, but 0 is safest
   pin_memory: true
 
   # Optimizer

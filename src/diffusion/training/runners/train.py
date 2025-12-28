@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import multiprocessing
 from pathlib import Path
 from typing import Any
 
@@ -260,6 +261,22 @@ def train(cfg: DictConfig) -> None:
     Args:
         cfg: Configuration object.
     """
+    # Fix CUDA multiprocessing issue: use 'spawn' instead of 'fork'
+    # This prevents CUDA context inheritance in DataLoader workers
+    # Only set if not already set (to avoid conflicts)
+    try:
+        current_method = multiprocessing.get_start_method(allow_none=True)
+        if current_method != 'spawn':
+            multiprocessing.set_start_method('spawn', force=True)
+            logger.info("Set multiprocessing start method to 'spawn' for CUDA compatibility")
+    except RuntimeError:
+        # Start method already set, just log a warning
+        logger.warning(
+            f"Multiprocessing start method already set to '{multiprocessing.get_start_method()}'. "
+            "Cannot change to 'spawn'. If you encounter CUDA errors with num_workers > 0, "
+            "set num_workers=0 in your config."
+        )
+
     # Create output directory
     output_dir = Path(cfg.experiment.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
