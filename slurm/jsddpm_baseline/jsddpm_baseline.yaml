@@ -113,9 +113,13 @@ scheduler:
   num_train_timesteps: 1000
 
   # Beta schedule
-  schedule: "cosine"  # Options: "linear_beta", "scaled_linear_beta", "cosine"
+  schedule: "cosine"  # Options: "linear_beta", "scaled_linear_beta", "sigmoid_beta", "cosine"
+
+  # Used for linear and scaled_linear schedules
   beta_start: 0.0015
   beta_end: 0.0195
+  # Used for sigmoid schedule
+  sig_range: 6.0
 
   # Prediction type
   prediction_type: "epsilon"  # Options: "epsilon", "sample", "v_prediction"

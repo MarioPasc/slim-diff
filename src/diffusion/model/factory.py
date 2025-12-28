@@ -114,71 +114,43 @@ def build_scheduler(cfg: DictConfig) -> DDPMScheduler | DDIMScheduler:
     """
     sched_cfg = cfg.scheduler
 
-    # Common kwargs
-    common_kwargs = {
+    # Base arguments
+    kwargs = {
         "num_train_timesteps": sched_cfg.num_train_timesteps,
-        "beta_start": sched_cfg.beta_start,
-        "beta_end": sched_cfg.beta_end,
         "schedule": sched_cfg.schedule,
         "prediction_type": sched_cfg.prediction_type,
         "clip_sample": sched_cfg.clip_sample,
     }
 
+    # Handle clipping range
+    if sched_cfg.clip_sample and "clip_sample_range" in sched_cfg:
+        kwargs["clip_sample_min"] = -sched_cfg.clip_sample_range
+        kwargs["clip_sample_max"] = sched_cfg.clip_sample_range
+
+    # Handle schedule-specific arguments
+    if sched_cfg.schedule == "sigmoid_beta":
+        kwargs["beta_start"] = sched_cfg.beta_start
+        kwargs["beta_end"] = sched_cfg.beta_end
+        kwargs["sig_range"] = sched_cfg.sig_range
+    elif sched_cfg.schedule != "cosine":
+        # linear_beta, scaled_linear_beta
+        kwargs["beta_start"] = sched_cfg.beta_start
+        kwargs["beta_end"] = sched_cfg.beta_end
+
     if sched_cfg.type == "DDPM":
-        scheduler = DDPMScheduler(**common_kwargs)
+        scheduler = DDPMScheduler(**kwargs)
     elif sched_cfg.type == "DDIM":
-        scheduler = DDIMScheduler(**common_kwargs)
+        scheduler = DDIMScheduler(**kwargs)
     else:
         raise ValueError(f"Unknown scheduler type: {sched_cfg.type}")
 
     logger.info(
         f"Built {sched_cfg.type} scheduler: "
         f"T={sched_cfg.num_train_timesteps}, "
-        f"beta=[{sched_cfg.beta_start}, {sched_cfg.beta_end}]"
+        f"schedule={sched_cfg.schedule}"
     )
 
     return scheduler
-
-
-def build_inferer(cfg: DictConfig) -> Union[DDIMScheduler, DDPMScheduler]:
-    """Build the inference scheduler (DDIM) for sampling.
-
-    Args:
-        cfg: Configuration object.
-
-    Returns:
-        Configured DDIM scheduler for inference.
-    """
-    sched_cfg = cfg.scheduler
-    sampler_cfg = cfg.sampler
-
-    if cfg.sampler.type == "DDIM":
-        # Build DDIM scheduler for inference
-        inferer = DDIMScheduler(
-            num_train_timesteps=sched_cfg.num_train_timesteps,
-            beta_start=sched_cfg.beta_start,
-            beta_end=sched_cfg.beta_end,
-            schedule=sched_cfg.schedule,
-            prediction_type=sched_cfg.prediction_type,
-            clip_sample=sched_cfg.clip_sample,
-        )
-    else:
-        inferer = DDPMScheduler(
-            num_train_timesteps=sched_cfg.num_train_timesteps,
-            beta_start=sched_cfg.beta_start,
-            beta_end=sched_cfg.beta_end,
-            schedule=sched_cfg.schedule,
-            prediction_type=sched_cfg.prediction_type,
-            clip_sample=sched_cfg.clip_sample,
-        )
-
-    logger.info(
-        f"Built DDIM inferer: "
-        f"inference_steps={sampler_cfg.num_inference_steps}, "
-        f"eta={sampler_cfg.eta}"
-    )
-
-    return inferer
 
 
 class DiffusionSampler:
