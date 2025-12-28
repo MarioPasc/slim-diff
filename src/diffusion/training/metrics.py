@@ -7,6 +7,7 @@ for evaluating generated images and segmentation masks.
 from __future__ import annotations
 
 import logging
+import warnings
 
 import torch
 from monai.metrics import (
@@ -17,6 +18,27 @@ from monai.metrics import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Suppress expected MONAI warnings for empty masks (control samples)
+warnings.filterwarnings(
+    "ignore",
+    message=".*ground truth of class.*is all 0.*",
+    category=UserWarning,
+    module="monai.metrics.utils"
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*prediction of class.*is all 0.*",
+    category=UserWarning,
+    module="monai.metrics.utils"
+)
+# Suppress MONAI FutureWarning about deprecated parameter (will be fixed in MONAI 1.7.0)
+warnings.filterwarnings(
+    "ignore",
+    message=".*always_return_as_numpy.*",
+    category=FutureWarning,
+    module="monai.utils.deprecate_utils"
+)
 
 
 class MetricsCalculator:
