@@ -152,3 +152,17 @@ class MetricsCalculator:
                 metrics["hd95"] = float('nan')
 
         return metrics
+
+    def reset(self) -> None:
+        """Reset all MONAI metrics to clear internal CUDA buffers.
+
+        This is critical for preventing CUDA initialization errors in DataLoader workers.
+        MONAI metrics cache CUDA tensors internally, which causes crashes when workers
+        are forked after validation (CUDA contexts cannot be shared across processes).
+
+        Call this method after each validation epoch to ensure clean state.
+        """
+        self.psnr_metric.reset()
+        self.ssim_metric.reset()
+        self.dice_metric.reset()
+        self.hd95_metric.reset()

@@ -517,6 +517,12 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Lightning will automatically aggregate them across batches
         # This hook is just for additional logging/tracking if needed
 
+        # CRITICAL: Reset MONAI metrics to clear internal CUDA buffers
+        # This prevents "CUDA error: initialization error" when DataLoader workers
+        # are forked at the start of the next epoch. MONAI metrics cache CUDA tensors
+        # internally, which cannot be shared across forked processes.
+        self.metrics.reset()
+
     def get_model(self) -> nn.Module:
         """Get the underlying diffusion model.
 
