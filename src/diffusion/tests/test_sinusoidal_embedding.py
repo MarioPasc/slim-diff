@@ -12,10 +12,12 @@ from src.diffusion.model.factory import build_model
 
 def test_conditional_embedding_forward():
     """Test ConditionalEmbeddingWithSinusoidal forward pass."""
+    z_range = (24, 93)  # LOCAL binning range
     embedding = ConditionalEmbeddingWithSinusoidal(
         num_embeddings=100,  # 2 * 50 z_bins
         embedding_dim=256,
         z_bins=50,
+        z_range=z_range,
         use_sinusoidal=True,
         max_z=127,
     )
@@ -43,10 +45,12 @@ def test_conditional_embedding_forward():
 
 def test_conditional_embedding_null_token():
     """Test ConditionalEmbeddingWithSinusoidal handles null token."""
+    z_range = (24, 93)  # LOCAL binning range
     embedding = ConditionalEmbeddingWithSinusoidal(
         num_embeddings=101,  # 2 * 50 z_bins + 1 for CFG
         embedding_dim=256,
         z_bins=50,
+        z_range=z_range,
         use_sinusoidal=True,
         max_z=127,
     )
@@ -66,10 +70,12 @@ def test_conditional_embedding_null_token():
 
 def test_conditional_embedding_without_sinusoidal():
     """Test ConditionalEmbeddingWithSinusoidal with use_sinusoidal=False."""
+    z_range = (24, 93)  # LOCAL binning range
     embedding = ConditionalEmbeddingWithSinusoidal(
         num_embeddings=100,
         embedding_dim=256,
         z_bins=50,
+        z_range=z_range,
         use_sinusoidal=False,  # Disable sinusoidal encoding
         max_z=127,
     )
@@ -87,6 +93,11 @@ def test_conditional_embedding_without_sinusoidal():
 def test_build_model_with_sinusoidal():
     """Test building model with use_sinusoidal=True."""
     cfg = OmegaConf.create({
+        "data": {
+            "slice_sampling": {
+                "z_range": [24, 93],  # LOCAL binning range
+            },
+        },
         "conditioning": {
             "z_bins": 50,
             "use_sinusoidal": True,

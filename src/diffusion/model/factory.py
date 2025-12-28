@@ -66,11 +66,15 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
         # Get the embedding dimension from the model's class_embedding
         embedding_dim = model.class_embedding.embedding_dim
 
+        # Get z_range for LOCAL binning
+        z_range = tuple(cfg.data.slice_sampling.z_range)
+
         # Create custom embedding module
         custom_embedding = ConditionalEmbeddingWithSinusoidal(
             num_embeddings=num_class_embeds,
             embedding_dim=embedding_dim,
             z_bins=z_bins,
+            z_range=z_range,
             use_sinusoidal=True,
             max_z=cond_cfg.max_z,
         )
@@ -80,7 +84,8 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
 
         logger.info(
             f"Replaced class_embedding with ConditionalEmbeddingWithSinusoidal "
-            f"(z_bins={z_bins}, max_z={cond_cfg.max_z}, embed_dim={embedding_dim})"
+            f"(z_bins={z_bins}, z_range={z_range}, max_z={cond_cfg.max_z}, "
+            f"embed_dim={embedding_dim})"
         )
 
     # Log model info

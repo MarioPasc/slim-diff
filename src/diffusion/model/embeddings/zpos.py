@@ -235,6 +235,7 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
         num_embeddings: int,
         embedding_dim: int,
         z_bins: int,
+        z_range: tuple[int, int],
         use_sinusoidal: bool = True,
         max_z: int = 127,
     ) -> None:
@@ -244,13 +245,15 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
             num_embeddings: Total number of token classes (2*z_bins or 2*z_bins+1).
             embedding_dim: Output embedding dimension.
             z_bins: Number of z-position bins.
+            z_range: (min_z, max_z) range of valid slices (inclusive) for LOCAL binning.
             use_sinusoidal: Whether to use sinusoidal encoding for z-position.
-            max_z: Maximum z-index for sinusoidal encoding.
+            max_z: Maximum z-index for sinusoidal encoding (size of sinusoidal lookup table).
         """
         super().__init__()
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.z_bins = z_bins
+        self.z_range = z_range
         self.use_sinusoidal = use_sinusoidal
         self.max_z = max_z
 
@@ -308,8 +311,18 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
         # Get z-position embedding
         if self.use_sinusoidal:
             # Convert z_bin back to approximate z_index for sinusoidal encoding
-            z_indices = ((z_bin.float() + 0.5) / self.z_bins * self.max_z).long()
+            # Use LOCAL binning: bins span z_range, not [0, max_z]
+            min_z, max_z_range = self.z_range
+            range_size = max_z_range - min_z
+
+            # Map bin to center of local range
+            z_norm = (z_bin.float() + 0.5) / self.z_bins
+            z_indices = (min_z + z_norm * range_size).long()
+
+            # Clamp to z_range and sinusoidal table size
+            z_indices = torch.clamp(z_indices, min_z, max_z_range)
             z_indices = torch.clamp(z_indices, 0, self.max_z)
+
             z_emb = self.z_encoder(z_bin, z_indices)
         else:
             z_emb = self.z_embedding(z_bin)
