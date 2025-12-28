@@ -20,6 +20,7 @@ def test_conditional_embedding_forward():
         z_range=z_range,
         use_sinusoidal=True,
         max_z=127,
+        use_cfg=False,
     )
 
     # Test various tokens
@@ -53,6 +54,7 @@ def test_conditional_embedding_null_token():
         z_range=z_range,
         use_sinusoidal=True,
         max_z=127,
+        use_cfg=True,  # Enable CFG for null token test
     )
 
     # Null token is 100 (2 * z_bins)
@@ -78,6 +80,7 @@ def test_conditional_embedding_without_sinusoidal():
         z_range=z_range,
         use_sinusoidal=False,  # Disable sinusoidal encoding
         max_z=127,
+        use_cfg=False,
     )
 
     tokens = torch.tensor([0, 25, 50, 75])
@@ -105,6 +108,7 @@ def test_build_model_with_sinusoidal():
             "cfg": {
                 "enabled": False,
                 "null_token": 100,
+                "dropout_prob": 0.1,
             },
         },
         "model": {
@@ -187,3 +191,80 @@ def test_build_model_without_sinusoidal():
 
     # Check output shape
     assert output.shape == (batch_size, 2, 64, 64)
+
+
+def test_cfg_disabled_no_null_embedding():
+    """Test that null_embedding is NOT created when CFG is disabled."""
+    z_range = (24, 93)
+
+    # CFG disabled
+    embedding_no_cfg = ConditionalEmbeddingWithSinusoidal(
+        num_embeddings=100,  # 2 * 50 z_bins (NO +1 for null token)
+        embedding_dim=256,
+        z_bins=50,
+        z_range=z_range,
+        use_sinusoidal=True,
+        max_z=127,
+        use_cfg=False,
+    )
+
+    # Check that null_embedding is None
+    assert embedding_no_cfg.null_embedding is None
+    assert embedding_no_cfg.use_cfg is False
+
+    # Verify it doesnt have extra trainable parameters for null embedding
+    param_count_no_cfg = sum(p.numel() for p in embedding_no_cfg.parameters())
+
+    # CFG enabled
+    embedding_with_cfg = ConditionalEmbeddingWithSinusoidal(
+        num_embeddings=101,  # 2 * 50 z_bins + 1 for null token
+        embedding_dim=256,
+        z_bins=50,
+        z_range=z_range,
+        use_sinusoidal=True,
+        max_z=127,
+        use_cfg=True,
+    )
+
+    # Check that null_embedding exists
+    assert embedding_with_cfg.null_embedding is not None
+    assert embedding_with_cfg.use_cfg is True
+    assert embedding_with_cfg.null_embedding.shape == (1, 256)
+
+    # Verify it has 256 more parameters (1 x 256 null embedding)
+    param_count_with_cfg = sum(p.numel() for p in embedding_with_cfg.parameters())
+    assert param_count_with_cfg == param_count_no_cfg + 256
+
+
+def test_cfg_disabled_forward_no_null_handling():
+    """Test that null token is NOT handled when CFG is disabled."""
+    z_range = (24, 93)
+
+    embedding_no_cfg = ConditionalEmbeddingWithSinusoidal(
+        num_embeddings=100,
+        embedding_dim=256,
+        z_bins=50,
+        z_range=z_range,
+        use_sinusoidal=True,
+        max_z=127,
+        use_cfg=False,
+    )
+
+    # Normal tokens work fine
+    tokens = torch.tensor([0, 25, 50, 75])
+    embeddings = embedding_no_cfg(tokens)
+    assert embeddings.shape == (4, 256)
+
+    # Token 100 (would be null token if CFG was enabled) is treated as regular token
+    # It will decode as: pathology_class = 100 // 50 = 2, z_bin = 100 % 50 = 0
+    # pathology_class gets clamped to 1, so its treated as lesion class, bin 0
+    token_100 = torch.tensor([100])
+    emb_100 = embedding_no_cfg(token_100)
+    assert emb_100.shape == (1, 256)
+
+    # Should be similar to token 50 (lesion class, bin 0)
+    token_50 = torch.tensor([50])
+    emb_50 = embedding_no_cfg(token_50)
+    # They should be identical since both decode to class=1, bin=0
+    assert torch.allclose(emb_100, emb_50)
+

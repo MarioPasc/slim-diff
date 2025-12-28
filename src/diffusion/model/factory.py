@@ -77,6 +77,7 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
             z_range=z_range,
             use_sinusoidal=True,
             max_z=cond_cfg.max_z,
+            use_cfg=cond_cfg.cfg.enabled,
         )
 
         # Replace the embedding layer
@@ -85,7 +86,7 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
         logger.info(
             f"Replaced class_embedding with ConditionalEmbeddingWithSinusoidal "
             f"(z_bins={z_bins}, z_range={z_range}, max_z={cond_cfg.max_z}, "
-            f"embed_dim={embedding_dim})"
+            f"use_cfg={cond_cfg.cfg.enabled}, embed_dim={embedding_dim})"
         )
 
     # Log model info

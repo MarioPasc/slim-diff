@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 
-from monai.networks.nets import BasicUNetPlusPlus, DynUNet, SwinUNETR, UNet
 from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
@@ -28,6 +27,8 @@ def build_model(cfg: DictConfig):
     logger.info(f"Building model: {model_name}")
 
     if model_name == "unet":
+        from monai.networks.nets.unet import UNet
+        
         model = UNet(
             spatial_dims=model_cfg.spatial_dims,
             in_channels=model_cfg.in_channels,
@@ -39,6 +40,8 @@ def build_model(cfg: DictConfig):
         )
 
     elif model_name == "dynunet":
+        from monai.networks.nets.dynunet import DynUNet
+        
         model = DynUNet(
             spatial_dims=model_cfg.spatial_dims,
             in_channels=model_cfg.in_channels,
@@ -57,6 +60,8 @@ def build_model(cfg: DictConfig):
         )
 
     elif model_name in ("unetplusplus", "basicunetplusplus"):
+        from monai.networks.nets.basic_unetplusplus import BasicUNetPlusPlus
+
         model = BasicUNetPlusPlus(
             spatial_dims=model_cfg.spatial_dims,
             in_channels=model_cfg.in_channels,
@@ -71,8 +76,10 @@ def build_model(cfg: DictConfig):
         )
 
     elif model_name == "swinunetr":
+        from monai.networks.nets.swin_unetr import SwinUNETR
+
         model = SwinUNETR(
-            img_size=tuple(model_cfg.img_size),
+            #img_size=tuple(model_cfg.img_size),
             in_channels=model_cfg.in_channels,
             out_channels=model_cfg.out_channels,
             depths=tuple(model_cfg.depths),

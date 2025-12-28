@@ -49,6 +49,7 @@ class TestSinusoidalWithLocalBinning:
             z_range=z_range,
             use_sinusoidal=True,
             max_z=max_z,
+            use_cfg=False,
         )
 
         # Test token for class=0, bin=25 (middle bin)
@@ -117,6 +118,7 @@ class TestSinusoidalWithLocalBinning:
                 z_range=z_range,
                 use_sinusoidal=True,
                 max_z=127,
+                use_cfg=False,
             )
 
             # Test first, middle, and last bins
@@ -142,6 +144,7 @@ class TestSinusoidalWithLocalBinning:
             z_range=z_range,
             use_sinusoidal=True,
             max_z=127,
+            use_cfg=False,
         )
 
         emb_without_sin = ConditionalEmbeddingWithSinusoidal(
@@ -151,6 +154,7 @@ class TestSinusoidalWithLocalBinning:
             z_range=z_range,
             use_sinusoidal=False,
             max_z=127,
+            use_cfg=False,
         )
 
         # Same tokens
@@ -218,6 +222,7 @@ class TestSinusoidalEmbeddingCorrectness:
             z_range=z_range,
             use_sinusoidal=True,
             max_z=127,
+            use_cfg=False,
         )
 
         # Check that z_range is stored

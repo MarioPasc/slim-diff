@@ -238,6 +238,7 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
         z_range: tuple[int, int],
         use_sinusoidal: bool = True,
         max_z: int = 127,
+        use_cfg: bool = False,
     ) -> None:
         """Initialize the embedding module.
 
@@ -248,6 +249,7 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
             z_range: (min_z, max_z) range of valid slices (inclusive) for LOCAL binning.
             use_sinusoidal: Whether to use sinusoidal encoding for z-position.
             max_z: Maximum z-index for sinusoidal encoding (size of sinusoidal lookup table).
+            use_cfg: Whether classifier-free guidance is enabled.
         """
         super().__init__()
         self.num_embeddings = num_embeddings
@@ -256,6 +258,7 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
         self.z_range = z_range
         self.use_sinusoidal = use_sinusoidal
         self.max_z = max_z
+        self.use_cfg = use_cfg
 
         # Embeddings for pathology classes (control=0, lesion=1)
         self.pathology_embedding = nn.Embedding(2, embedding_dim)
@@ -276,10 +279,13 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
             # Combine pathology and z-position embeddings
             self.combine = nn.Linear(embedding_dim * 2, embedding_dim)
 
-        # Null embedding for CFG (classifier-free guidance)
-        self.null_embedding = nn.Parameter(
-            torch.randn(1, embedding_dim) * 0.02
-        )
+        # Null embedding for CFG (classifier-free guidance) - only if CFG is enabled
+        if use_cfg:
+            self.null_embedding = nn.Parameter(
+                torch.randn(1, embedding_dim) * 0.02
+            )
+        else:
+            self.null_embedding = None
 
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         """Compute embeddings from tokens.
@@ -292,11 +298,14 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
             Embeddings, shape (B, embedding_dim).
         """
         # Decode tokens into z_bin and pathology_class
-        # Handle null token (used for CFG): it's the last token
-        is_null = tokens >= (2 * self.z_bins)
-
-        # For null tokens, use dummy values (will be embedded separately)
-        safe_tokens = torch.where(is_null, torch.zeros_like(tokens), tokens)
+        # Handle null token (used for CFG) only if CFG is enabled
+        if self.use_cfg:
+            is_null = tokens >= (2 * self.z_bins)
+            # For null tokens, use dummy values (will be embedded separately)
+            safe_tokens = torch.where(is_null, torch.zeros_like(tokens), tokens)
+        else:
+            is_null = None
+            safe_tokens = tokens
 
         pathology_class = safe_tokens // self.z_bins  # 0 or 1
         z_bin = safe_tokens % self.z_bins  # 0 to z_bins-1
@@ -331,8 +340,8 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
         combined = torch.cat([path_emb, z_emb], dim=-1)
         emb = self.combine(combined)
 
-        # Replace null token embeddings
-        if is_null.any():
+        # Replace null token embeddings (only if CFG is enabled)
+        if self.use_cfg and is_null is not None and is_null.any():
             emb = torch.where(
                 is_null.unsqueeze(-1),
                 self.null_embedding.expand(emb.shape[0], -1),

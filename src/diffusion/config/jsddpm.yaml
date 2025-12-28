@@ -133,7 +133,7 @@ sampler:
   eta: 0.0  # 0.0 = deterministic DDIM, 1.0 = DDPM
 
   # Classifier-free guidance scale
-  guidance_scale: 2.0  # 1.0 = no guidance, >1.0 = stronger conditioning
+  guidance_scale: 1.0  # 1.0 = no guidance, >1.0 = stronger conditioning
 
 # =============================================================================
 # Training Configuration
