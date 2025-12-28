@@ -3,6 +3,8 @@
 Provides a callback that logs all metrics to a CSV file,
 with one row per epoch. This complements wandb logging
 by providing a simple local CSV file for analysis.
+
+Histograms are saved to separate npz files for offline analysis.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytorch_lightning as pl
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
@@ -20,18 +23,22 @@ logger = logging.getLogger(__name__)
 
 
 class CSVLoggingCallback(Callback):
-    """Callback for logging metrics to CSV file.
+    """Callback for logging metrics to CSV and histograms to npz files.
 
     Logs all metrics that are tracked by the trainer to a CSV file,
     with one row per epoch. This includes all metrics logged via
-    self.log() in the LightningModule (train/*, val/*, etc.).
+    self.log() in the LightningModule (train/*, val/*, diagnostics/*).
 
     The CSV file will have columns:
     - epoch: Epoch number
     - step: Global step number
-    - All logged metrics (train/loss, val/loss, train/psnr, etc.)
+    - All logged scalar metrics (train/loss, val/loss, diagnostics/*, etc.)
 
-    Metrics are written after each validation epoch ends.
+    Histograms (timestep_distribution, token_distribution) are saved
+    to separate npz files in the histograms/ subdirectory.
+
+    Metrics are written after each validation epoch ends to ensure
+    both train and val metrics are captured.
     """
 
     def __init__(self, cfg: DictConfig) -> None:
@@ -47,8 +54,12 @@ class CSVLoggingCallback(Callback):
         self.output_dir = Path(cfg.experiment.output_dir) / "csv_logs"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # CSV file path
-        self.csv_path = self.output_dir / "training_metrics.csv"
+        # Histogram directory
+        self.histogram_dir = self.output_dir / "histograms"
+        self.histogram_dir.mkdir(parents=True, exist_ok=True)
+
+        # CSV file path (renamed to performance.csv)
+        self.csv_path = self.output_dir / "performance.csv"
 
         # Track if we've written the header
         self._header_written = False
@@ -56,7 +67,11 @@ class CSVLoggingCallback(Callback):
         # Store all metric names we've seen
         self._all_metric_names: set[str] = set()
 
+        # Accumulators for histograms
+        self._histogram_data: dict[str, list] = {}
+
         logger.info(f"CSVLoggingCallback initialized, will write to {self.csv_path}")
+        logger.info(f"Histograms will be saved to {self.histogram_dir}")
 
     def on_train_epoch_end(
         self,
@@ -73,6 +88,33 @@ class CSVLoggingCallback(Callback):
         # to ensure we have both train and val metrics
         pass
 
+    def save_histogram(
+        self,
+        name: str,
+        data: np.ndarray,
+        epoch: int,
+    ) -> None:
+        """Save histogram data to npz file.
+
+        Args:
+            name: Histogram name (e.g., 'timestep_distribution').
+            data: Numpy array of values.
+            epoch: Current epoch number.
+        """
+        # Create filename with epoch number
+        filename = f"{name}_epoch{epoch:04d}.npz"
+        filepath = self.histogram_dir / filename
+
+        # Save to npz
+        np.savez_compressed(
+            filepath,
+            data=data,
+            epoch=epoch,
+            histogram_name=name,
+        )
+
+        logger.debug(f"Saved histogram {name} to {filepath}")
+
     def on_validation_epoch_end(
         self,
         trainer: pl.Trainer,
@@ -81,6 +123,7 @@ class CSVLoggingCallback(Callback):
         """Called at the end of each validation epoch.
 
         Collects all logged metrics and writes them to CSV.
+        Also checks for histogram data logged to wandb and saves to npz.
 
         Args:
             trainer: Lightning trainer.
@@ -95,13 +138,22 @@ class CSVLoggingCallback(Callback):
         metrics = trainer.callback_metrics
 
         # Convert metrics to a regular dict and extract values
+        # Only include scalar metrics (not tensors with > 1 element)
         metrics_dict = {}
         for key, value in metrics.items():
-            if hasattr(value, "item"):
-                # Convert tensor to Python scalar
-                metrics_dict[key] = value.item()
-            else:
-                metrics_dict[key] = value
+            try:
+                if hasattr(value, "item"):
+                    # Convert tensor to Python scalar
+                    metrics_dict[key] = value.item()
+                elif isinstance(value, (int, float)):
+                    metrics_dict[key] = value
+                else:
+                    # Skip non-scalar values
+                    logger.debug(f"Skipping non-scalar metric: {key}")
+            except (ValueError, RuntimeError):
+                # Skip if conversion fails
+                logger.debug(f"Could not convert metric {key} to scalar")
+                continue
 
         # Update our set of all metric names
         self._all_metric_names.update(metrics_dict.keys())

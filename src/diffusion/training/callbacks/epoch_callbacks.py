@@ -224,19 +224,26 @@ class VisualizationCallback(Callback):
         z_range = self.cfg.data.slice_sampling.z_range
         min_z, max_z = z_range
         n_bins = self.cfg.conditioning.z_bins
-        max_z_volume = 127  # Standard for 128-slice volumes
 
-        # Compute set of all valid z_bins from training data
+        # With LOCAL binning, all bins from 0 to n_bins-1 are valid
+        # since we bin within the z_range
         valid_bins = set()
         for z_idx in range(min_z, max_z + 1):
-            z_bin = quantize_z(z_idx, max_z_volume, n_bins)
+            z_bin = quantize_z(z_idx, tuple(z_range), n_bins)
             valid_bins.add(z_bin)
 
         valid_bins_sorted = sorted(list(valid_bins))
         logger.info(
             f"Computed {len(valid_bins_sorted)} valid z_bins from "
-            f"z_range=[{min_z}, {max_z}]: {valid_bins_sorted}"
+            f"z_range=[{min_z}, {max_z}]: {valid_bins_sorted} (LOCAL binning)"
         )
+
+        # Verify all bins are used (sanity check for local binning)
+        if len(valid_bins_sorted) != n_bins:
+            logger.warning(
+                f"Expected all {n_bins} bins to be used with LOCAL binning, "
+                f"but got {len(valid_bins_sorted)} bins. This may indicate an issue."
+            )
 
         # Get requested z_bins from config
         requested_bins = self.vis_cfg.get("z_bins_to_show", None)

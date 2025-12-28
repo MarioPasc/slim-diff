@@ -29,7 +29,7 @@ from src.diffusion.model.components.conditioning import (
     get_token_for_condition,
     token_to_condition,
 )
-from src.diffusion.model.embeddings.zpos import normalize_z, quantize_z
+from src.diffusion.model.embeddings.zpos import normalize_z_local, quantize_z
 from src.diffusion.model.factory import build_model, build_scheduler
 from src.diffusion.training.metrics import dice_coefficient, psnr, ssim
 
@@ -198,23 +198,46 @@ def test_config():
 class TestZPositionEncoding:
     """Tests for z-position encoding utilities."""
 
-    def test_normalize_z(self):
-        """Test z-index normalization."""
-        assert normalize_z(0, 127) == 0.0
-        assert normalize_z(127, 127) == 1.0
-        assert normalize_z(63, 127) == pytest.approx(0.496, rel=0.01)
+    def test_normalize_z_local(self):
+        """Test local z-index normalization within z_range."""
+        z_range = (0, 127)
+        assert normalize_z_local(0, z_range) == 0.0
+        assert normalize_z_local(127, z_range) == 1.0
+        assert normalize_z_local(63, z_range) == pytest.approx(0.496, rel=0.01)
+
+        # Test with custom z_range
+        z_range = (24, 93)
+        assert normalize_z_local(24, z_range) == 0.0
+        assert normalize_z_local(93, z_range) == 1.0
+        # Middle of range (58.5) should be ~0.5
+        assert normalize_z_local(58, z_range) == pytest.approx(0.493, rel=0.01)
 
     def test_quantize_z(self):
-        """Test z-position quantization."""
+        """Test LOCAL z-position quantization within z_range."""
         n_bins = 50
+        z_range = (0, 127)
 
-        # Edge cases
-        assert quantize_z(0, 127, n_bins) == 0
-        assert quantize_z(127, 127, n_bins) == 49  # Clamped
+        # Edge cases for full range
+        assert quantize_z(0, z_range, n_bins) == 0
+        assert quantize_z(127, z_range, n_bins) == 49  # Clamped
 
         # Middle value
-        z_bin = quantize_z(63, 127, n_bins)
+        z_bin = quantize_z(63, z_range, n_bins)
         assert 0 <= z_bin < n_bins
+
+        # Test with custom z_range (local binning)
+        z_range = (24, 93)  # 70 slices
+        n_bins = 10
+
+        # First slice should map to bin 0
+        assert quantize_z(24, z_range, n_bins) == 0
+
+        # Last slice should map to bin 9
+        assert quantize_z(93, z_range, n_bins) == 9
+
+        # Middle slice (58) should map to middle bin
+        z_bin_middle = quantize_z(58, z_range, n_bins)
+        assert z_bin_middle == 4  # (58-24) / (93-24) * 10 = 34/69 * 10 ≈ 4.9 → 4
 
 
 class TestConditioning:
@@ -493,36 +516,40 @@ class TestDataShapes:
 class TestZRangeFunctionality:
     """Test that z_range configuration works correctly."""
 
-    def test_z_range_filtering(self):
-        """Test that z_range correctly filters slices."""
+    def test_z_range_local_binning(self):
+        """Test that LOCAL binning uses all bins within z_range."""
         from src.diffusion.model.embeddings.zpos import quantize_z
 
         n_bins = 50
-        z_range = [40, 100]
+        z_range = (40, 100)  # 61 slices
         min_z, max_z = z_range
 
-        # Calculate expected z_bins from the range
+        # Calculate z_bins from the range using LOCAL binning
         expected_bins = set()
         for z_idx in range(min_z, max_z + 1):
-            z_bin = quantize_z(z_idx, 127, n_bins)
+            z_bin = quantize_z(z_idx, z_range, n_bins)
             expected_bins.add(z_bin)
 
-        # Verify that we get a reasonable number of bins
-        assert len(expected_bins) > 0
-        assert len(expected_bins) <= n_bins
+        # With local binning, ALL bins should be used
+        assert len(expected_bins) == n_bins, \
+            f"Expected all {n_bins} bins to be used, got {len(expected_bins)}"
 
         # All bins should be within valid range
         for z_bin in expected_bins:
             assert 0 <= z_bin < n_bins
 
-        # Verify that bins outside the range are not included
-        # z_idx=0 should map to bin 0
-        bin_0 = quantize_z(0, 127, n_bins)
-        assert bin_0 not in expected_bins or bin_0 >= quantize_z(min_z, 127, n_bins)
+        # Verify bin 0 is the first slice in range
+        assert quantize_z(min_z, z_range, n_bins) == 0
 
-        # z_idx=127 should map to bin 49
-        bin_127 = quantize_z(127, 127, n_bins)
-        assert bin_127 not in expected_bins or bin_127 <= quantize_z(max_z, 127, n_bins)
+        # Verify last bin is the last slice in range
+        assert quantize_z(max_z, z_range, n_bins) == n_bins - 1
+
+        # Slices outside z_range should raise ValueError
+        with pytest.raises(ValueError):
+            quantize_z(0, z_range, n_bins)  # Before range
+
+        with pytest.raises(ValueError):
+            quantize_z(127, z_range, n_bins)  # After range
 
 
 if __name__ == "__main__":

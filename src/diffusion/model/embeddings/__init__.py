@@ -4,7 +4,7 @@ from src.diffusion.model.embeddings.zpos import (
     ConditionalEmbeddingWithSinusoidal,
     SinusoidalPositionEncoding,
     ZPositionEncoder,
-    normalize_z,
+    normalize_z_local,
     quantize_z,
     z_bin_to_index,
 )
@@ -13,7 +13,7 @@ __all__ = [
     "ConditionalEmbeddingWithSinusoidal",
     "SinusoidalPositionEncoding",
     "ZPositionEncoder",
-    "normalize_z",
+    "normalize_z_local",
     "quantize_z",
     "z_bin_to_index",
 ]

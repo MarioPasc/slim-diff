@@ -12,56 +12,108 @@ import torch
 import torch.nn as nn
 
 
-def normalize_z(z_index: int, max_z: int) -> float:
-    """Normalize z-index to [0, 1] range.
+def normalize_z_local(
+    z_index: int,
+    z_range: tuple[int, int],
+) -> float:
+    """Normalize z-index to [0, 1] range within the local z_range.
 
     Args:
-        z_index: Current z-index (0 to max_z inclusive).
-        max_z: Maximum z-index (typically 127 for 128 slices).
+        z_index: Current z-index.
+        z_range: (min_z, max_z) range of valid slices (inclusive).
 
     Returns:
-        Normalized z-position in [0, 1].
+        Normalized z-position in [0, 1] within the range.
+
+    Raises:
+        ValueError: If z_index is outside z_range.
     """
-    if max_z == 0:
+    min_z, max_z = z_range
+
+    if z_index < min_z or z_index > max_z:
+        raise ValueError(
+            f"z_index {z_index} outside z_range [{min_z}, {max_z}]"
+        )
+
+    range_size = max_z - min_z
+    if range_size == 0:
         return 0.0
-    return z_index / max_z
+
+    return (z_index - min_z) / range_size
 
 
 def quantize_z(
     z_index: int,
-    max_z: int,
+    z_range: tuple[int, int],
     n_bins: int,
 ) -> int:
-    """Quantize z-position into discrete bins.
+    """Quantize z-position into discrete bins using LOCAL binning within z_range.
+
+    This function bins slices WITHIN the z_range, ensuring all bins are used
+    during training and each bin represents a subset of the training slices.
+
+    Example:
+        >>> # With z_range=[24, 93] and n_bins=10:
+        >>> # Bin 0: slices [24-30]
+        >>> # Bin 1: slices [31-37]
+        >>> # ...
+        >>> # Bin 9: slices [87-93]
+        >>> quantize_z(24, z_range=(24, 93), n_bins=10)
+        0
+        >>> quantize_z(55, z_range=(24, 93), n_bins=10)
+        4
 
     Args:
         z_index: Current z-index.
-        max_z: Maximum z-index.
-        n_bins: Number of bins (default 50).
+        z_range: (min_z, max_z) range of valid slices (inclusive).
+        n_bins: Number of bins.
 
     Returns:
         Bin index in [0, n_bins - 1].
+
+    Raises:
+        ValueError: If z_index is outside z_range.
     """
-    z_norm = normalize_z(z_index, max_z)
+    z_norm = normalize_z_local(z_index, z_range)
     z_bin = int(z_norm * n_bins)
-    # Clamp to valid range
+    # Clamp to valid range (handles edge case where z_norm == 1.0)
     return min(max(z_bin, 0), n_bins - 1)
 
 
-def z_bin_to_index(z_bin: int, n_bins: int, max_z: int = 127) -> int:
-    """Convert z-bin back to approximate z-index.
+def z_bin_to_index(
+    z_bin: int,
+    z_range: tuple[int, int],
+    n_bins: int,
+) -> int:
+    """Convert z-bin back to approximate z-index using LOCAL binning.
 
     Args:
         z_bin: Bin index.
+        z_range: (min_z, max_z) range of valid slices (inclusive).
         n_bins: Number of bins.
-        max_z: Maximum z-index.
 
     Returns:
-        Approximate z-index.
+        Approximate z-index (center of bin).
+
+    Example:
+        >>> # With z_range=[24, 93] and n_bins=10, bin 5 maps to center of [59-65]
+        >>> z_bin_to_index(5, z_range=(24, 93), n_bins=10)
+        62
     """
-    # Take center of bin
+    min_z, max_z = z_range
+    range_size = max_z - min_z
+
+    if range_size == 0:
+        return min_z
+
+    # Take center of bin in normalized space
     z_norm = (z_bin + 0.5) / n_bins
-    return int(z_norm * max_z)
+
+    # Map back to z_range
+    z_index = min_z + int(z_norm * range_size)
+
+    # Clamp to valid range
+    return min(max(z_index, min_z), max_z)
 
 
 class SinusoidalPositionEncoding(nn.Module):

@@ -93,6 +93,7 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
 
     # Advanced diagnostics callbacks
     callbacks.append(DiagnosticsCallback(
+        cfg=cfg,
         log_every_n_epochs=1,
         log_histograms=True,
     ))

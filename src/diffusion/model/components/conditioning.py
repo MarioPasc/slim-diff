@@ -11,25 +11,51 @@ import torch
 
 def compute_z_bin(
     z_index: int | torch.Tensor,
-    max_z: int = 127,
+    z_range: tuple[int, int],
     n_bins: int = 50,
 ) -> int | torch.Tensor:
-    """Compute z-bin from z-index.
+    """Compute z-bin from z-index using LOCAL binning within z_range.
 
     Args:
-        z_index: Z-index (0 to max_z).
-        max_z: Maximum z-index.
+        z_index: Z-index within z_range.
+        z_range: (min_z, max_z) range of valid slices (inclusive).
         n_bins: Number of bins.
 
     Returns:
         Z-bin index (0 to n_bins - 1).
+
+    Raises:
+        ValueError: If z_index is outside z_range.
     """
+    min_z, max_z = z_range
+    range_size = max_z - min_z
+
     if isinstance(z_index, torch.Tensor):
-        z_norm = z_index.float() / max_z
+        # Check bounds
+        if (z_index < min_z).any() or (z_index > max_z).any():
+            raise ValueError(
+                f"Some z_index values outside z_range [{min_z}, {max_z}]"
+            )
+
+        # Normalize within range
+        if range_size == 0:
+            return torch.zeros_like(z_index, dtype=torch.long)
+
+        z_norm = (z_index.float() - min_z) / range_size
         z_bin = (z_norm * n_bins).long()
         return z_bin.clamp(0, n_bins - 1)
     else:
-        z_norm = z_index / max_z
+        # Check bounds
+        if z_index < min_z or z_index > max_z:
+            raise ValueError(
+                f"z_index {z_index} outside z_range [{min_z}, {max_z}]"
+            )
+
+        # Normalize within range
+        if range_size == 0:
+            return 0
+
+        z_norm = (z_index - min_z) / range_size
         z_bin = int(z_norm * n_bins)
         return min(max(z_bin, 0), n_bins - 1)
 

@@ -2,17 +2,21 @@
 
 Provides comprehensive diagnostics including timestep distributions,
 per-class metrics, SNR tracking, and other deep learning best practices.
+
+Histograms are saved to both wandb and local npz files for offline analysis.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import Callback
+from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
 
@@ -193,27 +197,38 @@ class DiagnosticsCallback(Callback):
     - Per-class validation metrics
     - Noise and prediction error statistics
     - SNR (Signal-to-Noise Ratio) across timesteps
+
+    Histograms are saved to both wandb and local npz files.
     """
 
     def __init__(
         self,
+        cfg: DictConfig,
         log_every_n_epochs: int = 1,
         log_histograms: bool = True,
     ) -> None:
         """Initialize the callback.
 
         Args:
+            cfg: Configuration object.
             log_every_n_epochs: Frequency of diagnostic logging.
             log_histograms: Whether to log histograms (requires wandb).
         """
         super().__init__()
+        self.cfg = cfg
         self.log_every_n_epochs = log_every_n_epochs
         self.log_histograms = log_histograms
+
+        # Create histogram directory
+        self.histogram_dir = Path(cfg.experiment.output_dir) / "csv_logs" / "histograms"
+        self.histogram_dir.mkdir(parents=True, exist_ok=True)
 
         # Accumulators for epoch-level statistics
         self.train_timesteps = []
         self.train_tokens = []
         self.val_metrics_by_class = {"lesion": [], "control": []}
+
+        logger.info(f"DiagnosticsCallback initialized, histograms will be saved to {self.histogram_dir}")
 
     def on_train_batch_end(
         self,
@@ -267,6 +282,13 @@ class DiagnosticsCallback(Callback):
         if len(self.train_timesteps) > 0 and self.log_histograms:
             timesteps_array = np.array(self.train_timesteps)
 
+            # Save to npz file
+            self._save_histogram(
+                name="timestep_distribution",
+                data=timesteps_array,
+                epoch=current_epoch,
+            )
+
             # Log histogram to wandb
             if hasattr(trainer.logger, "experiment"):
                 import wandb
@@ -293,6 +315,13 @@ class DiagnosticsCallback(Callback):
             pl_module.log("diagnostics/class_balance_control", n_control / total, sync_dist=False)
             pl_module.log("diagnostics/class_balance_lesion", n_lesion / total, sync_dist=False)
 
+            # Save to npz file
+            self._save_histogram(
+                name="token_distribution",
+                data=tokens_array,
+                epoch=current_epoch,
+            )
+
             if self.log_histograms and hasattr(trainer.logger, "experiment"):
                 import wandb
                 trainer.logger.experiment.log({
@@ -303,6 +332,39 @@ class DiagnosticsCallback(Callback):
         # Clear accumulators
         self.train_timesteps = []
         self.train_tokens = []
+
+    def _save_histogram(
+        self,
+        name: str,
+        data: np.ndarray,
+        epoch: int,
+    ) -> None:
+        """Save histogram data to npz file.
+
+        Args:
+            name: Histogram name (e.g., 'timestep_distribution').
+            data: Numpy array of values.
+            epoch: Current epoch number.
+        """
+        # Create filename with epoch number
+        filename = f"{name}_epoch{epoch:04d}.npz"
+        filepath = self.histogram_dir / filename
+
+        # Save to npz with additional metadata
+        np.savez_compressed(
+            filepath,
+            data=data,
+            epoch=epoch,
+            histogram_name=name,
+            # Add histogram statistics
+            mean=np.mean(data),
+            std=np.std(data),
+            min=np.min(data),
+            max=np.max(data),
+            count=len(data),
+        )
+
+        logger.debug(f"Saved histogram {name} to {filepath}")
 
     def on_validation_batch_end(
         self,

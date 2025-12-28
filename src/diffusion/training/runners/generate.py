@@ -195,17 +195,14 @@ def generate(
     if z_bins is None:
         z_bins = gen_cfg.z_bins
         if z_bins is None:
-            # Default to all bins, but respect z_range if configured
-            z_range = cfg.data.slice_sampling.z_range
-            min_z, max_z = z_range
-            # Convert z_indices to z_bins
-            from src.diffusion.model.embeddings.zpos import quantize_z
+            # Default to all bins - with LOCAL binning, this is simply 0 to n_bins-1
             n_bins = cfg.conditioning.z_bins
-            z_bins_set = set()
-            for z_idx in range(min_z, max_z + 1):
-                z_bin = quantize_z(z_idx, 127, n_bins)  # 127 is max_z for 128 slices
-                z_bins_set.add(z_bin)
-            z_bins = sorted(list(z_bins_set))
+            z_bins = list(range(n_bins))
+
+            logger.info(
+                f"Using LOCAL binning: all {n_bins} bins (0-{n_bins-1}) "
+                f"correspond to z_range {cfg.data.slice_sampling.z_range}"
+            )
     if classes is None:
         classes = list(gen_cfg.classes)
     if n_per_condition is None:

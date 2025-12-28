@@ -112,8 +112,8 @@ def process_subject(
             ):
                 continue
 
-        # Compute z-bin and class
-        z_bin = quantize_z(z_idx, n_slices - 1, z_bins)
+        # Compute z-bin and class using LOCAL binning within z_range
+        z_bin = quantize_z(z_idx, tuple(z_range), z_bins)
         has_lesion = check_lesion_content(mask_slice)
         pathology_class = 1 if has_lesion else 0
         token = z_bin + pathology_class * z_bins

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-#SBATCH -J log_generate_jsddpm_flair_soco
-#SBATCH --time=0-6:00:00
+#SBATCH -J log_generate_baseline_jsddpm
+#SBATCH --time=1-12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=16G
+#SBATCH --mem=32G
 #SBATCH --constraint=dgx
 #SBATCH --gres=gpu:1
 #SBATCH --output=%x.%j.out
@@ -36,7 +36,7 @@ CONDA_ENV_NAME="jsddpm"
 
 # Paths - UPDATE THESE FOR YOUR CLUSTER
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
-CONFIG_FILE="${REPO_SRC}/src/diffusion/config/${EXPERIMENT_NAME}.yaml"
+CONFIG_FILE="${REPO_SRC}/slurm/${EXPERIMENT_NAME}.yaml"
 
 # Checkpoint path - from command line argument or default
 if [ $# -eq 0 ]; then
