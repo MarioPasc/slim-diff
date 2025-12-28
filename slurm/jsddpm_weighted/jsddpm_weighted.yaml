@@ -64,7 +64,7 @@ conditioning:
   # Total classes: 2 * z_bins = 100
 
   # Z-position encoding options
-  use_sinusoidal: true  # Use sinusoidal position encoding for z-position (default: false)
+  use_sinusoidal: false  # Use sinusoidal position encoding for z-position (default: false)
   max_z: 128  # Maximum z-index for sinusoidal encoding
 
   # Classifier-free guidance (CFG)
@@ -191,7 +191,7 @@ loss:
 
   # Optional lesion-weighted mask loss
   lesion_weighted_mask:
-    enabled: false
+    enabled: true
     lesion_weight: 2.5  # Extra weight for lesion pixels
     background_weight: 1.0
 

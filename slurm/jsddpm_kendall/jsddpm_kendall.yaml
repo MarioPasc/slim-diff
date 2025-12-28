@@ -64,7 +64,7 @@ conditioning:
   # Total classes: 2 * z_bins = 100
 
   # Z-position encoding options
-  use_sinusoidal: true  # Use sinusoidal position encoding for z-position (default: false)
+  use_sinusoidal: false  # Use sinusoidal position encoding for z-position (default: false)
   max_z: 128  # Maximum z-index for sinusoidal encoding
 
   # Classifier-free guidance (CFG)
@@ -185,7 +185,7 @@ training:
 loss:
   # Uncertainty weighting (Kendall et al.)
   uncertainty_weighting:
-    enabled: false
+    enabled: true
     initial_log_vars: [0.0, 0.0]  # [image, mask]
     learnable: true
 

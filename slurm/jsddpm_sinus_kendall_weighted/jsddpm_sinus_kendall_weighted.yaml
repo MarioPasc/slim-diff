@@ -185,13 +185,13 @@ training:
 loss:
   # Uncertainty weighting (Kendall et al.)
   uncertainty_weighting:
-    enabled: false
+    enabled: true
     initial_log_vars: [0.0, 0.0]  # [image, mask]
     learnable: true
 
   # Optional lesion-weighted mask loss
   lesion_weighted_mask:
-    enabled: false
+    enabled: true
     lesion_weight: 2.5  # Extra weight for lesion pixels
     background_weight: 1.0
 
