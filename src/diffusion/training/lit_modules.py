@@ -52,8 +52,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         self.save_hyperparameters(cfg)
 
         # Enable Tensor Cores on CUDA devices for better performance
-        if torch.cuda.is_available():
-            torch.set_float32_matmul_precision('medium')
+        #if torch.cuda.is_available():
+        #    torch.set_float32_matmul_precision('medium')
 
         # Validate configuration before building components
         from src.diffusion.config.validation import validate_config
