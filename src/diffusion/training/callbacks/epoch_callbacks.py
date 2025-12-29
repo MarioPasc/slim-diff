@@ -428,6 +428,8 @@ class VisualizationCallback(Callback):
                     pp_cfg.gaussian_sigma_px,
                     pp_cfg.min_component_px,
                     pp_cfg.fallback,
+                    pp_cfg.get("n_first_bins", 0),
+                    pp_cfg.get("max_components_for_first_bins", 1),
                 )
 
                 # Convert back to tensor

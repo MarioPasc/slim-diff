@@ -206,6 +206,8 @@ postprocessing:
     dilate_radius_px: 3  # Dilation radius (pixels) for ROI tolerance
     gaussian_sigma_px: 0.7  # Gaussian smoothing sigma for thresholding
     min_component_px: 500  # Minimum connected component size (pixels)
+    n_first_bins: 5  # Number of low z-bins for multi-component handling (near neck/brainstem)
+    max_components_for_first_bins: 3  # Keep top N largest components for first bins
     fallback: "prior"  # Options: "prior" (use ROI as mask), "empty" (zero out)
     apply_to: ["validation", "visualization", "generation"]  # Where to apply
 

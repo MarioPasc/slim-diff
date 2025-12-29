@@ -143,6 +143,8 @@ def generate_samples(
                         zbin_cfg.get("gaussian_sigma_px", 0.7),
                         zbin_cfg.get("min_component_px", 500),
                         zbin_cfg.get("fallback", "prior"),
+                        zbin_cfg.get("n_first_bins", 0),
+                        zbin_cfg.get("max_components_for_first_bins", 1),
                     )
 
                 # Create metadata

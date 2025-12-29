@@ -96,6 +96,7 @@ def compute_brain_foreground_mask(
     image: NDArray[np.float32],
     gaussian_sigma_px: float,
     min_component_px: int,
+    n_components_to_keep: int = 1,
 ) -> NDArray[np.bool_] | None:
     """Compute binary brain foreground mask for a single slice.
 
@@ -103,13 +104,14 @@ def compute_brain_foreground_mask(
     1. Robust percentile scaling (p1, p99)
     2. Gaussian smoothing
     3. Otsu thresholding
-    4. Largest connected component
+    4. Top N largest connected components
     5. Fill holes
 
     Args:
         image: 2D image array (H, W).
         gaussian_sigma_px: Sigma for Gaussian smoothing.
         min_component_px: Minimum component size to keep.
+        n_components_to_keep: Number of largest components to keep (default: 1).
 
     Returns:
         Binary mask (H, W) or None if slice is invalid.
@@ -143,20 +145,47 @@ def compute_brain_foreground_mask(
     if n_components == 0:
         return None
 
-    # Find largest component
+    # Find component sizes
     component_sizes = np.bincount(labeled.ravel())
     component_sizes[0] = 0  # Ignore background
 
-    largest_idx = np.argmax(component_sizes)
-    largest_size = component_sizes[largest_idx]
+    # Get indices of top N largest components
+    # argsort gives indices from smallest to largest, so we reverse it
+    sorted_indices = np.argsort(component_sizes)[::-1]
 
-    if largest_size < min_component_px:
+    # Keep up to n_components_to_keep largest components
+    n_to_keep = min(n_components_to_keep, n_components)
+    keep_indices = []
+
+    for idx in sorted_indices:
+        if idx == 0:  # Skip background
+            continue
+
+        # For multi-component: apply full threshold only to largest component
+        # Additional components use 10% of threshold (more lenient)
+        if len(keep_indices) == 0:
+            # First component: must meet full threshold
+            if component_sizes[idx] >= min_component_px:
+                keep_indices.append(idx)
+        else:
+            # Additional components: use relaxed threshold (10% of original)
+            # This allows small brainstem structures in low z-bins
+            relaxed_threshold = min_component_px * 0.1
+            if component_sizes[idx] >= relaxed_threshold:
+                keep_indices.append(idx)
+
+        if len(keep_indices) >= n_to_keep:
+            break
+
+    if len(keep_indices) == 0:
         return None
 
-    # Keep only largest component
-    mask = labeled == largest_idx
+    # Create mask with all kept components
+    mask = np.zeros_like(binary, dtype=bool)
+    for idx in keep_indices:
+        mask |= (labeled == idx)
 
-    # Fill holes
+    # Fill holes in the combined mask
     mask = binary_fill_holes(mask)
 
     return mask.astype(np.bool_)
@@ -175,6 +204,8 @@ def compute_zbin_priors(
     dilate_radius_px: int,
     gaussian_sigma_px: float,
     min_component_px: int,
+    n_first_bins: int = 0,
+    max_components_for_first_bins: int = 1,
 ) -> dict[str, Any]:
     """Compute z-bin occupancy priors from cached slices.
 
@@ -189,6 +220,8 @@ def compute_zbin_priors(
         dilate_radius_px: Dilation radius for tolerance.
         gaussian_sigma_px: Smoothing sigma for mask computation.
         min_component_px: Minimum component size.
+        n_first_bins: Number of low z-bins for multi-component handling (default: 0).
+        max_components_for_first_bins: Keep top N components for first bins (default: 1).
 
     Returns:
         Dict with 'priors' (dict[int, ndarray]) and 'metadata'.
@@ -234,8 +267,14 @@ def compute_zbin_priors(
                     logger.info(f"Detected image shape: {image_shape}")
 
                 # Compute foreground mask for this slice
+                # Use multi-component logic for first N bins (near neck/brainstem)
+                n_components = (
+                    max_components_for_first_bins
+                    if z_bin < n_first_bins
+                    else 1
+                )
                 mask = compute_brain_foreground_mask(
-                    image, gaussian_sigma_px, min_component_px
+                    image, gaussian_sigma_px, min_component_px, n_components
                 )
 
                 if mask is None:
@@ -290,6 +329,8 @@ def compute_zbin_priors(
         "dilate_radius_px": dilate_radius_px,
         "gaussian_sigma_px": gaussian_sigma_px,
         "min_component_px": min_component_px,
+        "n_first_bins": n_first_bins,
+        "max_components_for_first_bins": max_components_for_first_bins,
         "image_shape": image_shape,
         "slice_counts": counts,
     }
@@ -391,6 +432,8 @@ def apply_zbin_prior_postprocess(
     gaussian_sigma_px: float,
     min_component_px: int,
     fallback: str,
+    n_first_bins: int = 0,
+    max_components_for_first_bins: int = 1,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Apply z-bin prior post-processing to a generated sample.
 
@@ -399,7 +442,7 @@ def apply_zbin_prior_postprocess(
     2. Robust scaling within prior region
     3. Gaussian smoothing
     4. Otsu threshold within prior
-    5. Largest connected component
+    5. Top N largest connected components (N=3 for first bins, 1 for others)
     6. Enforce min_component_px (fallback if too small)
     7. Fill holes -> final brain mask B
     8. Apply: img_out = img * B, lesion_out = lesion * B
@@ -412,6 +455,8 @@ def apply_zbin_prior_postprocess(
         gaussian_sigma_px: Smoothing sigma.
         min_component_px: Minimum component size.
         fallback: "prior" or "empty".
+        n_first_bins: Number of low z-bins for multi-component handling (default: 0).
+        max_components_for_first_bins: Keep top N components for first bins (default: 1).
 
     Returns:
         Tuple of (cleaned_img, cleaned_lesion).
@@ -468,24 +513,56 @@ def apply_zbin_prior_postprocess(
             else:
                 brain_mask = np.zeros_like(prior, dtype=np.bool_)
         else:
-            # Find largest component
+            # Determine number of components to keep
+            n_components_to_keep = (
+                max_components_for_first_bins
+                if z_bin < n_first_bins
+                else 1
+            )
+
+            # Find component sizes
             component_sizes = np.bincount(labeled.ravel())
             component_sizes[0] = 0  # Ignore background
 
-            largest_idx = np.argmax(component_sizes)
-            largest_size = component_sizes[largest_idx]
+            # Get indices of top N largest components
+            sorted_indices = np.argsort(component_sizes)[::-1]
 
-            if largest_size < min_component_px:
-                # Component too small - use fallback
+            # Keep up to n_components_to_keep largest components
+            n_to_keep = min(n_components_to_keep, n_components)
+            keep_indices = []
+
+            for idx in sorted_indices:
+                if idx == 0:  # Skip background
+                    continue
+
+                # For multi-component: apply full threshold only to largest component
+                # Additional components use 10% of threshold (more lenient)
+                if len(keep_indices) == 0:
+                    # First component: must meet full threshold
+                    if component_sizes[idx] >= min_component_px:
+                        keep_indices.append(idx)
+                else:
+                    # Additional components: use relaxed threshold (10% of original)
+                    relaxed_threshold = min_component_px * 0.1
+                    if component_sizes[idx] >= relaxed_threshold:
+                        keep_indices.append(idx)
+
+                if len(keep_indices) >= n_to_keep:
+                    break
+
+            if len(keep_indices) == 0:
+                # No components large enough - use fallback
                 if fallback == "prior":
                     brain_mask = prior.astype(np.bool_)
                 else:
                     brain_mask = np.zeros_like(prior, dtype=np.bool_)
             else:
-                # Keep largest component
-                brain_mask = labeled == largest_idx
+                # Create mask with all kept components
+                brain_mask = np.zeros_like(candidate, dtype=bool)
+                for idx in keep_indices:
+                    brain_mask |= (labeled == idx)
 
-                # Fill holes
+                # Fill holes in the combined mask
                 brain_mask = binary_fill_holes(brain_mask)
 
     # Apply mask to both image and lesion
@@ -542,6 +619,8 @@ def apply_postprocess_batch(
             pp_cfg.gaussian_sigma_px,
             pp_cfg.min_component_px,
             pp_cfg.fallback,
+            pp_cfg.get("n_first_bins", 0),
+            pp_cfg.get("max_components_for_first_bins", 1),
         )
 
         cleaned_images.append(torch.from_numpy(img_clean))

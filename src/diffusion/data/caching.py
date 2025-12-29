@@ -71,7 +71,13 @@ def _should_recompute_priors(
             return True
 
         # Check key params match
-        for key in ["prob_threshold", "dilate_radius_px", "gaussian_sigma_px"]:
+        for key in [
+            "prob_threshold",
+            "dilate_radius_px",
+            "gaussian_sigma_px",
+            "n_first_bins",
+            "max_components_for_first_bins",
+        ]:
             stored = metadata.get(key)
             configured = zbin_cfg.get(key)
             if stored != configured:
@@ -316,6 +322,8 @@ def build_slice_cache(cfg: Any) -> None:
                     dilate_radius_px=zbin_cfg.get("dilate_radius_px", 3),
                     gaussian_sigma_px=zbin_cfg.get("gaussian_sigma_px", 0.7),
                     min_component_px=zbin_cfg.get("min_component_px", 500),
+                    n_first_bins=zbin_cfg.get("n_first_bins", 0),
+                    max_components_for_first_bins=zbin_cfg.get("max_components_for_first_bins", 1),
                 )
                 save_zbin_priors(result["priors"], result["metadata"], priors_path)
                 logger.info(f"Saved z-bin priors to {priors_path}")
