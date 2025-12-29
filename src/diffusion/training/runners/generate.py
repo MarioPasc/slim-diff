@@ -22,6 +22,7 @@ from src.diffusion.training.lit_modules import JSDDPMLightningModule
 from src.diffusion.utils.io import save_sample_npz
 from src.diffusion.utils.logging import setup_logger
 from src.diffusion.utils.seeding import get_generator, seed_everything
+from src.diffusion.utils.zbin_priors import apply_zbin_prior_postprocess, load_zbin_priors
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,28 @@ def generate_samples(
     n_bins = cfg.conditioning.z_bins
     all_metadata = []
 
+    # Load z-bin priors if enabled
+    pp_cfg = cfg.get("postprocessing", {})
+    zbin_cfg = pp_cfg.get("zbin_priors", {})
+    use_zbin_priors = (
+        zbin_cfg.get("enabled", False)
+        and "generation" in zbin_cfg.get("apply_to", [])
+    )
+
+    zbin_priors = None
+    if use_zbin_priors:
+        try:
+            cache_dir = Path(cfg.data.cache_dir)
+            zbin_priors = load_zbin_priors(
+                cache_dir,
+                zbin_cfg.get("priors_filename", "zbin_priors_brain_roi.npz"),
+                n_bins,
+            )
+            logger.info(f"Loaded z-bin priors for post-processing ({len(zbin_priors)} bins)")
+        except Exception as e:
+            logger.warning(f"Failed to load z-bin priors: {e}. Post-processing disabled.")
+            use_zbin_priors = False
+
     # Set generator for reproducibility
     generator = get_generator(seed)
 
@@ -112,6 +135,15 @@ def generate_samples(
                 # Split into image and mask
                 image = sample[0].cpu().numpy()  # (H, W)
                 mask = sample[1].cpu().numpy()   # (H, W)
+
+                # Apply z-bin prior post-processing (if enabled)
+                if use_zbin_priors and zbin_priors is not None:
+                    image, mask = apply_zbin_prior_postprocess(
+                        image, mask, z_bin, zbin_priors,
+                        zbin_cfg.get("gaussian_sigma_px", 0.7),
+                        zbin_cfg.get("min_component_px", 500),
+                        zbin_cfg.get("fallback", "prior"),
+                    )
 
                 # Create metadata
                 metadata = {

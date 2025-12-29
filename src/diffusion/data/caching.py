@@ -34,8 +34,57 @@ from src.diffusion.model.embeddings.zpos import quantize_z
 from src.diffusion.utils.io import save_sample_npz
 from src.diffusion.utils.logging import setup_logger
 from src.diffusion.utils.seeding import seed_everything
+from src.diffusion.utils.zbin_priors import compute_zbin_priors, save_zbin_priors
 
 logger = logging.getLogger(__name__)
+
+
+def _should_recompute_priors(
+    priors_path: Path,
+    z_bins: int,
+    zbin_cfg: dict[str, Any],
+) -> bool:
+    """Check if priors need recomputing due to file missing or param mismatch.
+
+    Args:
+        priors_path: Path to priors file.
+        z_bins: Expected number of z-bins.
+        zbin_cfg: Z-bin prior config dict.
+
+    Returns:
+        True if priors should be recomputed.
+    """
+    if not priors_path.exists():
+        return True
+
+    # Load metadata and compare params
+    try:
+        data = np.load(priors_path, allow_pickle=True)
+        metadata = data["metadata"].item()
+
+        # Check z_bins match
+        if metadata.get("z_bins") != z_bins:
+            logger.info(
+                f"Z-bins mismatch: file has {metadata.get('z_bins')}, "
+                f"config has {z_bins}. Recomputing priors."
+            )
+            return True
+
+        # Check key params match
+        for key in ["prob_threshold", "dilate_radius_px", "gaussian_sigma_px"]:
+            stored = metadata.get(key)
+            configured = zbin_cfg.get(key)
+            if stored != configured:
+                logger.info(
+                    f"Parameter mismatch for {key}: "
+                    f"file has {stored}, config has {configured}. Recomputing priors."
+                )
+                return True
+
+        return False
+    except Exception as e:
+        logger.warning(f"Failed to read priors metadata: {e}. Recomputing.")
+        return True
 
 
 def process_subject(
@@ -243,6 +292,39 @@ def build_slice_cache(cfg: Any) -> None:
     OmegaConf.save(OmegaConf.create(stats), stats_path)
 
     logger.info(f"Cache statistics: {stats}")
+
+    # Compute z-bin priors if enabled
+    pp_cfg = cfg.get("postprocessing", {})
+    zbin_cfg = pp_cfg.get("zbin_priors", {})
+
+    if zbin_cfg.get("enabled", False):
+        priors_filename = zbin_cfg.get("priors_filename", "zbin_priors_brain_roi.npz")
+        priors_path = cache_dir / priors_filename
+
+        # Check if priors need recomputing
+        z_range = tuple(cfg.data.slice_sampling.z_range)
+        needs_compute = _should_recompute_priors(priors_path, z_bins, zbin_cfg)
+
+        if needs_compute:
+            logger.info("Computing z-bin priors...")
+            try:
+                result = compute_zbin_priors(
+                    cache_dir=cache_dir,
+                    z_bins=z_bins,
+                    z_range=z_range,
+                    prob_threshold=zbin_cfg.get("prob_threshold", 0.20),
+                    dilate_radius_px=zbin_cfg.get("dilate_radius_px", 3),
+                    gaussian_sigma_px=zbin_cfg.get("gaussian_sigma_px", 0.7),
+                    min_component_px=zbin_cfg.get("min_component_px", 500),
+                )
+                save_zbin_priors(result["priors"], result["metadata"], priors_path)
+                logger.info(f"Saved z-bin priors to {priors_path}")
+            except Exception as e:
+                logger.error(f"Failed to compute z-bin priors: {e}")
+                logger.warning("Continuing without priors. Post-processing will be disabled.")
+        else:
+            logger.info(f"Z-bin priors already exist at {priors_path}, skipping computation")
+
     logger.info(f"Cache build complete. Saved to {cache_dir}")
 
 

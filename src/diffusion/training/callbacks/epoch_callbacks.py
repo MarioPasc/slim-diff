@@ -14,12 +14,14 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 from matplotlib import pyplot as plt
+from numpy.typing import NDArray
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 
 from src.diffusion.model.components.conditioning import get_visualization_tokens
 from src.diffusion.model.embeddings.zpos import quantize_z
 from src.diffusion.model.factory import DiffusionSampler
+from src.diffusion.utils.zbin_priors import apply_zbin_prior_postprocess, load_zbin_priors
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +211,23 @@ class VisualizationCallback(Callback):
         self.every_n_epochs = self.vis_cfg.every_n_epochs
 
         self._sampler: DiffusionSampler | None = None
-        logger.info(f"VisualizationCallback initialized, z_bins={self.z_bins}")
+
+        # Z-bin prior post-processing
+        self._zbin_priors: dict[int, NDArray[np.bool_]] | None = None
+        pp_cfg = cfg.get("postprocessing", {})
+        zbin_cfg = pp_cfg.get("zbin_priors", {})
+        self._use_zbin_priors = (
+            zbin_cfg.get("enabled", False)
+            and "visualization" in zbin_cfg.get("apply_to", [])
+        )
+
+        if self._use_zbin_priors:
+            self._load_zbin_priors()
+
+        logger.info(
+            f"VisualizationCallback initialized, z_bins={self.z_bins}, "
+            f"zbin_priors={self._use_zbin_priors}"
+        )
 
     def _compute_valid_z_bins(self) -> list[int]:
         """Compute valid z_bins from z_range to match training distribution.
@@ -310,6 +328,22 @@ class VisualizationCallback(Callback):
         indices = [int(i * (len(valid_bins) - 1) / (n_to_show - 1)) for i in range(n_to_show)]
         return [valid_bins[i] for i in indices]
 
+    def _load_zbin_priors(self) -> None:
+        """Load z-bin priors from cache for post-processing."""
+        pp_cfg = self.cfg.postprocessing.zbin_priors
+        cache_dir = Path(self.cfg.data.cache_dir)
+        z_bins = self.cfg.conditioning.z_bins
+
+        try:
+            self._zbin_priors = load_zbin_priors(
+                cache_dir, pp_cfg.priors_filename, z_bins
+            )
+            logger.info(f"VisualizationCallback: Loaded z-bin priors for {len(self._zbin_priors)} bins")
+        except Exception as e:
+            logger.warning(f"Failed to load z-bin priors: {e}. Post-processing disabled.")
+            self._use_zbin_priors = False
+            self._zbin_priors = None
+
     def _get_sampler(
         self,
         pl_module: pl.LightningModule,
@@ -376,6 +410,33 @@ class VisualizationCallback(Callback):
             for token in lesion_tokens:
                 sample = sampler.sample_single(token)
                 samples.append(sample)
+
+        # Apply z-bin prior post-processing (if enabled)
+        if self._use_zbin_priors and self._zbin_priors is not None:
+            pp_cfg = self.cfg.postprocessing.zbin_priors
+            cleaned_samples = []
+            for i, sample in enumerate(samples):
+                # Determine z_bin for this sample
+                # First half are control, second half are lesion
+                z_bin = self.z_bins[i % len(self.z_bins)]
+
+                img = sample[0].cpu().numpy()
+                mask = sample[1].cpu().numpy()
+
+                img_clean, mask_clean = apply_zbin_prior_postprocess(
+                    img, mask, z_bin, self._zbin_priors,
+                    pp_cfg.gaussian_sigma_px,
+                    pp_cfg.min_component_px,
+                    pp_cfg.fallback,
+                )
+
+                # Convert back to tensor
+                cleaned_sample = torch.stack([
+                    torch.from_numpy(img_clean).to(sample.device),
+                    torch.from_numpy(mask_clean).to(sample.device),
+                ])
+                cleaned_samples.append(cleaned_sample)
+            samples = cleaned_samples
 
         # Create grid
         grid = create_visualization_grid(samples, self.z_bins, self.cfg)

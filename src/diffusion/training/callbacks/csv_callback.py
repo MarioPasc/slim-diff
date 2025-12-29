@@ -70,6 +70,9 @@ class CSVLoggingCallback(Callback):
         # Accumulators for histograms
         self._histogram_data: dict[str, list] = {}
 
+        # Cache for training metrics (to be written with validation metrics)
+        self._cached_train_metrics: dict[str, float] = {}
+
         logger.info(f"CSVLoggingCallback initialized, will write to {self.csv_path}")
         logger.info(f"Histograms will be saved to {self.histogram_dir}")
 
@@ -80,13 +83,36 @@ class CSVLoggingCallback(Callback):
     ) -> None:
         """Called at the end of each training epoch.
 
+        Caches training metrics to be written with validation metrics.
+
         Args:
             trainer: Lightning trainer.
             pl_module: Lightning module.
         """
-        # We'll write metrics after validation epoch ends
-        # to ensure we have both train and val metrics
-        pass
+        # Get current epoch
+        current_epoch = trainer.current_epoch
+
+        # Collect training metrics from callback_metrics
+        # These are the epoch-aggregated values from self.log(..., on_epoch=True)
+        metrics = trainer.callback_metrics
+
+        # Cache training metrics
+        self._cached_train_metrics = {}
+        for key, value in metrics.items():
+            # Only cache training metrics (skip val/*, diagnostics/*, etc.)
+            if key.startswith("train/") or key == "lr":
+                try:
+                    if hasattr(value, "item"):
+                        self._cached_train_metrics[key] = value.item()
+                    elif isinstance(value, (int, float)):
+                        self._cached_train_metrics[key] = value
+                    else:
+                        logger.debug(f"Skipping non-scalar metric: {key}")
+                except (ValueError, RuntimeError):
+                    logger.debug(f"Could not convert metric {key} to scalar")
+                    continue
+
+        logger.debug(f"Cached {len(self._cached_train_metrics)} training metrics for epoch {current_epoch}")
 
     def save_histogram(
         self,
@@ -122,7 +148,7 @@ class CSVLoggingCallback(Callback):
     ) -> None:
         """Called at the end of each validation epoch.
 
-        Collects all logged metrics and writes them to CSV.
+        Collects all logged metrics (train + val + diagnostics) and writes them to CSV.
         Also checks for histogram data logged to wandb and saves to npz.
 
         Args:
@@ -155,20 +181,27 @@ class CSVLoggingCallback(Callback):
                 logger.debug(f"Could not convert metric {key} to scalar")
                 continue
 
+        # Merge cached training metrics with current metrics
+        # Training metrics were cached in on_train_epoch_end
+        combined_metrics = {**self._cached_train_metrics, **metrics_dict}
+
         # Update our set of all metric names
-        self._all_metric_names.update(metrics_dict.keys())
+        self._all_metric_names.update(combined_metrics.keys())
 
         # Add epoch and step to metrics
         row_data = {
             "epoch": current_epoch,
             "step": global_step,
-            **metrics_dict,
+            **combined_metrics,
         }
 
         # Write to CSV
         self._write_row(row_data)
 
-        logger.debug(f"Wrote metrics for epoch {current_epoch} to {self.csv_path}")
+        logger.debug(f"Wrote {len(combined_metrics)} metrics for epoch {current_epoch} to {self.csv_path}")
+
+        # Clear cached training metrics for next epoch
+        self._cached_train_metrics = {}
 
     def _write_row(self, row_data: dict[str, Any]) -> None:
         """Write a single row to the CSV file.

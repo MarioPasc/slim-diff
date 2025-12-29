@@ -7,11 +7,14 @@ for the joint-synthesis diffusion model.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+from numpy.typing import NDArray
 from omegaconf import DictConfig
 
 from src.diffusion.losses.diffusion_losses import DiffusionLoss
@@ -26,6 +29,7 @@ from src.diffusion.model.factory import (
     predict_x0,
 )
 from src.diffusion.training.metrics import MetricsCalculator
+from src.diffusion.utils.zbin_priors import apply_postprocess_batch, load_zbin_priors
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +82,22 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Cache alphas_cumprod for x0 prediction
         self._register_scheduler_buffers()
 
-        logger.info(f"Initialized JSDDPMLightningModule with CFG={self.use_cfg}")
+        # Z-bin prior post-processing
+        self._zbin_priors: dict[int, NDArray[np.bool_]] | None = None
+        pp_cfg = cfg.get("postprocessing", {})
+        zbin_cfg = pp_cfg.get("zbin_priors", {})
+        self._use_zbin_priors = (
+            zbin_cfg.get("enabled", False)
+            and "validation" in zbin_cfg.get("apply_to", [])
+        )
+
+        if self._use_zbin_priors:
+            self._load_zbin_priors()
+
+        logger.info(
+            f"Initialized JSDDPMLightningModule with CFG={self.use_cfg}, "
+            f"zbin_priors={self._use_zbin_priors}"
+        )
 
     def setup(self, stage: str) -> None:
         """Setup hook called at the beginning of fit/validate/test.
@@ -124,6 +143,22 @@ class JSDDPMLightningModule(pl.LightningModule):
             "alphas_cumprod",
             self.scheduler.alphas_cumprod.clone(),
         )
+
+    def _load_zbin_priors(self) -> None:
+        """Load z-bin priors from cache for post-processing."""
+        pp_cfg = self.cfg.postprocessing.zbin_priors
+        cache_dir = Path(self.cfg.data.cache_dir)
+        z_bins = self.cfg.conditioning.z_bins
+
+        try:
+            self._zbin_priors = load_zbin_priors(
+                cache_dir, pp_cfg.priors_filename, z_bins
+            )
+            logger.info(f"Loaded z-bin priors for {len(self._zbin_priors)} bins")
+        except Exception as e:
+            logger.warning(f"Failed to load z-bin priors: {e}. Post-processing disabled.")
+            self._use_zbin_priors = False
+            self._zbin_priors = None
 
     def forward(
         self,
@@ -382,6 +417,14 @@ class JSDDPMLightningModule(pl.LightningModule):
         x0_hat = self._predict_x0(x_t, model_output, timesteps)
         x0_hat_image = x0_hat[:, 0:1]
         x0_hat_mask = x0_hat[:, 1:2]
+
+        # Apply z-bin prior post-processing before metrics (if enabled)
+        if self._use_zbin_priors and self._zbin_priors is not None:
+            z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
+            x0_hat_image, x0_hat_mask = apply_postprocess_batch(
+                x0_hat_image, x0_hat_mask, z_bins_batch,
+                self._zbin_priors, self.cfg
+            )
 
         # Compute image quality metrics
         metrics = self.metrics.compute_all(
