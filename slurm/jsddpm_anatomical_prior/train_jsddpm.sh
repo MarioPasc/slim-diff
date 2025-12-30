@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J log_jsddpm_weighted
+#SBATCH -J log_jsddpm_anatomical_prior
 #SBATCH --time=1-12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -27,7 +27,7 @@ echo "Job started at: $(date)"
 # ========================================================================
 # DISTRIBUTED TRAINING CONFIGURATION
 # ========================================================================
-EXPERIMENT_NAME="jsddpm_weighted"
+EXPERIMENT_NAME="jsddpm_anatomical_prior"
 CONDA_ENV_NAME="jsddpm"
 
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"

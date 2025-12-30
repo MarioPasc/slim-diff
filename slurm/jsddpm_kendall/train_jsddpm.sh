@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH -J log_jsddpm_kendall
-#SBATCH --time=20:00:00
+#SBATCH --time=1-12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=32G

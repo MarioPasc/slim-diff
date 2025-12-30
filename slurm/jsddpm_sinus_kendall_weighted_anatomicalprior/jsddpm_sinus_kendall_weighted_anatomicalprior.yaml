@@ -159,7 +159,7 @@ training:
     eta_min: 1.0e-6
 
   # Training duration
-  max_epochs: 200
+  max_epochs: 500
   max_steps: null  # Override epochs if set
 
   # Precision and gradient handling
@@ -200,11 +200,11 @@ loss:
   # Optional lesion-weighted mask loss
   lesion_weighted_mask:
     enabled: true
-    lesion_weight: 2.5  # Extra weight for lesion pixels
+    lesion_weight: 2.0  # Extra weight for lesion pixels
     background_weight: 1.0
 
   # Anatomical priors in training loss
-  anatomical_priors_in_train_loss: false  # Set to true to enable
+  anatomical_priors_in_train_loss: true  # Set to true to enable
 
 # =============================================================================
 # Postprocessing Configuration

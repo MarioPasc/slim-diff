@@ -159,7 +159,7 @@ training:
     eta_min: 1.0e-6
 
   # Training duration
-  max_epochs: 200
+  max_epochs: 500
   max_steps: null  # Override epochs if set
 
   # Precision and gradient handling
