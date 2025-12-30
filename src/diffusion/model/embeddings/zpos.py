@@ -35,7 +35,7 @@ def normalize_z_local(
             f"z_index {z_index} outside z_range [{min_z}, {max_z}]"
         )
 
-    range_size = max_z - min_z
+    range_size = max_z - min_z + 1  # Inclusive range fix
     if range_size == 0:
         return 0.0
 
@@ -101,7 +101,7 @@ def z_bin_to_index(
         62
     """
     min_z, max_z = z_range
-    range_size = max_z - min_z
+    range_size = max_z - min_z + 1  # Inclusive range fix
 
     if range_size == 0:
         return min_z
@@ -322,7 +322,7 @@ class ConditionalEmbeddingWithSinusoidal(nn.Module):
             # Convert z_bin back to approximate z_index for sinusoidal encoding
             # Use LOCAL binning: bins span z_range, not [0, max_z]
             min_z, max_z_range = self.z_range
-            range_size = max_z_range - min_z
+            range_size = max_z_range - min_z + 1  # Inclusive range fix
 
             # Map bin to center of local range
             z_norm = (z_bin.float() + 0.5) / self.z_bins

@@ -202,15 +202,15 @@ class TestZPositionEncoding:
         """Test local z-index normalization within z_range."""
         z_range = (0, 127)
         assert normalize_z_local(0, z_range) == 0.0
-        assert normalize_z_local(127, z_range) == 1.0
-        assert normalize_z_local(63, z_range) == pytest.approx(0.496, rel=0.01)
+        assert normalize_z_local(127, z_range) == pytest.approx(127/128, rel=0.001)  # Inclusive fix
+        assert normalize_z_local(63, z_range) == pytest.approx(63/128, rel=0.001)  # Inclusive fix
 
         # Test with custom z_range
         z_range = (24, 93)
         assert normalize_z_local(24, z_range) == 0.0
-        assert normalize_z_local(93, z_range) == 1.0
-        # Middle of range (58.5) should be ~0.5
-        assert normalize_z_local(58, z_range) == pytest.approx(0.493, rel=0.01)
+        assert normalize_z_local(93, z_range) == pytest.approx(69/70, rel=0.001)  # Inclusive fix
+        # Middle of range: (58.5-24)/70 = 34.5/70 ≈ 0.493
+        assert normalize_z_local(58, z_range) == pytest.approx(34/70, rel=0.001)  # Inclusive fix
 
     def test_quantize_z(self):
         """Test LOCAL z-position quantization within z_range."""

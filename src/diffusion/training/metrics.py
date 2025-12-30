@@ -11,8 +11,8 @@ import warnings
 
 import torch
 from monai.metrics import (
-    DiceMetric,
-    HausdorffDistanceMetric,
+    compute_dice,
+    compute_hausdorff_distance,
     PSNRMetric,
     SSIMMetric,
 )
@@ -59,7 +59,7 @@ class MetricsCalculator:
         """
         # Image quality metrics
         self.psnr_metric = PSNRMetric(
-            max_val=data_range,
+            max_val=1.0,  # Maximum pixel value in [-1, 1] range
             reduction="mean",
         )
 
@@ -73,26 +73,11 @@ class MetricsCalculator:
             reduction="mean",
         )
 
-        # Segmentation metrics
-        self.dice_metric = DiceMetric(
-            include_background=True,
-            reduction="mean_batch",
-            ignore_empty=True,
-        )
-
-        self.hd95_metric = HausdorffDistanceMetric(
-            include_background=False,
-            distance_metric="euclidean",
-            percentile=95,
-            reduction="mean_batch",
-        )
-
         logger.info(
             f"Initialized MONAI metrics: "
-            f"PSNR(max_val={data_range}), "
-            f"SSIM(spatial_dims=2, win_size={window_size}, sigma={sigma}), "
-            f"Dice(reduction=mean_batch), "
-            f"HD95(percentile=95)"
+            f"PSNR(max_val=1.0), "
+            f"SSIM(spatial_dims=2, data_range={data_range}, win_size={window_size}, sigma={sigma}), "
+            f"Dice (functional), HD95 (functional)"
         )
 
     def compute_all(
@@ -104,6 +89,8 @@ class MetricsCalculator:
     ) -> dict[str, float]:
         """Compute all metrics using MONAI.
 
+        Uses functional forms for Dice/HD95 to avoid state accumulation issues.
+
         Args:
             pred_image: Predicted images, shape (B, 1, H, W).
             target_image: Target images, shape (B, 1, H, W).
@@ -113,14 +100,15 @@ class MetricsCalculator:
         Returns:
             Dictionary of metric values as Python floats.
         """
-        # Compute image quality metrics (continuous values)
-        psnr_tensor = self.psnr_metric(pred_image, target_image)
-        ssim_tensor = self.ssim_metric(pred_image, target_image)
+        # Compute image quality metrics (direct computation per batch)
+        with torch.no_grad():
+            psnr_tensor = self.psnr_metric(pred_image, target_image)
+            ssim_tensor = self.ssim_metric(pred_image, target_image)
 
         # Extract scalar values
         metrics = {
-            "psnr": psnr_tensor.item() if psnr_tensor.numel() == 1 else psnr_tensor.mean().item(),
-            "ssim": ssim_tensor.item() if ssim_tensor.numel() == 1 else ssim_tensor.mean().item(),
+            "psnr": psnr_tensor.mean().item() if psnr_tensor.numel() > 1 else psnr_tensor.item(),
+            "ssim": ssim_tensor.mean().item() if ssim_tensor.numel() > 1 else ssim_tensor.item(),
         }
 
         # Compute segmentation metrics if masks provided
@@ -135,34 +123,48 @@ class MetricsCalculator:
             if target_mask_binary.dim() == 3:
                 target_mask_binary = target_mask_binary.unsqueeze(1)
 
-            # Compute Dice (always safe)
-            dice_tensor = self.dice_metric(pred_mask_binary, target_mask_binary)
-            metrics["dice"] = dice_tensor.item() if dice_tensor.numel() == 1 else dice_tensor.mean().item()
+            # Use functional forms (no state accumulation)
+            with torch.no_grad():
+                # compute_dice returns tensor of shape (B,) or scalar
+                dice_tensor = compute_dice(
+                    pred_mask_binary,
+                    target_mask_binary,
+                    include_background=True,
+                )
+                metrics["dice"] = dice_tensor.mean().item() if dice_tensor.numel() > 1 else dice_tensor.item()
 
-            # Compute HD95 only if target has lesions
-            if target_mask_binary.sum() > 0:
-                try:
-                    hd95_tensor = self.hd95_metric(pred_mask_binary, target_mask_binary)
-                    metrics["hd95"] = hd95_tensor.item() if hd95_tensor.numel() == 1 else hd95_tensor.mean().item()
-                except Exception as e:
-                    # MONAI HD95 can fail on edge cases (empty predictions, etc.)
-                    logger.warning(f"HD95 computation failed: {e}")
+                # Compute HD95 only if target has lesions
+                if target_mask_binary.sum() > 0:
+                    try:
+                        hd95_tensor = compute_hausdorff_distance(
+                            pred_mask_binary,
+                            target_mask_binary,
+                            include_background=False,
+                            distance_metric="euclidean",
+                            percentile=95,
+                        )
+                        metrics["hd95"] = hd95_tensor.mean().item() if hd95_tensor.numel() > 1 else hd95_tensor.item()
+                    except Exception as e:
+                        # MONAI HD95 can fail on edge cases (empty predictions, etc.)
+                        logger.warning(f"HD95 computation failed: {e}")
+                        metrics["hd95"] = float('nan')
+                else:
                     metrics["hd95"] = float('nan')
-            else:
-                metrics["hd95"] = float('nan')
 
         return metrics
 
     def reset(self) -> None:
-        """Reset all MONAI metrics to clear internal CUDA buffers.
+        """Reset MONAI metrics that maintain state.
 
         This is critical for preventing CUDA initialization errors in DataLoader workers.
         MONAI metrics cache CUDA tensors internally, which causes crashes when workers
         are forked after validation (CUDA contexts cannot be shared across processes).
 
         Call this method after each validation epoch to ensure clean state.
+
+        Note: Only PSNR and SSIM metrics need resetting since we use functional forms
+        for Dice and HD95 which don't maintain state.
         """
         self.psnr_metric.reset()
         self.ssim_metric.reset()
-        self.dice_metric.reset()
-        self.hd95_metric.reset()
+        # No reset needed for functional forms (compute_dice, compute_hausdorff_distance)

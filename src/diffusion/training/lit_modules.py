@@ -29,7 +29,11 @@ from src.diffusion.model.factory import (
     predict_x0,
 )
 from src.diffusion.training.metrics import MetricsCalculator
-from src.diffusion.utils.zbin_priors import apply_postprocess_batch, load_zbin_priors
+from src.diffusion.utils.zbin_priors import (
+    apply_postprocess_batch,
+    get_anatomical_weights,
+    load_zbin_priors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +95,19 @@ class JSDDPMLightningModule(pl.LightningModule):
             and "validation" in zbin_cfg.get("apply_to", [])
         )
 
-        if self._use_zbin_priors:
+        # Z-bin priors for training loss (anatomical weighting)
+        self._use_anatomical_train_loss = cfg.loss.get("anatomical_priors_in_train_loss", False)
+        self._train_in_brain_weight = 1.0
+        self._train_out_brain_weight = 0.1
+
+        # Load priors if needed for either validation postprocessing or training loss
+        if self._use_zbin_priors or self._use_anatomical_train_loss:
             self._load_zbin_priors()
 
         logger.info(
             f"Initialized JSDDPMLightningModule with CFG={self.use_cfg}, "
-            f"zbin_priors={self._use_zbin_priors}"
+            f"zbin_priors={self._use_zbin_priors}, "
+            f"anatomical_train_loss={self._use_anatomical_train_loss}"
         )
 
     def setup(self, stage: str) -> None:
@@ -348,8 +359,24 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
+        # Generate spatial weights from anatomical priors if enabled
+        spatial_weights = None
+        if self._use_anatomical_train_loss and self._zbin_priors is not None:
+            # Get z_bins from batch metadata
+            z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
+            z_bins_tensor = torch.tensor(z_bins_batch, device=x0.device)
+
+            # Generate spatial weight maps
+            spatial_weights = get_anatomical_weights(
+                z_bins_tensor,
+                self._zbin_priors,
+                in_brain_weight=self._train_in_brain_weight,
+                out_brain_weight=self._train_out_brain_weight,
+                device=x0.device,
+            )
+
         # Compute loss
-        loss, loss_details = self.criterion(model_output, target, mask)
+        loss, loss_details = self.criterion(model_output, target, mask, spatial_weights)
 
         # Log metrics
         self.log("train/loss", loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=B)

@@ -54,6 +54,30 @@ def mse_per_channel(
         raise ValueError(f"Unknown reduction: {reduction}")
 
 
+def spatial_weighted_mse(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    spatial_weights: torch.Tensor,
+) -> torch.Tensor:
+    """Compute spatially weighted MSE.
+
+    Applies per-pixel spatial weights (e.g., from anatomical priors) to MSE loss.
+
+    Args:
+        pred: Predictions, shape (B, C, H, W).
+        target: Targets, shape (B, C, H, W).
+        spatial_weights: Spatial weight map, shape (B, 1, H, W).
+
+    Returns:
+        Weighted MSE loss (scalar).
+    """
+    # Compute weighted MSE (normalized form)
+    mse = (pred - target) ** 2  # (B, C, H, W)
+    weighted_sum = (mse * spatial_weights).sum()
+    weight_sum = (spatial_weights * pred.shape[1]).sum()  # Account for C channels
+    return weighted_sum / weight_sum.clamp(min=1e-8)  # Avoid division by zero
+
+
 def lesion_weighted_mse(
     pred: torch.Tensor,
     target: torch.Tensor,
@@ -83,9 +107,11 @@ def lesion_weighted_mse(
         torch.full_like(mask, background_weight),
     )
 
-    # Compute weighted MSE
-    mse = (pred - target) ** 2 * weights
-    return mse.mean()
+    # Compute weighted MSE (normalized form)
+    mse = (pred - target) ** 2
+    weighted_sum = (mse * weights).sum()
+    weight_sum = weights.sum()
+    return weighted_sum / weight_sum.clamp(min=1e-8)  # Avoid division by zero
 
 
 class DiffusionLoss(nn.Module):
@@ -124,10 +150,14 @@ class DiffusionLoss(nn.Module):
         self.lesion_weight = loss_cfg.lesion_weighted_mask.lesion_weight
         self.background_weight = loss_cfg.lesion_weighted_mask.background_weight
 
+        # Anatomical prior spatial weighting config (for training loss)
+        self.use_anatomical_weighting = loss_cfg.get("anatomical_priors_in_train_loss", False)
+
         logger.info(
             f"DiffusionLoss: "
             f"uncertainty={loss_cfg.uncertainty_weighting.enabled}, "
-            f"lesion_weighted={self.use_lesion_weighting}"
+            f"lesion_weighted={self.use_lesion_weighting}, "
+            f"anatomical_weighted={self.use_anatomical_weighting}"
         )
 
     def forward(
@@ -135,6 +165,7 @@ class DiffusionLoss(nn.Module):
         eps_pred: torch.Tensor,
         eps_target: torch.Tensor,
         x0_mask: torch.Tensor | None = None,
+        spatial_weights: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """Compute diffusion loss.
 
@@ -142,6 +173,8 @@ class DiffusionLoss(nn.Module):
             eps_pred: Predicted noise, shape (B, 2, H, W).
             eps_target: Target noise, shape (B, 2, H, W).
             x0_mask: Original mask for lesion weighting, shape (B, 1, H, W).
+            spatial_weights: Spatial weight map from anatomical priors, shape (B, 1, H, W).
+                Only used if anatomical_priors_in_train_loss is enabled.
 
         Returns:
             Tuple of (total_loss, details_dict).
@@ -152,19 +185,46 @@ class DiffusionLoss(nn.Module):
         eps_target_img = eps_target[:, 0:1]
         eps_target_msk = eps_target[:, 1:2]
 
-        # Image channel loss (standard MSE)
-        loss_img = F.mse_loss(eps_pred_img, eps_target_img)
+        # Image channel loss
+        if self.use_anatomical_weighting and spatial_weights is not None:
+            # Use anatomical prior weighting
+            loss_img = spatial_weighted_mse(eps_pred_img, eps_target_img, spatial_weights)
+        else:
+            # Standard MSE
+            loss_img = F.mse_loss(eps_pred_img, eps_target_img)
 
         # Mask channel loss
         if self.use_lesion_weighting and x0_mask is not None:
-            loss_msk = lesion_weighted_mse(
-                eps_pred_msk,
-                eps_target_msk,
-                x0_mask,
-                self.lesion_weight,
-                self.background_weight,
-            )
+            # Use lesion weighting (for mask channel specifically)
+            # If anatomical weighting is also enabled, combine both weights
+            if self.use_anatomical_weighting and spatial_weights is not None:
+                # Combine lesion weights with anatomical spatial weights
+                lesion_weights = torch.where(
+                    x0_mask > 0,
+                    torch.full_like(x0_mask, self.lesion_weight),
+                    torch.full_like(x0_mask, self.background_weight),
+                )
+                combined_weights = lesion_weights * spatial_weights
+
+                # Compute normalized weighted MSE with combined weights
+                mse_msk = (eps_pred_msk - eps_target_msk) ** 2
+                weighted_sum = (mse_msk * combined_weights).sum()
+                weight_sum = combined_weights.sum()
+                loss_msk = weighted_sum / weight_sum.clamp(min=1e-8)
+            else:
+                # Only lesion weighting
+                loss_msk = lesion_weighted_mse(
+                    eps_pred_msk,
+                    eps_target_msk,
+                    x0_mask,
+                    self.lesion_weight,
+                    self.background_weight,
+                )
+        elif self.use_anatomical_weighting and spatial_weights is not None:
+            # Use anatomical prior weighting (if lesion weighting not enabled)
+            loss_msk = spatial_weighted_mse(eps_pred_msk, eps_target_msk, spatial_weights)
         else:
+            # Standard MSE
             loss_msk = F.mse_loss(eps_pred_msk, eps_target_msk)
 
         # Combine with uncertainty weighting

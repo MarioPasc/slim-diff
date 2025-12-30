@@ -29,7 +29,10 @@ from src.diffusion.training.callbacks.diagnostics_callbacks import (
     WandbSummaryCallback,
 )
 from src.diffusion.training.callbacks.csv_callback import CSVLoggingCallback
-from src.diffusion.training.callbacks.epoch_callbacks import VisualizationCallback
+from src.diffusion.training.callbacks.epoch_callbacks import (
+    EMACallback,
+    VisualizationCallback,
+)
 from src.diffusion.training.callbacks.step_callbacks import GradientNormCallback
 from src.diffusion.training.lit_modules import JSDDPMLightningModule
 from src.diffusion.utils.logging import setup_logger
@@ -112,6 +115,18 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
 
     callbacks.append(CSVLoggingCallback(cfg=cfg))
 
+    # EMA callback (if enabled)
+    if cfg.training.ema.enabled:
+        callbacks.append(EMACallback(
+            decay=cfg.training.ema.decay,
+            update_every=cfg.training.ema.update_every,
+            use_for_validation=cfg.training.ema.use_for_validation,
+        ))
+        logger.info(
+            f"EMA enabled: decay={cfg.training.ema.decay}, "
+            f"update_every={cfg.training.ema.update_every}"
+        )
+
     return callbacks
 
 
@@ -186,6 +201,9 @@ def setup_wandb_config(logger: WandbLogger, cfg: DictConfig) -> None:
         "training/precision": cfg.training.precision,
         "training/gradient_clip_val": cfg.training.gradient_clip_val,
         "training/accumulate_grad_batches": cfg.training.accumulate_grad_batches,
+        "training/ema_enabled": cfg.training.ema.enabled,
+        "training/ema_decay": cfg.training.ema.decay,
+        "training/ema_update_every": cfg.training.ema.update_every,
     })
 
     # Optimizer configuration

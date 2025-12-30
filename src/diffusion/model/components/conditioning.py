@@ -28,7 +28,7 @@ def compute_z_bin(
         ValueError: If z_index is outside z_range.
     """
     min_z, max_z = z_range
-    range_size = max_z - min_z
+    range_size = max_z - min_z + 1  # Inclusive range fix
 
     if isinstance(z_index, torch.Tensor):
         # Check bounds

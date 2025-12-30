@@ -70,7 +70,7 @@ conditioning:
   # Classifier-free guidance (CFG)
   cfg:
     enabled: false  # Enable/disable CFG
-    null_token: 100  # Special token for unconditional generation (2*z_bins)
+    null_token: 60  # Special token for unconditional generation (2*z_bins = 2*30 = 60)
     dropout_prob: 0.1  # Probability of dropping condition during training
 
 # =============================================================================
@@ -179,6 +179,14 @@ training:
     patience: 20
     mode: "min"
 
+  # Exponential Moving Average (EMA)
+  ema:
+    enabled: true  # Enable/disable EMA for improved sample quality
+    decay: 0.9999  # EMA decay rate (higher = slower adaptation)
+    update_every: 10  # Update EMA every N training steps
+    use_for_validation: true  # Use EMA weights for validation
+    use_for_generation: true  # Use EMA weights for sampling/generation
+
 # =============================================================================
 # Loss Configuration
 # =============================================================================
@@ -194,6 +202,9 @@ loss:
     enabled: true
     lesion_weight: 2.5  # Extra weight for lesion pixels
     background_weight: 1.0
+
+  # Anatomical priors in training loss
+  anatomical_priors_in_train_loss: false  # Set to true to enable
 
 # =============================================================================
 # Postprocessing Configuration

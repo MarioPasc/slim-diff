@@ -32,18 +32,18 @@ class TestLocalBinningCore:
     """Test core local binning functions."""
 
     def test_normalize_z_local(self):
-        """Test local normalization within z_range."""
-        # Full range
+        """Test local normalization within z_range (inclusive)."""
+        # Full range [0, 127] = 128 slices
         z_range = (0, 127)
         assert normalize_z_local(0, z_range) == 0.0
-        assert normalize_z_local(127, z_range) == 1.0
-        assert normalize_z_local(63, z_range) == pytest.approx(0.496, rel=0.01)
+        assert normalize_z_local(127, z_range) == pytest.approx(127/128, rel=0.001)  # Inclusive fix
+        assert normalize_z_local(63, z_range) == pytest.approx(63/128, rel=0.001)
 
-        # Partial range
-        z_range = (24, 93)  # 70 slices
+        # Partial range [24, 93] = 70 slices
+        z_range = (24, 93)
         assert normalize_z_local(24, z_range) == 0.0
-        assert normalize_z_local(93, z_range) == 1.0
-        assert normalize_z_local(58, z_range) == pytest.approx(0.493, rel=0.01)
+        assert normalize_z_local(93, z_range) == pytest.approx(69/70, rel=0.001)  # Inclusive fix
+        assert normalize_z_local(58, z_range) == pytest.approx(34/70, rel=0.001)
 
         # Edge case: single slice range
         z_range = (50, 50)

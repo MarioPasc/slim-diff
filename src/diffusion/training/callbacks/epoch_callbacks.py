@@ -472,17 +472,22 @@ class EMACallback(Callback):
         self,
         decay: float = 0.999,
         update_every: int = 10,
+        use_for_validation: bool = True,
     ) -> None:
         """Initialize EMA callback.
 
         Args:
             decay: EMA decay rate.
             update_every: Update EMA every N steps.
+            use_for_validation: Whether to use EMA weights for validation.
         """
         super().__init__()
         self.decay = decay
         self.update_every = update_every
+        self.use_for_validation = use_for_validation
         self._ema_weights: dict[str, torch.Tensor] | None = None
+        self._original_weights: dict[str, torch.Tensor] | None = None
+        self._ema_applied = False
         self._step = 0
 
     def on_train_batch_end(
@@ -531,3 +536,80 @@ class EMACallback(Callback):
             Dictionary of EMA weights or None.
         """
         return self._ema_weights
+
+    def apply_ema(self, pl_module: pl.LightningModule) -> None:
+        """Apply EMA weights to the model.
+
+        Swaps current model weights with EMA weights. Stores original weights
+        for later restoration.
+
+        Args:
+            pl_module: Lightning module.
+        """
+        if self._ema_weights is None:
+            return
+
+        if self._ema_applied:
+            return  # Already applied
+
+        # Store original weights
+        self._original_weights = {
+            name: param.data.clone()
+            for name, param in pl_module.model.named_parameters()
+        }
+
+        # Apply EMA weights
+        with torch.no_grad():
+            for name, param in pl_module.model.named_parameters():
+                if name in self._ema_weights:
+                    param.data.copy_(self._ema_weights[name])
+
+        self._ema_applied = True
+
+    def restore_original(self, pl_module: pl.LightningModule) -> None:
+        """Restore original model weights.
+
+        Restores the model weights that were stored before applying EMA.
+
+        Args:
+            pl_module: Lightning module.
+        """
+        if self._original_weights is None or not self._ema_applied:
+            return
+
+        # Restore original weights
+        with torch.no_grad():
+            for name, param in pl_module.model.named_parameters():
+                if name in self._original_weights:
+                    param.data.copy_(self._original_weights[name])
+
+        self._ema_applied = False
+        self._original_weights = None
+
+    def on_validation_epoch_start(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+    ) -> None:
+        """Apply EMA weights before validation if enabled.
+
+        Args:
+            trainer: Lightning trainer.
+            pl_module: Lightning module.
+        """
+        if self.use_for_validation:
+            self.apply_ema(pl_module)
+
+    def on_validation_epoch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+    ) -> None:
+        """Restore original weights after validation if EMA was used.
+
+        Args:
+            trainer: Lightning trainer.
+            pl_module: Lightning module.
+        """
+        if self.use_for_validation:
+            self.restore_original(pl_module)

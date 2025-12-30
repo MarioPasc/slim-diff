@@ -419,6 +419,73 @@ def load_zbin_priors(
     return priors
 
 
+def get_anatomical_weights(
+    z_bins_batch: torch.Tensor,
+    priors: dict[int, NDArray[np.bool_]],
+    in_brain_weight: float = 1.0,
+    out_brain_weight: float = 0.1,
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    """Generate spatial weight maps from anatomical priors for training loss.
+
+    Creates a weight map for each sample in the batch based on z-bin priors,
+    allowing the training loss to downweight out-of-brain regions.
+
+    Args:
+        z_bins_batch: Z-bin indices for batch, shape (B,).
+        priors: Dict mapping z-bin to boolean ROI array (H, W).
+        in_brain_weight: Weight for in-brain pixels (default: 1.0).
+        out_brain_weight: Weight for out-of-brain pixels (default: 0.1).
+        device: Target device for output tensor. If None, uses z_bins_batch.device.
+
+    Returns:
+        Weight tensor of shape (B, 1, H, W) with values in_brain_weight or
+        out_brain_weight based on prior ROI masks.
+
+    Example:
+        >>> z_bins = torch.tensor([5, 10, 15])  # Batch of 3
+        >>> priors = load_zbin_priors(cache_dir, filename, z_bins=30)
+        >>> weights = get_anatomical_weights(z_bins, priors, 1.0, 0.1)
+        >>> weights.shape
+        torch.Size([3, 1, 128, 128])
+    """
+    if device is None:
+        device = z_bins_batch.device
+
+    B = z_bins_batch.shape[0]
+    z_bins_np = z_bins_batch.cpu().numpy()
+
+    # Get first prior to determine spatial dimensions
+    first_prior = next(iter(priors.values()))
+    H, W = first_prior.shape
+
+    # Initialize weight tensor
+    weights = torch.full(
+        (B, 1, H, W),
+        fill_value=out_brain_weight,
+        dtype=torch.float32,
+        device=device,
+    )
+
+    # Fill weights based on priors
+    for i, z_bin in enumerate(z_bins_np):
+        z_bin_int = int(z_bin)
+        if z_bin_int in priors:
+            # Get ROI mask for this z-bin
+            roi_mask = priors[z_bin_int]  # (H, W) boolean array
+
+            # Convert to tensor and set in-brain weights
+            roi_tensor = torch.from_numpy(roi_mask).to(device)
+            weights[i, 0, :, :] = torch.where(
+                roi_tensor,
+                torch.tensor(in_brain_weight, device=device),
+                torch.tensor(out_brain_weight, device=device),
+            )
+        # else: keep all weights as out_brain_weight (no prior available)
+
+    return weights
+
+
 # =============================================================================
 # Online Post-Processing
 # =============================================================================
