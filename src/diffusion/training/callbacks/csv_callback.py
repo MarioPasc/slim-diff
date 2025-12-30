@@ -67,6 +67,10 @@ class CSVLoggingCallback(Callback):
         # Store all metric names we've seen
         self._all_metric_names: set[str] = set()
 
+        # Track which columns are currently in the CSV header
+        # This allows us to detect when new columns appear and rewrite the file
+        self._current_header_columns: list[str] = []
+
         # Accumulators for histograms
         self._histogram_data: dict[str, list] = {}
 
@@ -215,11 +219,20 @@ class CSVLoggingCallback(Callback):
         # Check if file exists and we need to write header
         file_exists = self.csv_path.exists()
 
+        # Check if we have new columns that weren't in the previous header
+        # This handles cases where new metrics appear in later epochs
+        # (e.g., training metrics that only appear after the validation sanity check)
+        has_new_columns = (
+            self._header_written and
+            self._current_header_columns and
+            set(columns) != set(self._current_header_columns)
+        )
+
         # If file exists but we have new columns, we need to rewrite the file
         # with the new columns. This handles cases where new metrics appear
         # in later epochs (e.g., validation metrics that only appear after
         # the first epoch).
-        if file_exists and not self._header_written:
+        if file_exists and (not self._header_written or has_new_columns):
             # Read existing data
             existing_rows = []
             try:
@@ -229,6 +242,11 @@ class CSVLoggingCallback(Callback):
             except Exception as e:
                 logger.warning(f"Could not read existing CSV: {e}, will overwrite")
                 existing_rows = []
+
+            # Log when we're rewriting due to new columns
+            if has_new_columns:
+                new_cols = set(columns) - set(self._current_header_columns)
+                logger.info(f"Detected {len(new_cols)} new columns, rewriting CSV with updated header: {new_cols}")
 
             # Rewrite file with new columns
             with open(self.csv_path, "w", newline="") as f:
@@ -243,6 +261,7 @@ class CSVLoggingCallback(Callback):
                 writer.writerow(row_data)
 
             self._header_written = True
+            self._current_header_columns = columns
 
         elif not file_exists:
             # Create new file with header
@@ -252,6 +271,7 @@ class CSVLoggingCallback(Callback):
                 writer.writerow(row_data)
 
             self._header_written = True
+            self._current_header_columns = columns
 
         else:
             # Append to existing file
