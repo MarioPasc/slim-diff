@@ -186,7 +186,10 @@ training:
     update_every: 10  # Update EMA every N training steps
     use_for_validation: true  # Use EMA weights for validation
     use_for_generation: true  # Use EMA weights for sampling/generation
-
+  # Anatomical prior weighting configuration
+  anatomical_priors:
+    in_brain_weight: 1.0   # Weight for in-brain pixels (standard contribution)
+    out_brain_weight: 0.1  # Weight for out-of-brain pixels (downweighted to reduce noise learning)
 # =============================================================================
 # Loss Configuration
 # =============================================================================

@@ -59,9 +59,10 @@ def spatial_weighted_mse(
     target: torch.Tensor,
     spatial_weights: torch.Tensor,
 ) -> torch.Tensor:
-    """Compute spatially weighted MSE.
+    """Compute spatially weighted MSE with safe normalization.
 
     Applies per-pixel spatial weights (e.g., from anatomical priors) to MSE loss.
+    Normalizes by total number of pixels (not weight sum) to prevent gradient explosion.
 
     Args:
         pred: Predictions, shape (B, C, H, W).
@@ -71,11 +72,13 @@ def spatial_weighted_mse(
     Returns:
         Weighted MSE loss (scalar).
     """
-    # Compute weighted MSE (normalized form)
+    # Compute weighted MSE (safe normalized form)
+    # CRITICAL: Normalize by total pixels, NOT weight sum
+    # This ensures gradient magnitude is independent of weight sparsity
     mse = (pred - target) ** 2  # (B, C, H, W)
     weighted_sum = (mse * spatial_weights).sum()
-    weight_sum = (spatial_weights * pred.shape[1]).sum()  # Account for C channels
-    return weighted_sum / weight_sum.clamp(min=1e-8)  # Avoid division by zero
+    total_pixels = pred.numel()  # B * C * H * W
+    return weighted_sum / total_pixels
 
 
 def lesion_weighted_mse(
@@ -85,9 +88,10 @@ def lesion_weighted_mse(
     lesion_weight: float = 2.0,
     background_weight: float = 1.0,
 ) -> torch.Tensor:
-    """Compute lesion-weighted MSE for mask channel.
+    """Compute lesion-weighted MSE for mask channel with safe normalization.
 
     Gives higher weight to lesion pixels (mask > 0 in {-1, +1} space).
+    Normalizes by total number of pixels (not weight sum) to prevent gradient explosion.
 
     Args:
         pred: Predictions for mask channel, shape (B, 1, H, W).
@@ -107,11 +111,13 @@ def lesion_weighted_mse(
         torch.full_like(mask, background_weight),
     )
 
-    # Compute weighted MSE (normalized form)
+    # Compute weighted MSE (safe normalized form)
+    # CRITICAL: Normalize by total pixels, NOT weight sum
+    # This ensures gradient magnitude is independent of lesion sparsity
     mse = (pred - target) ** 2
     weighted_sum = (mse * weights).sum()
-    weight_sum = weights.sum()
-    return weighted_sum / weight_sum.clamp(min=1e-8)  # Avoid division by zero
+    total_pixels = pred.numel()  # B * C * H * W
+    return weighted_sum / total_pixels
 
 
 class DiffusionLoss(nn.Module):
@@ -206,11 +212,12 @@ class DiffusionLoss(nn.Module):
                 )
                 combined_weights = lesion_weights * spatial_weights
 
-                # Compute normalized weighted MSE with combined weights
+                # Compute weighted MSE with safe normalization (combined weights)
+                # CRITICAL: Normalize by total pixels, NOT weight sum
                 mse_msk = (eps_pred_msk - eps_target_msk) ** 2
                 weighted_sum = (mse_msk * combined_weights).sum()
-                weight_sum = combined_weights.sum()
-                loss_msk = weighted_sum / weight_sum.clamp(min=1e-8)
+                total_pixels = eps_pred_msk.numel()  # B * C * H * W
+                loss_msk = weighted_sum / total_pixels
             else:
                 # Only lesion weighting
                 loss_msk = lesion_weighted_mse(

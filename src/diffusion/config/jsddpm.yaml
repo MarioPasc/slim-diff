@@ -209,6 +209,11 @@ loss:
   # Helps prevent the model from learning speckle noise in non-brain areas
   anatomical_priors_in_train_loss: false  # Set to true to enable
 
+  # Anatomical prior weighting configuration
+  anatomical_priors:
+    in_brain_weight: 1.0   # Weight for in-brain pixels (standard contribution)
+    out_brain_weight: 0.1  # Weight for out-of-brain pixels (downweighted to reduce noise learning)
+
 # =============================================================================
 # Logging Configuration
 # =============================================================================

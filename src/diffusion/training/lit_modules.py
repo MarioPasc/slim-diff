@@ -97,8 +97,11 @@ class JSDDPMLightningModule(pl.LightningModule):
 
         # Z-bin priors for training loss (anatomical weighting)
         self._use_anatomical_train_loss = cfg.loss.get("anatomical_priors_in_train_loss", False)
-        self._train_in_brain_weight = 1.0
-        self._train_out_brain_weight = 0.1
+
+        # Get anatomical weighting parameters from config (with defaults)
+        anat_cfg = cfg.loss.get("anatomical_priors", {})
+        self._train_in_brain_weight = anat_cfg.get("in_brain_weight", 1.0)
+        self._train_out_brain_weight = anat_cfg.get("out_brain_weight", 0.1)
 
         # Load priors if needed for either validation postprocessing or training loss
         if self._use_zbin_priors or self._use_anatomical_train_loss:
@@ -109,6 +112,11 @@ class JSDDPMLightningModule(pl.LightningModule):
             f"zbin_priors={self._use_zbin_priors}, "
             f"anatomical_train_loss={self._use_anatomical_train_loss}"
         )
+        if self._use_anatomical_train_loss:
+            logger.info(
+                f"Anatomical weighting: in_brain={self._train_in_brain_weight}, "
+                f"out_brain={self._train_out_brain_weight}"
+            )
 
     def setup(self, stage: str) -> None:
         """Setup hook called at the beginning of fit/validate/test.
