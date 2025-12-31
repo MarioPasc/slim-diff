@@ -81,7 +81,9 @@ model:
   spatial_dims: 2
   in_channels: 2   # [image, mask]
   out_channels: 2  # [image, mask]
-
+  anatomical_conditioning: false  # Use anatomical input concatenation for conditioning (factory.py already handles in_channles += 1)
+                                 # Must set postprocessing.zbin_priors.enabled = true to use priors as input and rebuild the slice_cache
+                                 # to include them
   # UNet architecture
   channels: [64, 128, 256, 256]
   attention_levels: [false, false, true, true]
@@ -113,9 +115,13 @@ scheduler:
   num_train_timesteps: 1000
 
   # Beta schedule
-  schedule: "cosine"  # Options: "linear_beta", "scaled_linear_beta", "cosine"
+  schedule: "cosine"  # Options: "linear_beta", "scaled_linear_beta", "sigmoid_beta", "cosine"
+
+  # Used for linear and scaled_linear schedules
   beta_start: 0.0015
   beta_end: 0.0195
+  # Used for sigmoid schedule
+  sig_range: 6.0
 
   # Prediction type
   prediction_type: "epsilon"  # Options: "epsilon", "sample", "v_prediction"
@@ -142,6 +148,7 @@ training:
   # Batch size and workers
   batch_size: 32
   num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues (was 4)
+                   # Can increase to 1-2 if using spawn method, but 0 is safest
   pin_memory: true
 
   # Optimizer
@@ -157,6 +164,11 @@ training:
     type: "CosineAnnealingLR"
     T_max: null  # Set to max_epochs if null
     eta_min: 1.0e-6
+
+    # Example for ReduceLROnPlateau:
+    # type: "ReduceLROnPlateau"
+    # factor: 0.5  # Factor by which the learning rate will be reduced
+    # patience: 10 # Number of epochs with no improvement after which learning rate will be reduced
 
   # Training duration
   max_epochs: 500
@@ -196,19 +208,14 @@ loss:
     enabled: false
     initial_log_vars: [0.0, 0.0]  # [image, mask]
     learnable: true
+    clamp_range: [-5.0, 5.0] # Min/max for clamping log_vars to prevent instability
 
   # Optional lesion-weighted mask loss
   lesion_weighted_mask:
     enabled: true
-    lesion_weight: 2.5  # Extra weight for lesion pixels
-    background_weight: 1.0
+    lesion_weight: 1.5  # Extra weight for lesion pixels
+    background_weight: 1.0  
 
-  # Anatomical priors in training loss
-  anatomical_priors_in_train_loss: false  # Set to true to enable
-  # Anatomical prior weighting configuration
-  anatomical_priors:
-    in_brain_weight: 1.0   # Weight for in-brain pixels (standard contribution)
-    out_brain_weight: 0.1  # Weight for out-of-brain pixels (downweighted to reduce noise learning)
 # =============================================================================
 # Postprocessing Configuration
 # =============================================================================
@@ -222,6 +229,7 @@ postprocessing:
     min_component_px: 500  # Minimum connected component size (pixels)
     n_first_bins: 5  # Number of low z-bins for multi-component handling (near neck/brainstem)
     max_components_for_first_bins: 3  # Keep top N largest components for first bins
+    relaxed_threshold_factor: 0.1 # Factor for relaxed threshold on smaller components
     fallback: "prior"  # Options: "prior" (use ROI as mask), "empty" (zero out)
     apply_to: ["validation", "visualization", "generation"]  # Where to apply
 
