@@ -31,7 +31,7 @@ from src.diffusion.model.factory import (
 from src.diffusion.training.metrics import MetricsCalculator
 from src.diffusion.utils.zbin_priors import (
     apply_postprocess_batch,
-    get_anatomical_weights,
+    get_anatomical_priors_as_input,
     load_zbin_priors,
 )
 
@@ -86,7 +86,7 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Cache alphas_cumprod for x0 prediction
         self._register_scheduler_buffers()
 
-        # Z-bin prior post-processing
+        # Z-bin priors for validation post-processing
         self._zbin_priors: dict[int, NDArray[np.bool_]] | None = None
         pp_cfg = cfg.get("postprocessing", {})
         zbin_cfg = pp_cfg.get("zbin_priors", {})
@@ -95,28 +95,18 @@ class JSDDPMLightningModule(pl.LightningModule):
             and "validation" in zbin_cfg.get("apply_to", [])
         )
 
-        # Z-bin priors for training loss (anatomical weighting)
-        self._use_anatomical_train_loss = cfg.loss.get("anatomical_priors_in_train_loss", False)
+        # Anatomical conditioning (input concatenation)
+        self._use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
 
-        # Get anatomical weighting parameters from config (with defaults)
-        anat_cfg = cfg.loss.get("anatomical_priors", {})
-        self._train_in_brain_weight = anat_cfg.get("in_brain_weight", 1.0)
-        self._train_out_brain_weight = anat_cfg.get("out_brain_weight", 0.1)
-
-        # Load priors if needed for either validation postprocessing or training loss
-        if self._use_zbin_priors or self._use_anatomical_train_loss:
+        # Load priors if needed for either validation postprocessing or anatomical conditioning
+        if self._use_zbin_priors or self._use_anatomical_conditioning:
             self._load_zbin_priors()
 
         logger.info(
             f"Initialized JSDDPMLightningModule with CFG={self.use_cfg}, "
-            f"zbin_priors={self._use_zbin_priors}, "
-            f"anatomical_train_loss={self._use_anatomical_train_loss}"
+            f"zbin_priors_postprocess={self._use_zbin_priors}, "
+            f"anatomical_conditioning={self._use_anatomical_conditioning}"
         )
-        if self._use_anatomical_train_loss:
-            logger.info(
-                f"Anatomical weighting: in_brain={self._train_in_brain_weight}, "
-                f"out_brain={self._train_out_brain_weight}"
-            )
 
     def setup(self, stage: str) -> None:
         """Setup hook called at the beginning of fit/validate/test.
@@ -188,7 +178,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         """Forward pass through the model.
 
         Args:
-            x: Noisy input, shape (B, 2, H, W).
+            x: Noisy input, shape (B, C, H, W) where C=2 (no anatomical)
+               or C=3 (with anatomical prior concatenated).
             timesteps: Timesteps, shape (B,).
             class_labels: Conditioning tokens, shape (B,).
 
@@ -361,35 +352,36 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Add noise to get x_t
         x_t = self._add_noise(x0, noise, timesteps)
 
+        # Concatenate anatomical priors if enabled
+        if self._use_anatomical_conditioning and self._zbin_priors is not None:
+            # Get z_bins from batch metadata
+            z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
+
+            # Get anatomical priors as input channel
+            anatomical_priors = get_anatomical_priors_as_input(
+                z_bins_batch,
+                self._zbin_priors,
+                device=x_t.device,
+            )  # (B, 1, H, W)
+
+            # Concatenate to x_t: (B, 2, H, W) + (B, 1, H, W) -> (B, 3, H, W)
+            x_t = torch.cat([x_t, anatomical_priors], dim=1)
+
         # Predict
         model_output = self(x_t, timesteps, tokens)
 
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
-        # Generate spatial weights from anatomical priors if enabled
-        spatial_weights = None
-        if self._use_anatomical_train_loss and self._zbin_priors is not None:
-            # Get z_bins from batch metadata
-            z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
-            z_bins_tensor = torch.tensor(z_bins_batch, device=x0.device)
-
-            # Generate spatial weight maps
-            spatial_weights = get_anatomical_weights(
-                z_bins_tensor,
-                self._zbin_priors,
-                in_brain_weight=self._train_in_brain_weight,
-                out_brain_weight=self._train_out_brain_weight,
-                device=x0.device,
-            )
-
-        # Compute loss
-        loss, loss_details = self.criterion(model_output, target, mask, spatial_weights)
+        # Compute loss (no spatial weights needed with anatomical input conditioning)
+        loss, loss_details = self.criterion(model_output, target)
 
         # Log metrics
         self.log("train/loss", loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
-        self.log("train/loss_image", loss_details["loss_image"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
-        self.log("train/loss_mask", loss_details["loss_mask"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+        if "loss_image" in loss_details:
+            self.log("train/loss_image", loss_details["loss_image"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+        if "loss_mask" in loss_details:
+            self.log("train/loss_mask", loss_details["loss_mask"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
 
         # Log weighted loss metrics (always available when using multi-task loss)
         if "weighted_loss_0" in loss_details:
@@ -439,6 +431,21 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Add noise
         x_t = self._add_noise(x0, noise, timesteps)
 
+        # Concatenate anatomical priors if enabled
+        if self._use_anatomical_conditioning and self._zbin_priors is not None:
+            # Get z_bins from batch metadata
+            z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
+
+            # Get anatomical priors as input channel
+            anatomical_priors = get_anatomical_priors_as_input(
+                z_bins_batch,
+                self._zbin_priors,
+                device=x_t.device,
+            )  # (B, 1, H, W)
+
+            # Concatenate to x_t: (B, 2, H, W) + (B, 1, H, W) -> (B, 3, H, W)
+            x_t = torch.cat([x_t, anatomical_priors], dim=1)
+
         # Predict
         model_output = self(x_t, timesteps, tokens)
 
@@ -446,7 +453,7 @@ class JSDDPMLightningModule(pl.LightningModule):
         target = self._get_target(x0, noise, timesteps)
 
         # Compute loss
-        loss, loss_details = self.criterion(model_output, target, mask)
+        loss, loss_details = self.criterion(model_output, target)
 
         # Predict x0 for metrics
         x0_hat = self._predict_x0(x_t, model_output, timesteps)
@@ -469,8 +476,10 @@ class JSDDPMLightningModule(pl.LightningModule):
 
         # Log metrics
         self.log("val/loss", loss, sync_dist=True, batch_size=B)
-        self.log("val/loss_image", loss_details["loss_image"], sync_dist=True, batch_size=B)
-        self.log("val/loss_mask", loss_details["loss_mask"], sync_dist=True, batch_size=B)
+        if "loss_image" in loss_details:
+            self.log("val/loss_image", loss_details["loss_image"], sync_dist=True, batch_size=B)
+        if "loss_mask" in loss_details:
+            self.log("val/loss_mask", loss_details["loss_mask"], sync_dist=True, batch_size=B)
         self.log("val/psnr", metrics["psnr"], sync_dist=True, batch_size=B)
         self.log("val/ssim", metrics["ssim"], sync_dist=True, batch_size=B)
         if "dice" in metrics:
@@ -550,8 +559,8 @@ class JSDDPMLightningModule(pl.LightningModule):
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode="min",
-                factor=0.5,
-                patience=10,
+                factor=lr_cfg.get("factor", 0.5),
+                patience=lr_cfg.get("patience", 10),
             )
             return {
                 "optimizer": optimizer,

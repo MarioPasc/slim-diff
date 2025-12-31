@@ -97,6 +97,7 @@ def compute_brain_foreground_mask(
     gaussian_sigma_px: float,
     min_component_px: int,
     n_components_to_keep: int = 1,
+    relaxed_threshold_factor: float = 0.1,
 ) -> NDArray[np.bool_] | None:
     """Compute binary brain foreground mask for a single slice.
 
@@ -112,6 +113,7 @@ def compute_brain_foreground_mask(
         gaussian_sigma_px: Sigma for Gaussian smoothing.
         min_component_px: Minimum component size to keep.
         n_components_to_keep: Number of largest components to keep (default: 1).
+        relaxed_threshold_factor: Factor for relaxed threshold on smaller components.
 
     Returns:
         Binary mask (H, W) or None if slice is invalid.
@@ -170,7 +172,7 @@ def compute_brain_foreground_mask(
         else:
             # Additional components: use relaxed threshold (10% of original)
             # This allows small brainstem structures in low z-bins
-            relaxed_threshold = min_component_px * 0.1
+            relaxed_threshold = min_component_px * relaxed_threshold_factor
             if component_sizes[idx] >= relaxed_threshold:
                 keep_indices.append(idx)
 
@@ -206,6 +208,7 @@ def compute_zbin_priors(
     min_component_px: int,
     n_first_bins: int = 0,
     max_components_for_first_bins: int = 1,
+    relaxed_threshold_factor: float = 0.1,
 ) -> dict[str, Any]:
     """Compute z-bin occupancy priors from cached slices.
 
@@ -222,6 +225,7 @@ def compute_zbin_priors(
         min_component_px: Minimum component size.
         n_first_bins: Number of low z-bins for multi-component handling (default: 0).
         max_components_for_first_bins: Keep top N components for first bins (default: 1).
+        relaxed_threshold_factor: Factor for relaxed threshold on smaller components.
 
     Returns:
         Dict with 'priors' (dict[int, ndarray]) and 'metadata'.
@@ -274,7 +278,11 @@ def compute_zbin_priors(
                     else 1
                 )
                 mask = compute_brain_foreground_mask(
-                    image, gaussian_sigma_px, min_component_px, n_components
+                    image,
+                    gaussian_sigma_px,
+                    min_component_px,
+                    n_components,
+                    relaxed_threshold_factor,
                 )
 
                 if mask is None:
@@ -331,6 +339,7 @@ def compute_zbin_priors(
         "min_component_px": min_component_px,
         "n_first_bins": n_first_bins,
         "max_components_for_first_bins": max_components_for_first_bins,
+        "relaxed_threshold_factor": relaxed_threshold_factor,
         "image_shape": image_shape,
         "slice_counts": counts,
     }
@@ -486,6 +495,72 @@ def get_anatomical_weights(
     return weights
 
 
+def get_anatomical_priors_as_input(
+    z_bins_batch: torch.Tensor | list[int],
+    priors: dict[int, NDArray[np.bool_]],
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    """Get anatomical priors as input channel for model conditioning.
+
+    Converts boolean anatomical priors to float tensors suitable for
+    concatenation as an input channel. The priors are converted to
+    float in range [0, 1] where 1 indicates in-brain region.
+
+    Args:
+        z_bins_batch: Z-bin indices for batch, shape (B,) tensor or list of length B.
+        priors: Dict mapping z-bin to boolean ROI array (H, W).
+        device: Target device for output tensor. If None, uses z_bins_batch.device
+                (if tensor) or defaults to 'cpu'.
+
+    Returns:
+        Prior tensor of shape (B, 1, H, W) with values in [0, 1].
+
+    Example:
+        >>> z_bins = torch.tensor([5, 10, 15])  # Batch of 3
+        >>> priors = load_zbin_priors(cache_dir, filename, z_bins=30)
+        >>> prior_input = get_anatomical_priors_as_input(z_bins, priors)
+        >>> prior_input.shape
+        torch.Size([3, 1, 128, 128])
+    """
+    # Handle both tensor and list inputs
+    if isinstance(z_bins_batch, torch.Tensor):
+        if device is None:
+            device = z_bins_batch.device
+        z_bins_np = z_bins_batch.cpu().numpy()
+        B = z_bins_batch.shape[0]
+    else:
+        # List input
+        if device is None:
+            device = torch.device('cpu')
+        z_bins_np = np.array(z_bins_batch)
+        B = len(z_bins_batch)
+
+    # Get first prior to determine spatial dimensions
+    first_prior = next(iter(priors.values()))
+    H, W = first_prior.shape
+
+    # Initialize prior tensor (default: all zeros = out-of-brain)
+    prior_tensor = torch.zeros(
+        (B, 1, H, W),
+        dtype=torch.float32,
+        device=device,
+    )
+
+    # Fill priors based on z-bins
+    for i, z_bin in enumerate(z_bins_np):
+        z_bin_int = int(z_bin)
+        if z_bin_int in priors:
+            # Get ROI mask for this z-bin
+            roi_mask = priors[z_bin_int]  # (H, W) boolean array
+
+            # Convert to float tensor: True -> 1.0, False -> 0.0
+            roi_tensor = torch.from_numpy(roi_mask.astype(np.float32)).to(device)
+            prior_tensor[i, 0, :, :] = roi_tensor
+        # else: keep all zeros (no prior available)
+
+    return prior_tensor
+
+
 # =============================================================================
 # Online Post-Processing
 # =============================================================================
@@ -501,6 +576,7 @@ def apply_zbin_prior_postprocess(
     fallback: str,
     n_first_bins: int = 0,
     max_components_for_first_bins: int = 1,
+    relaxed_threshold_factor: float = 0.1,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Apply z-bin prior post-processing to a generated sample.
 
@@ -524,6 +600,7 @@ def apply_zbin_prior_postprocess(
         fallback: "prior" or "empty".
         n_first_bins: Number of low z-bins for multi-component handling (default: 0).
         max_components_for_first_bins: Keep top N components for first bins (default: 1).
+        relaxed_threshold_factor: Factor for relaxed threshold on smaller components.
 
     Returns:
         Tuple of (cleaned_img, cleaned_lesion).
@@ -609,8 +686,8 @@ def apply_zbin_prior_postprocess(
                     if component_sizes[idx] >= min_component_px:
                         keep_indices.append(idx)
                 else:
-                    # Additional components: use relaxed threshold (10% of original)
-                    relaxed_threshold = min_component_px * 0.1
+                    # Additional components: use relaxed threshold
+                    relaxed_threshold = min_component_px * relaxed_threshold_factor
                     if component_sizes[idx] >= relaxed_threshold:
                         keep_indices.append(idx)
 
@@ -688,6 +765,7 @@ def apply_postprocess_batch(
             pp_cfg.fallback,
             pp_cfg.get("n_first_bins", 0),
             pp_cfg.get("max_components_for_first_bins", 1),
+            pp_cfg.get("relaxed_threshold_factor", 0.1),
         )
 
         cleaned_images.append(torch.from_numpy(img_clean))

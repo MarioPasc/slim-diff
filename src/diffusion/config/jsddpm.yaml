@@ -5,7 +5,7 @@
 # Experiment Metadata
 # =============================================================================
 experiment:
-  name: "jsddpm_flair_lesion"
+  name: "jsddpm_weighted_mask_loss"
   output_dir: "./outputs/jsddpm"
   seed: 42
 
@@ -57,7 +57,7 @@ data:
 # Conditioning Configuration
 # =============================================================================
 conditioning:
-  z_bins: 50  # Number of bins for z-position quantization
+  z_bins: 30  # Number of bins for z-position quantization
   # Token mapping: token = z_bin + class * z_bins
   # class=0: no lesion (control or empty epilepsy slice)
   # class=1: lesion present
@@ -70,7 +70,7 @@ conditioning:
   # Classifier-free guidance (CFG)
   cfg:
     enabled: false  # Enable/disable CFG
-    null_token: 100  # Special token for unconditional generation (2*z_bins)
+    null_token: 60  # Special token for unconditional generation (2*z_bins = 2*30 = 60)
     dropout_prob: 0.1  # Probability of dropping condition during training
 
 # =============================================================================
@@ -81,7 +81,9 @@ model:
   spatial_dims: 2
   in_channels: 2   # [image, mask]
   out_channels: 2  # [image, mask]
-
+  anatomical_conditioning: true  # Use anatomical input concatenation for conditioning (factory.py already handles in_channles += 1)
+                                 # Must set postprocessing.zbin_priors.enabled = true to use priors as input and rebuild the slice_cache
+                                 # to include them
   # UNet architecture
   channels: [64, 128, 256, 256]
   attention_levels: [false, false, true, true]
@@ -113,9 +115,13 @@ scheduler:
   num_train_timesteps: 1000
 
   # Beta schedule
-  schedule: "linear_beta"  # Options: "linear_beta", "scaled_linear_beta", "cosine"
+  schedule: "cosine"  # Options: "linear_beta", "scaled_linear_beta", "sigmoid_beta", "cosine"
+
+  # Used for linear and scaled_linear schedules
   beta_start: 0.0015
   beta_end: 0.0195
+  # Used for sigmoid schedule
+  sig_range: 6.0
 
   # Prediction type
   prediction_type: "epsilon"  # Options: "epsilon", "sample", "v_prediction"
@@ -159,8 +165,13 @@ training:
     T_max: null  # Set to max_epochs if null
     eta_min: 1.0e-6
 
+    # Example for ReduceLROnPlateau:
+    # type: "ReduceLROnPlateau"
+    # factor: 0.5  # Factor by which the learning rate will be reduced
+    # patience: 10 # Number of epochs with no improvement after which learning rate will be reduced
+
   # Training duration
-  max_epochs: 200
+  max_epochs: 500
   max_steps: null  # Override epochs if set
 
   # Precision and gradient handling
@@ -194,25 +205,33 @@ training:
 loss:
   # Uncertainty weighting (Kendall et al.)
   uncertainty_weighting:
-    enabled: true
+    enabled: false
     initial_log_vars: [0.0, 0.0]  # [image, mask]
     learnable: true
+    clamp_range: [-5.0, 5.0] # Min/max for clamping log_vars to prevent instability
 
   # Optional lesion-weighted mask loss
   lesion_weighted_mask:
     enabled: false
-    lesion_weight: 2.0  # Extra weight for lesion pixels
-    background_weight: 1.0
+    lesion_weight: 2.5  # Extra weight for lesion pixels
+    background_weight: 1.0  
 
-  # Anatomical priors in training loss
-  # Uses z-bin priors to downweight out-of-brain regions during training
-  # Helps prevent the model from learning speckle noise in non-brain areas
-  anatomical_priors_in_train_loss: false  # Set to true to enable
-
-  # Anatomical prior weighting configuration
-  anatomical_priors:
-    in_brain_weight: 1.0   # Weight for in-brain pixels (standard contribution)
-    out_brain_weight: 0.1  # Weight for out-of-brain pixels (downweighted to reduce noise learning)
+# =============================================================================
+# Postprocessing Configuration
+# =============================================================================
+postprocessing:
+  zbin_priors:
+    enabled: true  # Toggle to enable/disable z-bin prior postprocessing
+    priors_filename: "zbin_priors_brain_roi.npz"  # Filename in cache_dir
+    prob_threshold: 0.20  # Probability threshold for ROI mask from occupancy
+    dilate_radius_px: 3  # Dilation radius (pixels) for ROI tolerance
+    gaussian_sigma_px: 0.7  # Gaussian smoothing sigma for thresholding
+    min_component_px: 500  # Minimum connected component size (pixels)
+    n_first_bins: 5  # Number of low z-bins for multi-component handling (near neck/brainstem)
+    max_components_for_first_bins: 3  # Keep top N largest components for first bins
+    relaxed_threshold_factor: 0.1 # Factor for relaxed threshold on smaller components
+    fallback: "prior"  # Options: "prior" (use ROI as mask), "empty" (zero out)
+    apply_to: ["validation", "visualization", "generation"]  # Where to apply
 
 # =============================================================================
 # Logging Configuration
@@ -225,7 +244,7 @@ logging:
     type: "wandb"  # Better for remote/cluster computing
     wandb:
       project: "jsddpm-epilepsy"
-      entity: "mario-pg02-icai"  # Set to your wandb username/team
+      entity: "mario-pg02-icai-org"  # Set to your wandb username/team
       # Optional settings:
       name: jsddpm_epilepsy_flair  # Run name (auto-generated if null)
       tags: ["epilepsy", "diffusion", "jsddpm"]
@@ -268,22 +287,6 @@ visualization:
   # Output format
   save_png: true
   save_npz: false
-
-# =============================================================================
-# Postprocessing Configuration
-# =============================================================================
-postprocessing:
-  zbin_priors:
-    enabled: true  # Toggle to enable/disable z-bin prior postprocessing
-    priors_filename: "zbin_priors_brain_roi.npz"  # Filename in cache_dir
-    prob_threshold: 0.20  # Probability threshold for ROI mask from occupancy
-    dilate_radius_px: 3  # Dilation radius (pixels) for ROI tolerance
-    gaussian_sigma_px: 0.7  # Gaussian smoothing sigma for thresholding
-    min_component_px: 500  # Minimum connected component size (pixels)
-    n_first_bins: 5  # Number of low z-bins for multi-component handling (near neck/brainstem)
-    max_components_for_first_bins: 3  # Keep top N largest components for first bins
-    fallback: "prior"  # Options: "prior" (use ROI as mask), "empty" (zero out)
-    apply_to: ["validation", "visualization", "generation"]  # Where to apply
 
 # =============================================================================
 # Generation Configuration (for runners/generate.py)

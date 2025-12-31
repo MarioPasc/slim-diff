@@ -21,7 +21,11 @@ from pytorch_lightning.callbacks import Callback
 from src.diffusion.model.components.conditioning import get_visualization_tokens
 from src.diffusion.model.embeddings.zpos import quantize_z
 from src.diffusion.model.factory import DiffusionSampler
-from src.diffusion.utils.zbin_priors import apply_zbin_prior_postprocess, load_zbin_priors
+from src.diffusion.utils.zbin_priors import (
+    apply_zbin_prior_postprocess,
+    get_anatomical_priors_as_input,
+    load_zbin_priors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +216,7 @@ class VisualizationCallback(Callback):
 
         self._sampler: DiffusionSampler | None = None
 
-        # Z-bin prior post-processing
+        # Z-bin priors for post-processing and anatomical conditioning
         self._zbin_priors: dict[int, NDArray[np.bool_]] | None = None
         pp_cfg = cfg.get("postprocessing", {})
         zbin_cfg = pp_cfg.get("zbin_priors", {})
@@ -221,12 +225,17 @@ class VisualizationCallback(Callback):
             and "visualization" in zbin_cfg.get("apply_to", [])
         )
 
-        if self._use_zbin_priors:
+        # Anatomical conditioning (input concatenation)
+        self._use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
+
+        # Load priors if needed for either post-processing or anatomical conditioning
+        if self._use_zbin_priors or self._use_anatomical_conditioning:
             self._load_zbin_priors()
 
         logger.info(
             f"VisualizationCallback initialized, z_bins={self.z_bins}, "
-            f"zbin_priors={self._use_zbin_priors}"
+            f"zbin_priors_postprocess={self._use_zbin_priors}, "
+            f"anatomical_conditioning={self._use_anatomical_conditioning}"
         )
 
     def _compute_valid_z_bins(self) -> list[int]:
@@ -402,13 +411,33 @@ class VisualizationCallback(Callback):
 
         with torch.no_grad():
             # Control samples
-            for token in control_tokens:
-                sample = sampler.sample_single(token)
+            for i, token in enumerate(control_tokens):
+                # Get anatomical prior if needed
+                anatomical_mask = None
+                if self._use_anatomical_conditioning and self._zbin_priors is not None:
+                    z_bin = self.z_bins[i]
+                    anatomical_mask = get_anatomical_priors_as_input(
+                        [z_bin],
+                        self._zbin_priors,
+                        device=pl_module.device,
+                    ).squeeze(0)  # Remove batch dim: (1, 1, H, W) -> (1, H, W)
+
+                sample = sampler.sample_single(token, anatomical_mask=anatomical_mask)
                 samples.append(sample)
 
             # Epilepsy samples
-            for token in lesion_tokens:
-                sample = sampler.sample_single(token)
+            for i, token in enumerate(lesion_tokens):
+                # Get anatomical prior if needed
+                anatomical_mask = None
+                if self._use_anatomical_conditioning and self._zbin_priors is not None:
+                    z_bin = self.z_bins[i]
+                    anatomical_mask = get_anatomical_priors_as_input(
+                        [z_bin],
+                        self._zbin_priors,
+                        device=pl_module.device,
+                    ).squeeze(0)  # Remove batch dim: (1, 1, H, W) -> (1, H, W)
+
+                sample = sampler.sample_single(token, anatomical_mask=anatomical_mask)
                 samples.append(sample)
 
         # Apply z-bin prior post-processing (if enabled)

@@ -5,8 +5,6 @@ Builds the DiffusionModelUNet, scheduler, and inferer from configuration.
 
 from __future__ import annotations
 
-from typing import Union
-
 import logging
 
 import torch
@@ -23,31 +21,44 @@ logger = logging.getLogger(__name__)
 def build_model(cfg: DictConfig) -> DiffusionModelUNet:
     """Build the DiffusionModelUNet from configuration.
 
-    Args:
-        cfg: Configuration object.
-
-    Returns:
-        Configured DiffusionModelUNet instance.
+    Refinement:
+    - Checks `cfg.model.anatomical_conditioning`.
+    - If True, increases in_channels by 1 to allow input concatenation.
     """
     model_cfg = cfg.model
     cond_cfg = cfg.conditioning
     z_bins = cond_cfg.z_bins
 
+    # 1. Check for Anatomical Conditioning Toggle
+    # Default to False if not present to ensure backward compatibility
+    use_anatomical_conditioning = model_cfg.get("anatomical_conditioning", False)
+
+    # 2. Configure Input Channels
+    # Base channels (e.g., 2 for FLAIR + Mask, or 1 for FLAIR)
+    in_channels = model_cfg.in_channels
+    
+    if use_anatomical_conditioning:
+        # We add 1 channel for the Anatomical Prior Mask
+        in_channels += 1
+        logger.info(
+            f"Anatomical Conditioning ENABLED: "
+            f"Input channels increased {model_cfg.in_channels} -> {in_channels}"
+        )
+    else:
+        logger.info("Anatomical Conditioning DISABLED: Standard input channels.")
+
     # Calculate number of class embeddings
-    # 2 * z_bins for (control, lesion) classes
-    # +1 if CFG enabled for null token
     num_class_embeds = 2 * z_bins
     if cond_cfg.cfg.enabled:
         num_class_embeds += 1
 
-    # Build channel configuration
     channels = tuple(model_cfg.channels)
     attention_levels = tuple(model_cfg.attention_levels)
 
-    # Create model
+    # 3. Create Model
     model = DiffusionModelUNet(
         spatial_dims=model_cfg.spatial_dims,
-        in_channels=model_cfg.in_channels,
+        in_channels=in_channels,          # UPDATED
         out_channels=model_cfg.out_channels,
         channels=channels,
         attention_levels=attention_levels,
@@ -63,13 +74,9 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
 
     # Replace class embedding with custom sinusoidal embedding if enabled
     if cond_cfg.use_sinusoidal and model_cfg.use_class_embedding:
-        # Get the embedding dimension from the model's class_embedding
         embedding_dim = model.class_embedding.embedding_dim
-
-        # Get z_range for LOCAL binning
         z_range = tuple(cfg.data.slice_sampling.z_range)
 
-        # Create custom embedding module
         custom_embedding = ConditionalEmbeddingWithSinusoidal(
             num_embeddings=num_class_embeds,
             embedding_dim=embedding_dim,
@@ -79,25 +86,13 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
             max_z=cond_cfg.max_z,
             use_cfg=cond_cfg.cfg.enabled,
         )
-
-        # Replace the embedding layer
         model.class_embedding = custom_embedding
-
-        logger.info(
-            f"Replaced class_embedding with ConditionalEmbeddingWithSinusoidal "
-            f"(z_bins={z_bins}, z_range={z_range}, max_z={cond_cfg.max_z}, "
-            f"use_cfg={cond_cfg.cfg.enabled}, embed_dim={embedding_dim})"
-        )
 
     # Log model info
     n_params = sum(p.numel() for p in model.parameters())
-    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(
-        f"Built DiffusionModelUNet: "
-        f"{n_params:,} params ({n_trainable:,} trainable), "
-        f"channels={channels}, "
-        f"num_class_embeds={num_class_embeds}, "
-        f"use_sinusoidal={cond_cfg.use_sinusoidal}"
+        f"Built DiffusionModelUNet: {n_params:,} params. "
+        f"Anatomical Conditioning: {use_anatomical_conditioning}"
     )
 
     return model
@@ -208,12 +203,8 @@ def build_inferer(cfg: DictConfig) -> DDPMScheduler | DDIMScheduler:
 
     return inferer
 
-
 class DiffusionSampler:
-    """Wrapper for DDIM/DDPM sampling with classifier-free guidance.
-
-    Handles the sampling loop and optional CFG.
-    """
+    """Wrapper for DDIM/DDPM sampling with optional anatomical conditioning."""
 
     def __init__(
         self,
@@ -222,25 +213,18 @@ class DiffusionSampler:
         cfg: DictConfig,
         device: torch.device | str = "cuda",
     ) -> None:
-        """Initialize the sampler.
-
-        Args:
-            model: The diffusion model.
-            scheduler: The inference scheduler.
-            cfg: Configuration object.
-            device: Device to run on.
-        """
         self.model = model
         self.scheduler = scheduler
         self.sampler_cfg = cfg.sampler
         self.cond_cfg = cfg.conditioning
         self.device = device
+        
+        # Capture the conditioning flag
+        self.use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
 
         self.num_inference_steps = self.sampler_cfg.num_inference_steps
         self.eta = self.sampler_cfg.eta
         self.guidance_scale = self.sampler_cfg.guidance_scale
-
-        # Null token for CFG
         self.null_token = self.cond_cfg.z_bins * 2 if self.cond_cfg.cfg.enabled else None
 
     @torch.no_grad()
@@ -250,17 +234,12 @@ class DiffusionSampler:
         shape: tuple[int, ...] = (1, 2, 128, 128),
         guidance_scale: float | None = None,
         generator: torch.Generator | None = None,
+        anatomical_mask: torch.Tensor | None = None,  # NEW ARGUMENT
     ) -> torch.Tensor:
-        """Generate samples using DDIM.
-
+        """Generate samples.
+        
         Args:
-            tokens: Conditioning tokens, shape (B,).
-            shape: Output shape (B, C, H, W).
-            guidance_scale: Override guidance scale.
-            generator: Optional random generator.
-
-        Returns:
-            Generated samples, shape (B, C, H, W).
+            anatomical_mask: (B, 1, H, W) Tensor. Required if anatomical_conditioning is True.
         """
         if guidance_scale is None:
             guidance_scale = self.guidance_scale
@@ -268,47 +247,59 @@ class DiffusionSampler:
         B = tokens.shape[0]
         if shape[0] != B:
             shape = (B,) + shape[1:]
+            
+        # Validation
+        if self.use_anatomical_conditioning:
+            if anatomical_mask is None:
+                raise ValueError("Model expects 'anatomical_mask', but None provided.")
+            if anatomical_mask.shape != (B, 1, shape[2], shape[3]):
+                raise ValueError(f"Mask shape {anatomical_mask.shape} mismatch. Expected ({B}, 1, {shape[2]}, {shape[3]})")
 
-        # Start from noise
         x_t = torch.randn(shape, device=self.device, generator=generator)
-
-        # Set inference timesteps
         self.scheduler.set_timesteps(self.num_inference_steps)
 
-        # Sampling loop
         for t in self.scheduler.timesteps:
-            # Expand timesteps for batch
             timesteps = torch.full((B,), t, device=self.device, dtype=torch.long)
 
+            # 1. Prepare Model Inputs (Concatenation Logic)
+            model_input = x_t
+            
+            if self.use_anatomical_conditioning:
+                # Concatenate mask to noisy input
+                # x_t: [B, C, H, W], mask: [B, 1, H, W] -> input: [B, C+1, H, W]
+                model_input = torch.cat([x_t, anatomical_mask], dim=1)
+
+            # 2. Classifier-Free Guidance Logic
             if guidance_scale > 1.0 and self.null_token is not None:
-                # CFG: compute conditioned and unconditioned predictions
-                x_t_double = torch.cat([x_t, x_t], dim=0)
+                # Duplicate inputs for [Conditional, Unconditional] batching
+                model_input_double = torch.cat([model_input, model_input], dim=0)
                 t_double = torch.cat([timesteps, timesteps], dim=0)
 
-                # Tokens: conditioned and null
+                # Prepare tokens
                 null_tokens = torch.full_like(tokens, self.null_token)
                 tokens_double = torch.cat([tokens, null_tokens], dim=0)
 
-                # Get predictions
+                # Forward pass
                 noise_pred = self.model(
-                    x_t_double,
-                    timesteps=t_double,
-                    class_labels=tokens_double,
+                    model_input_double, 
+                    timesteps=t_double, 
+                    class_labels=tokens_double
                 )
-
-                # Split predictions
+                
                 noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2, dim=0)
-
-                # CFG combination
                 noise_pred = noise_pred_uncond + guidance_scale * (
                     noise_pred_cond - noise_pred_uncond
                 )
             else:
-                # No CFG
-                noise_pred = self.model(x_t, timesteps=timesteps, class_labels=tokens)
+                # Standard Forward Pass
+                noise_pred = self.model(
+                    model_input, 
+                    timesteps=timesteps, 
+                    class_labels=tokens
+                )
 
-            # DDIM step
-            if self.scheduler.__class__ == DDIMScheduler:
+            # 3. Scheduler Step
+            if isinstance(self.scheduler, DDIMScheduler):
                 x_t, _ = self.scheduler.step(noise_pred, t, x_t, eta=self.eta)
             else:
                 x_t, _ = self.scheduler.step(noise_pred, t, x_t)
@@ -320,19 +311,22 @@ class DiffusionSampler:
         token: int,
         guidance_scale: float | None = None,
         generator: torch.Generator | None = None,
+        anatomical_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Generate a single sample.
-
-        Args:
-            token: Conditioning token.
-            guidance_scale: Override guidance scale.
-            generator: Optional random generator.
-
-        Returns:
-            Generated sample, shape (2, 128, 128).
-        """
+        """Generate a single sample with optional mask."""
         tokens = torch.tensor([token], device=self.device, dtype=torch.long)
-        sample = self.sample(tokens, (1, 2, 128, 128), guidance_scale, generator)
+        
+        # Handle single-item batch for mask
+        if anatomical_mask is not None and anatomical_mask.dim() == 3:
+            anatomical_mask = anatomical_mask.unsqueeze(0)
+            
+        sample = self.sample(
+            tokens, 
+            (1, 2, 128, 128), 
+            guidance_scale, 
+            generator, 
+            anatomical_mask=anatomical_mask
+        )
         return sample[0]
 
 

@@ -324,6 +324,7 @@ def build_slice_cache(cfg: Any) -> None:
                     min_component_px=zbin_cfg.get("min_component_px", 500),
                     n_first_bins=zbin_cfg.get("n_first_bins", 0),
                     max_components_for_first_bins=zbin_cfg.get("max_components_for_first_bins", 1),
+                    relaxed_threshold_factor=zbin_cfg.get("relaxed_threshold_factor", 0.1),
                 )
                 save_zbin_priors(result["priors"], result["metadata"], priors_path)
                 logger.info(f"Saved z-bin priors to {priors_path}")

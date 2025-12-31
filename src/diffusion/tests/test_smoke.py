@@ -570,5 +570,189 @@ class TestZRangeFunctionality:
             quantize_z(127, z_range, n_bins)  # After range
 
 
+class TestAnatomicalConditioning:
+    """Tests for anatomical conditioning via input concatenation."""
+
+    @pytest.fixture
+    def anatomical_config(self, test_config):
+        """Create config with anatomical conditioning enabled."""
+        # Deep copy the config
+        from copy import deepcopy
+        cfg = deepcopy(test_config)
+
+        # Enable anatomical conditioning
+        cfg["model"]["anatomical_conditioning"] = True
+
+        # Enable postprocessing (required for loading priors)
+        cfg["postprocessing"] = {
+            "zbin_priors": {
+                "enabled": True,
+                "priors_filename": "zbin_priors_brain_roi.npz",
+                "prob_threshold": 0.20,
+                "dilate_radius_px": 3,
+                "gaussian_sigma_px": 0.7,
+                "min_component_px": 500,
+                "n_first_bins": 5,
+                "max_components_for_first_bins": 3,
+                "relaxed_threshold_factor": 0.1,
+                "fallback": "prior",
+                "apply_to": ["validation", "visualization", "generation"],
+            }
+        }
+
+        return OmegaConf.create(cfg)
+
+    def test_model_in_channels_with_anatomical_conditioning(self, anatomical_config):
+        """Test that model has correct in_channels when anatomical conditioning is enabled."""
+        model = build_model(anatomical_config)
+
+        # The model should have 3 input channels (2 for image+mask, 1 for anatomical prior)
+        # We can verify this by checking if it accepts 3-channel input
+        batch_size = 2
+        x = torch.randn(batch_size, 3, 64, 64)  # 3 channels
+        timesteps = torch.randint(0, 100, (batch_size,))
+        tokens = torch.randint(0, 100, (batch_size,))
+
+        # Forward pass should work
+        output = model(x, timesteps=timesteps, class_labels=tokens)
+
+        # Output should still be 2 channels (image + mask noise prediction)
+        assert output.shape == (batch_size, 2, 64, 64)
+
+    def test_model_forward_with_anatomical_prior(self, anatomical_config):
+        """Test forward pass with anatomical prior concatenated."""
+        from src.diffusion.utils.zbin_priors import get_anatomical_priors_as_input
+
+        model = build_model(anatomical_config)
+
+        batch_size = 2
+
+        # Create noisy input (2 channels)
+        x_t = torch.randn(batch_size, 2, 64, 64)
+
+        # Create mock anatomical priors
+        # In reality these would come from load_zbin_priors, but for testing we create them
+        z_bins = 50
+        mock_priors = {}
+        for i in range(z_bins):
+            # Create a simple circular prior for testing
+            prior = torch.zeros(64, 64, dtype=torch.bool)
+            center = 32
+            radius = 25
+            y, x = torch.meshgrid(torch.arange(64), torch.arange(64), indexing='ij')
+            distance = torch.sqrt((x - center)**2 + (y - center)**2)
+            prior = distance < radius
+            mock_priors[i] = prior.numpy()
+
+        # Get anatomical priors for this batch
+        z_bins_batch = [10, 25]  # Example z-bins
+        anatomical_priors = get_anatomical_priors_as_input(
+            z_bins_batch,
+            mock_priors,
+            device=x_t.device,
+        )  # (B, 1, H, W)
+
+        # Concatenate
+        x_input = torch.cat([x_t, anatomical_priors], dim=1)  # (B, 3, H, W)
+
+        assert x_input.shape == (batch_size, 3, 64, 64)
+
+        # Forward pass
+        timesteps = torch.randint(0, 100, (batch_size,))
+        tokens = torch.randint(0, 100, (batch_size,))
+
+        output = model(x_input, timesteps=timesteps, class_labels=tokens)
+
+        assert output.shape == (batch_size, 2, 64, 64)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_training_step_with_anatomical_conditioning_gpu(self, anatomical_config):
+        """Test training step with anatomical conditioning on GPU."""
+        from src.diffusion.training.lit_modules import JSDDPMLightningModule
+        from src.diffusion.utils.zbin_priors import get_anatomical_priors_as_input
+
+        # Use smaller batch size for GPU to avoid OOM
+        anatomical_config.training.batch_size = 1
+
+        # Create mock priors
+        z_bins = 50
+        mock_priors = {}
+        for i in range(z_bins):
+            prior = torch.zeros(64, 64, dtype=torch.bool)
+            center = 32
+            radius = 25
+            y, x = torch.meshgrid(torch.arange(64), torch.arange(64), indexing='ij')
+            distance = torch.sqrt((x - center)**2 + (y - center)**2)
+            prior = distance < radius
+            mock_priors[i] = prior.numpy()
+
+        # Create module on GPU
+        module = JSDDPMLightningModule(anatomical_config)
+        module = module.to('cuda:0')
+
+        # Manually set priors (normally loaded from disk)
+        module._zbin_priors = mock_priors
+        module._use_anatomical_conditioning = True
+
+        # Create dummy batch on GPU
+        batch = {
+            "image": torch.randn(1, 1, 64, 64).to('cuda:0'),
+            "mask": torch.randn(1, 1, 64, 64).to('cuda:0'),
+            "token": torch.randint(0, 100, (1,)).to('cuda:0'),
+            "metadata": {
+                "z_bin": [25],  # Example z-bin
+            },
+        }
+
+        # Run training step
+        loss = module.training_step(batch, 0)
+
+        assert loss is not None
+        assert loss > 0
+        assert loss.requires_grad
+        assert loss.device.type == 'cuda'
+
+    def test_anatomical_priors_as_input_function(self):
+        """Test get_anatomical_priors_as_input utility function."""
+        from src.diffusion.utils.zbin_priors import get_anatomical_priors_as_input
+
+        # Create mock priors
+        z_bins = 10
+        H, W = 64, 64
+        mock_priors = {}
+        for i in range(z_bins):
+            # Create different patterns for each z-bin
+            prior = torch.zeros(H, W, dtype=torch.bool)
+            if i < 5:
+                # Lower z-bins: smaller region
+                prior[20:44, 20:44] = True
+            else:
+                # Upper z-bins: larger region
+                prior[10:54, 10:54] = True
+            mock_priors[i] = prior.numpy()
+
+        # Test with tensor input
+        z_bins_batch = torch.tensor([2, 7])
+        priors_tensor = get_anatomical_priors_as_input(
+            z_bins_batch,
+            mock_priors,
+        )
+
+        assert priors_tensor.shape == (2, 1, H, W)
+        assert priors_tensor.dtype == torch.float32
+        assert priors_tensor.min() >= 0.0
+        assert priors_tensor.max() <= 1.0
+
+        # Test with list input
+        z_bins_list = [2, 7]
+        priors_list = get_anatomical_priors_as_input(
+            z_bins_list,
+            mock_priors,
+        )
+
+        assert priors_list.shape == (2, 1, H, W)
+        assert torch.allclose(priors_tensor, priors_list)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

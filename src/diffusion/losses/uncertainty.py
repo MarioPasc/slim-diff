@@ -32,6 +32,7 @@ class UncertaintyWeightedLoss(nn.Module):
         n_tasks: int = 2,
         initial_log_vars: list[float] | None = None,
         learnable: bool = True,
+        clamp_range: tuple[float, float] = (-5.0, 5.0),
     ) -> None:
         """Initialize the loss module.
 
@@ -39,10 +40,12 @@ class UncertaintyWeightedLoss(nn.Module):
             n_tasks: Number of tasks (default 2 for image + mask).
             initial_log_vars: Initial values for log variance parameters.
             learnable: Whether log_vars are learnable.
+            clamp_range: Min/max values for clamping log_vars.
         """
         super().__init__()
         self.n_tasks = n_tasks
         self.learnable = learnable
+        self.clamp_range = clamp_range
 
         # Initialize log variance parameters
         if initial_log_vars is None:
@@ -59,7 +62,8 @@ class UncertaintyWeightedLoss(nn.Module):
             f"UncertaintyWeightedLoss: "
             f"n_tasks={n_tasks}, "
             f"initial_log_vars={initial_log_vars}, "
-            f"learnable={learnable}"
+            f"learnable={learnable}, "
+            f"clamp_range={clamp_range}"
         )
 
     def forward(
@@ -88,9 +92,7 @@ class UncertaintyWeightedLoss(nn.Module):
 
         for i, loss_i in enumerate(losses):
             # Clamp log_var to prevent unbounded growth
-            # log_var ∈ [-5, 5] → weight ∈ [0.0067, 148.4], regularization ∈ [-2.5, 2.5]
-            # Wider range allows proper learning while preventing numerical instability
-            log_var_i = torch.clamp(self.log_vars[i], min=-5.0, max=5.0)
+            log_var_i = torch.clamp(self.log_vars[i], min=self.clamp_range[0], max=self.clamp_range[1])
 
             # Weighted loss: exp(-log_var) * loss + 0.5 * log_var
             precision = torch.exp(-log_var_i)
@@ -137,7 +139,7 @@ class UncertaintyWeightedLoss(nn.Module):
         """
         if not self.learnable:
             return None
-        return torch.clamp(self.log_vars.detach(), -5.0, 5.0)
+        return torch.clamp(self.log_vars.detach(), self.clamp_range[0], self.clamp_range[1])
 
 
 class SimpleWeightedLoss(nn.Module):

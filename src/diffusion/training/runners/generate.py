@@ -22,7 +22,11 @@ from src.diffusion.training.lit_modules import JSDDPMLightningModule
 from src.diffusion.utils.io import save_sample_npz
 from src.diffusion.utils.logging import setup_logger
 from src.diffusion.utils.seeding import get_generator, seed_everything
-from src.diffusion.utils.zbin_priors import apply_zbin_prior_postprocess, load_zbin_priors
+from src.diffusion.utils.zbin_priors import (
+    apply_zbin_prior_postprocess,
+    get_anatomical_priors_as_input,
+    load_zbin_priors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +97,10 @@ def generate_samples(
     n_bins = cfg.conditioning.z_bins
     all_metadata = []
 
-    # Load z-bin priors if enabled
+    # Check if anatomical conditioning is enabled
+    use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
+
+    # Load z-bin priors if enabled (for post-processing and/or anatomical conditioning)
     pp_cfg = cfg.get("postprocessing", {})
     zbin_cfg = pp_cfg.get("zbin_priors", {})
     use_zbin_priors = (
@@ -102,7 +109,7 @@ def generate_samples(
     )
 
     zbin_priors = None
-    if use_zbin_priors:
+    if use_zbin_priors or use_anatomical_conditioning:
         try:
             cache_dir = Path(cfg.data.cache_dir)
             zbin_priors = load_zbin_priors(
@@ -110,10 +117,14 @@ def generate_samples(
                 zbin_cfg.get("priors_filename", "zbin_priors_brain_roi.npz"),
                 n_bins,
             )
-            logger.info(f"Loaded z-bin priors for post-processing ({len(zbin_priors)} bins)")
+            if use_zbin_priors:
+                logger.info(f"Loaded z-bin priors for post-processing ({len(zbin_priors)} bins)")
+            if use_anatomical_conditioning:
+                logger.info(f"Loaded z-bin priors for anatomical conditioning ({len(zbin_priors)} bins)")
         except Exception as e:
-            logger.warning(f"Failed to load z-bin priors: {e}. Post-processing disabled.")
+            logger.warning(f"Failed to load z-bin priors: {e}. Features disabled.")
             use_zbin_priors = False
+            use_anatomical_conditioning = False
 
     # Set generator for reproducibility
     generator = get_generator(seed)
@@ -126,10 +137,20 @@ def generate_samples(
             token = get_token_for_condition(z_bin, pathology_class, n_bins)
 
             for sample_idx in range(n_per_condition):
+                # Get anatomical prior if needed
+                anatomical_mask = None
+                if use_anatomical_conditioning and zbin_priors is not None:
+                    anatomical_mask = get_anatomical_priors_as_input(
+                        [z_bin],
+                        zbin_priors,
+                        device=sampler.device,
+                    ).squeeze(0)  # Remove batch dim: (1, 1, H, W) -> (1, H, W)
+
                 # Generate sample
                 sample = sampler.sample_single(
                     token=token,
                     generator=generator,
+                    anatomical_mask=anatomical_mask,
                 )
 
                 # Split into image and mask
