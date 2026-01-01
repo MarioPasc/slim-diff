@@ -503,8 +503,8 @@ def get_anatomical_priors_as_input(
     """Get anatomical priors as input channel for model conditioning.
 
     Converts boolean anatomical priors to float tensors suitable for
-    concatenation as an input channel. The priors are converted to
-    float in range [0, 1] where 1 indicates in-brain region.
+    concatenation as an input channel. The priors are normalized to
+    [-1, 1], where 1 indicates in-brain and -1 indicates out-of-brain.
 
     Args:
         z_bins_batch: Z-bin indices for batch, shape (B,) tensor or list of length B.
@@ -513,7 +513,7 @@ def get_anatomical_priors_as_input(
                 (if tensor) or defaults to 'cpu'.
 
     Returns:
-        Prior tensor of shape (B, 1, H, W) with values in [0, 1].
+        Prior tensor of shape (B, 1, H, W) with values in [-1, 1].
 
     Example:
         >>> z_bins = torch.tensor([5, 10, 15])  # Batch of 3
@@ -521,6 +521,8 @@ def get_anatomical_priors_as_input(
         >>> prior_input = get_anatomical_priors_as_input(z_bins, priors)
         >>> prior_input.shape
         torch.Size([3, 1, 128, 128])
+        >>> prior_input.min(), prior_input.max()
+        (tensor(-1.), tensor(1.))
     """
     # Handle both tensor and list inputs
     if isinstance(z_bins_batch, torch.Tensor):
@@ -531,7 +533,7 @@ def get_anatomical_priors_as_input(
     else:
         # List input
         if device is None:
-            device = torch.device('cpu')
+            device = torch.device("cpu")
         z_bins_np = np.array(z_bins_batch)
         B = len(z_bins_batch)
 
@@ -539,9 +541,10 @@ def get_anatomical_priors_as_input(
     first_prior = next(iter(priors.values()))
     H, W = first_prior.shape
 
-    # Initialize prior tensor (default: all zeros = out-of-brain)
-    prior_tensor = torch.zeros(
+    # Initialize prior tensor (default: all -1s = out-of-brain)
+    prior_tensor = torch.full(
         (B, 1, H, W),
+        fill_value=-1.0,
         dtype=torch.float32,
         device=device,
     )
@@ -553,10 +556,15 @@ def get_anatomical_priors_as_input(
             # Get ROI mask for this z-bin
             roi_mask = priors[z_bin_int]  # (H, W) boolean array
 
-            # Convert to float tensor: True -> 1.0, False -> 0.0
+            # Convert to float tensor: True -> 1.0, False -> -1.0
             roi_tensor = torch.from_numpy(roi_mask.astype(np.float32)).to(device)
-            prior_tensor[i, 0, :, :] = roi_tensor
-        # else: keep all zeros (no prior available)
+            # Map boolean mask where True is 1.0 and keep -1.0 otherwise
+            prior_tensor[i, 0, :, :] = torch.where(
+                roi_tensor.bool(),
+                torch.tensor(1.0, device=device),
+                torch.tensor(-1.0, device=device),
+            )
+        # else: keep all -1s (no prior available)
 
     return prior_tensor
 

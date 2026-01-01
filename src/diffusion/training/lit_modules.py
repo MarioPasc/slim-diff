@@ -373,8 +373,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
-        # Compute loss (no spatial weights needed with anatomical input conditioning)
-        loss, loss_details = self.criterion(model_output, target)
+        # Compute loss with mask for channel-separated multi-task learning
+        loss, loss_details = self.criterion(model_output, target, mask)
 
         # Log metrics
         self.log("train/loss", loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
@@ -452,11 +452,14 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
-        # Compute loss
-        loss, loss_details = self.criterion(model_output, target)
+        # Compute loss with mask for channel-separated multi-task learning
+        loss, loss_details = self.criterion(model_output, target, mask)
 
         # Predict x0 for metrics
-        x0_hat = self._predict_x0(x_t, model_output, timesteps)
+        # If anatomical conditioning is enabled, x_t has 3 channels but model_output has 2
+        # Extract only the first 2 channels (FLAIR + mask) for x0 prediction
+        x_t_for_pred = x_t[:, :2] if self._use_anatomical_conditioning else x_t
+        x0_hat = self._predict_x0(x_t_for_pred, model_output, timesteps)
         x0_hat_image = x0_hat[:, 0:1]
         x0_hat_mask = x0_hat[:, 1:2]
 

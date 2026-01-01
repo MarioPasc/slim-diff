@@ -391,7 +391,7 @@ class TestLosses:
         module = JSDDPMLightningModule(test_config)
 
         # Get initial log_vars
-        initial_log_vars = module.criterion.uncertainty_loss.log_vars.clone()
+        initial_log_vars = module.criterion.loss.log_vars.clone()
 
         # Create dummy batch
         batch = {
@@ -411,7 +411,7 @@ class TestLosses:
         optimizer.zero_grad()
 
         # Check that log_vars changed
-        final_log_vars = module.criterion.uncertainty_loss.log_vars
+        final_log_vars = module.criterion.loss.log_vars
         assert not torch.allclose(initial_log_vars, final_log_vars), \
             "log_vars did not change after optimization step"
 
@@ -740,7 +740,9 @@ class TestAnatomicalConditioning:
 
         assert priors_tensor.shape == (2, 1, H, W)
         assert priors_tensor.dtype == torch.float32
-        assert priors_tensor.min() >= 0.0
+        # Priors are in [-1, 1] range to match image/mask normalization
+        # True (in-brain) -> 1.0, False (out-of-brain) -> -1.0
+        assert priors_tensor.min() >= -1.0
         assert priors_tensor.max() <= 1.0
 
         # Test with list input
