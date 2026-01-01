@@ -18,6 +18,8 @@ import torch
 from pytorch_lightning.callbacks import Callback
 from omegaconf import DictConfig
 
+from src.diffusion.utils.zbin_priors import get_anatomical_priors_as_input
+
 logger = logging.getLogger(__name__)
 
 
@@ -565,6 +567,16 @@ class PredictionQualityCallback(Callback):
 
                 # Add noise
                 x_t = pl_module._add_noise(x0, noise, timesteps)
+
+                # Concatenate anatomical prior if enabled
+                if pl_module._use_anatomical_conditioning and pl_module._zbin_priors is not None:
+                    z_bins_batch = batch["metadata"]["z_bin"][:self.n_samples]
+                    anatomical_priors = get_anatomical_priors_as_input(
+                        z_bins_batch,
+                        pl_module._zbin_priors,
+                        device=pl_module.device,
+                    )
+                    x_t = torch.cat([x_t, anatomical_priors], dim=1)
 
                 # Predict noise
                 eps_pred = pl_module(x_t, timesteps, tokens)
