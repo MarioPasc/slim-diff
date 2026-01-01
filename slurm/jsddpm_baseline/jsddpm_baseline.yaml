@@ -81,7 +81,7 @@ model:
   spatial_dims: 2
   in_channels: 2   # [image, mask] - factory.py auto-increases to 3 when anatomical_conditioning=true
   out_channels: 2  # [image, mask]
-  anatomical_conditioning: true  # ENABLED: Uses z-bin priors as input channel for spatial guidance
+  anatomical_conditioning: false  # Uses z-bin priors as input channel for spatial guidance
                                  # factory.py automatically handles in_channels += 1
                                  # Requires postprocessing.zbin_priors.enabled = true
   # UNet architecture
@@ -205,14 +205,14 @@ training:
 loss:
   # Uncertainty weighting (Kendall et al.)
   uncertainty_weighting:
-    enabled: true  # ENABLED: Essential for multi-task learning balance
+    enabled: false  # ENABLED: Essential for multi-task learning balance
     initial_log_vars: [0.0, 0.0]  # [image, mask]
     learnable: true
     clamp_range: [-5.0, 5.0] # Min/max for clamping log_vars to prevent instability
 
   # Optional lesion-weighted mask loss
   lesion_weighted_mask:
-    enabled: true  # ENABLED: Improves lesion detection by upweighting lesion pixels
+    enabled: false  # ENABLED: Improves lesion detection by upweighting lesion pixels
     lesion_weight: 2.5  # Extra weight for lesion pixels
     background_weight: 1.0  
 
