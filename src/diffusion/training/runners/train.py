@@ -116,15 +116,20 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
     callbacks.append(CSVLoggingCallback(cfg=cfg))
 
     # EMA callback (if enabled)
-    if cfg.training.ema.enabled:
+    if cfg.training.ema.get("enabled", False):
+        ema_cfg = cfg.training.ema
         callbacks.append(EMACallback(
-            decay=cfg.training.ema.decay,
-            update_every=cfg.training.ema.update_every,
-            use_for_validation=cfg.training.ema.use_for_validation,
+            decay=ema_cfg.decay,
+            update_every=ema_cfg.get("update_every", 1),
+            update_start_step=ema_cfg.get("update_start_step", 0),
+            store_on_cpu=ema_cfg.get("store_on_cpu", True),
+            use_buffers=ema_cfg.get("use_buffers", True),
+            use_for_validation=ema_cfg.get("use_for_validation", True),
+            export_to_checkpoint=ema_cfg.get("export_to_checkpoint", False),
         ))
         logger.info(
-            f"EMA enabled: decay={cfg.training.ema.decay}, "
-            f"update_every={cfg.training.ema.update_every}"
+            f"EMA enabled: decay={ema_cfg.decay}, "
+            f"update_every={ema_cfg.get('update_every', 1)}"
         )
 
     return callbacks

@@ -7,8 +7,9 @@ at validation time.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
@@ -490,34 +491,192 @@ class VisualizationCallback(Callback):
             })
 
 
-class EMACallback(Callback):
-    """Exponential Moving Average callback for model weights.
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, Optional, Tuple
 
-    Maintains an EMA of model weights for potentially better generation.
-    Optional feature - not enabled by default.
+
+class EMACallback(Callback):
+    """EMA of pl_module.model parameters (and optionally buffers).
+
+    Properties:
+      - Updates on optimizer steps via trainer.global_step (correct with grad accumulation).
+      - EMA state stored in FP32, optionally on CPU.
+      - update_every counts optimizer steps; decay is interpreted as per-step and corrected if update_every>1.
+      - Safe swap/restore for validation; nested-safe ema_scope() for visualization/generation.
+      - Checkpointable; optional export of EMA weights to checkpoint["ema_state_dict"] for offline sampling.
     """
 
     def __init__(
         self,
+        *,
         decay: float = 0.999,
-        update_every: int = 10,
+        update_every: int = 1,
+        update_start_step: int = 0,
+        store_on_cpu: bool = True,
+        use_buffers: bool = True,
         use_for_validation: bool = True,
+        export_to_checkpoint: bool = False,
     ) -> None:
-        """Initialize EMA callback.
-
-        Args:
-            decay: EMA decay rate.
-            update_every: Update EMA every N steps.
-            use_for_validation: Whether to use EMA weights for validation.
-        """
         super().__init__()
-        self.decay = decay
-        self.update_every = update_every
-        self.use_for_validation = use_for_validation
-        self._ema_weights: dict[str, torch.Tensor] | None = None
-        self._original_weights: dict[str, torch.Tensor] | None = None
-        self._ema_applied = False
-        self._step = 0
+        if not (0.0 < decay < 1.0):
+            raise ValueError(f"EMA decay must be in (0, 1), got {decay}")
+        if update_every < 1:
+            raise ValueError(f"EMA update_every must be >= 1, got {update_every}")
+        if update_start_step < 0:
+            raise ValueError(f"EMA update_start_step must be >= 0, got {update_start_step}")
+
+        self.decay = float(decay)
+        self.update_every = int(update_every)
+        self.update_start_step = int(update_start_step)
+        self.store_on_cpu = bool(store_on_cpu)
+        self.use_buffers = bool(use_buffers)
+        self.use_for_validation = bool(use_for_validation)
+        self.export_to_checkpoint = bool(export_to_checkpoint)
+
+        self._ema: Optional[Dict[str, torch.Tensor]] = None
+        self._backup: Optional[Dict[str, torch.Tensor]] = None
+        self._applied: bool = False
+        self._last_global_step: int = 0
+        self._num_updates: int = 0
+
+    # -----------------
+    # Internals
+    # -----------------
+    def _model(self, pl_module: pl.LightningModule) -> torch.nn.Module:
+        # In your codebase the diffusion UNet is stored here.
+        return pl_module.model  # type: ignore[attr-defined]
+
+    def _iter_named_tensors(self, model: torch.nn.Module) -> Iterator[Tuple[str, torch.Tensor, bool]]:
+        """Yield (name, tensor, is_float) for parameters and (optionally) buffers."""
+        for name, p in model.named_parameters():
+            if p is not None:
+                yield name, p, torch.is_floating_point(p)
+        if self.use_buffers:
+            for name, b in model.named_buffers():
+                if b is not None:
+                    yield name, b, torch.is_floating_point(b)
+
+    def _ema_device(self, reference: torch.Tensor) -> torch.device:
+        return torch.device("cpu") if self.store_on_cpu else reference.device
+
+    def _effective_decay(self) -> float:
+        # decay is interpreted as per *optimizer step*.
+        # If updating every N steps, match the per-step smoothing:
+        #   ema_{t+N} = (decay^N)*ema_t + (1-decay^N)*w_{t+N}
+        return self.decay if self.update_every == 1 else float(self.decay ** self.update_every)
+
+    def _ensure_initialized(self, pl_module: pl.LightningModule) -> None:
+        if self._ema is not None:
+            return
+
+        model = self._model(pl_module)
+        self._ema = {}
+
+        with torch.no_grad():
+            for name, t, is_float in self._iter_named_tensors(model):
+                dev = self._ema_device(t)
+                if is_float:
+                    self._ema[name] = t.detach().to(device=dev, dtype=torch.float32).clone()
+                else:
+                    # Non-float buffers: keep last value (no averaging)
+                    self._ema[name] = t.detach().to(device=dev).clone()
+
+        logger.info(
+            "Initialized EMA: %d tensors (use_buffers=%s, store_on_cpu=%s)",
+            len(self._ema),
+            self.use_buffers,
+            self.store_on_cpu,
+        )
+
+    @torch.no_grad()
+    def _update(self, pl_module: pl.LightningModule) -> None:
+        self._ensure_initialized(pl_module)
+        assert self._ema is not None
+
+        model = self._model(pl_module)
+        d = self._effective_decay()
+        one_minus_d = 1.0 - d
+
+        for name, t, is_float in self._iter_named_tensors(model):
+            if name not in self._ema:
+                # Rare: tensor appears mid-run. Initialize it.
+                dev = self._ema_device(t)
+                self._ema[name] = (
+                    t.detach().to(device=dev, dtype=torch.float32).clone()
+                    if is_float
+                    else t.detach().to(device=dev).clone()
+                )
+                continue
+
+            ema_t = self._ema[name]
+            if is_float:
+                src = t.detach().to(dtype=torch.float32)
+                if self.store_on_cpu:
+                    src = src.to("cpu")
+                ema_t.mul_(d).add_(src, alpha=one_minus_d)
+            else:
+                # Non-float buffers: copy latest
+                src = t.detach()
+                if self.store_on_cpu:
+                    src = src.to("cpu")
+                ema_t.copy_(src)
+
+        self._num_updates += 1
+
+    @torch.no_grad()
+    def _apply(self, pl_module: pl.LightningModule) -> bool:
+        """Swap current model weights to EMA weights. Returns True if this call applied the swap."""
+        if self._applied:
+            return False
+
+        self._ensure_initialized(pl_module)
+        assert self._ema is not None
+
+        model = self._model(pl_module)
+        self._backup = {}
+
+        for name, t, _ in self._iter_named_tensors(model):
+            self._backup[name] = t.detach().clone()
+            ema_t = self._ema.get(name)
+            if ema_t is not None:
+                t.copy_(ema_t.to(device=t.device, dtype=t.dtype))
+
+        self._applied = True
+        return True
+
+    @torch.no_grad()
+    def _restore(self, pl_module: pl.LightningModule) -> None:
+        if not self._applied or self._backup is None:
+            return
+
+        model = self._model(pl_module)
+        for name, t, _ in self._iter_named_tensors(model):
+            b = self._backup.get(name)
+            if b is not None:
+                t.copy_(b.to(device=t.device, dtype=t.dtype))
+
+        self._backup = None
+        self._applied = False
+
+    @contextmanager
+    def ema_scope(self, pl_module: pl.LightningModule) -> Iterator[None]:
+        """Temporarily swap weights to EMA weights (nested-safe)."""
+        applied_now = self._apply(pl_module)
+        try:
+            yield
+        finally:
+            if applied_now:
+                self._restore(pl_module)
+
+    def get_ema_state_dict(self) -> Optional[Dict[str, torch.Tensor]]:
+        return self._ema
+
+    # -----------------
+    # Lightning hooks
+    # -----------------
+    def setup(self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage: str) -> None:
+        if stage == "fit":
+            self._ensure_initialized(pl_module)
 
     def on_train_batch_end(
         self,
@@ -527,118 +686,76 @@ class EMACallback(Callback):
         batch: Any,
         batch_idx: int,
     ) -> None:
-        """Update EMA weights after training batch.
+        # trainer.global_step increments after each optimizer step (handles accumulate_grad_batches).
+        gs = int(trainer.global_step)
+        if gs <= 0 or gs == self._last_global_step:
+            return
+        self._last_global_step = gs
 
-        Args:
-            trainer: Lightning trainer.
-            pl_module: Lightning module.
-            outputs: Batch outputs.
-            batch: Input batch.
-            batch_idx: Batch index.
-        """
-        self._step += 1
-
-        if self._step % self.update_every != 0:
+        step_idx = gs - 1  # zero-based
+        if step_idx < self.update_start_step:
+            return
+        if step_idx % self.update_every != 0:
             return
 
-        # Initialize EMA weights on first call
-        if self._ema_weights is None:
-            self._ema_weights = {
-                name: param.data.clone()
-                for name, param in pl_module.model.named_parameters()
-            }
-            return
+        self._update(pl_module)
 
-        # Update EMA
-        with torch.no_grad():
-            for name, param in pl_module.model.named_parameters():
-                if name in self._ema_weights:
-                    self._ema_weights[name] = (
-                        self.decay * self._ema_weights[name]
-                        + (1 - self.decay) * param.data
-                    )
+    def on_validation_epoch_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if self.use_for_validation:
+            self._apply(pl_module)
 
-    def get_ema_weights(self) -> dict[str, torch.Tensor] | None:
-        """Get current EMA weights.
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if self.use_for_validation:
+            self._restore(pl_module)
 
-        Returns:
-            Dictionary of EMA weights or None.
-        """
-        return self._ema_weights
+    def on_exception(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        exception: BaseException,
+    ) -> None:
+        # Never leave the model swapped on failure.
+        self._restore(pl_module)
 
-    def apply_ema(self, pl_module: pl.LightningModule) -> None:
-        """Apply EMA weights to the model.
-
-        Swaps current model weights with EMA weights. Stores original weights
-        for later restoration.
-
-        Args:
-            pl_module: Lightning module.
-        """
-        if self._ema_weights is None:
-            return
-
-        if self._ema_applied:
-            return  # Already applied
-
-        # Store original weights
-        self._original_weights = {
-            name: param.data.clone()
-            for name, param in pl_module.model.named_parameters()
+    # -----------------
+    # Checkpointing
+    # -----------------
+    def state_dict(self) -> Dict[str, Any]:
+        # Storing EMA is required to resume *true* EMA continuation.
+        return {
+            "ema": self._ema,
+            "last_global_step": self._last_global_step,
+            "num_updates": self._num_updates,
         }
 
-        # Apply EMA weights
-        with torch.no_grad():
-            for name, param in pl_module.model.named_parameters():
-                if name in self._ema_weights:
-                    param.data.copy_(self._ema_weights[name])
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        self._ema = state_dict.get("ema", None)
+        self._last_global_step = int(state_dict.get("last_global_step", 0))
+        self._num_updates = int(state_dict.get("num_updates", 0))
 
-        self._ema_applied = True
-
-    def restore_original(self, pl_module: pl.LightningModule) -> None:
-        """Restore original model weights.
-
-        Restores the model weights that were stored before applying EMA.
-
-        Args:
-            pl_module: Lightning module.
-        """
-        if self._original_weights is None or not self._ema_applied:
-            return
-
-        # Restore original weights
-        with torch.no_grad():
-            for name, param in pl_module.model.named_parameters():
-                if name in self._original_weights:
-                    param.data.copy_(self._original_weights[name])
-
-        self._ema_applied = False
-        self._original_weights = None
-
-    def on_validation_epoch_start(
+    def on_save_checkpoint(
         self,
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
+        checkpoint: Dict[str, Any],
     ) -> None:
-        """Apply EMA weights before validation if enabled.
+        if self.export_to_checkpoint and self._ema is not None:
+            checkpoint["ema_state_dict"] = self._ema
+            checkpoint["ema_meta"] = {
+                "decay": self.decay,
+                "update_every": self.update_every,
+                "update_start_step": self.update_start_step,
+                "store_on_cpu": self.store_on_cpu,
+                "use_buffers": self.use_buffers,
+                "num_updates": self.num_updates,
+            }
 
-        Args:
-            trainer: Lightning trainer.
-            pl_module: Lightning module.
-        """
-        if self.use_for_validation:
-            self.apply_ema(pl_module)
-
-    def on_validation_epoch_end(
+    def on_load_checkpoint(
         self,
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
+        checkpoint: Dict[str, Any],
     ) -> None:
-        """Restore original weights after validation if EMA was used.
-
-        Args:
-            trainer: Lightning trainer.
-            pl_module: Lightning module.
-        """
-        if self.use_for_validation:
-            self.restore_original(pl_module)
+        ema_sd = checkpoint.get("ema_state_dict", None)
+        if isinstance(ema_sd, dict):
+            self._ema = ema_sd
