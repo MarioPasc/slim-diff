@@ -27,6 +27,7 @@ from src.diffusion.model.factory import (
     build_model,
     build_scheduler,
     predict_x0,
+    DiffusionSampler,
 )
 from src.diffusion.training.metrics import MetricsCalculator
 from src.diffusion.utils.zbin_priors import (
@@ -102,6 +103,9 @@ class JSDDPMLightningModule(pl.LightningModule):
         if self._use_zbin_priors or self._use_anatomical_conditioning:
             self._load_zbin_priors()
 
+        # Sampler for validation metrics (created lazily when device is available)
+        self._val_sampler: DiffusionSampler | None = None
+
         logger.info(
             f"Initialized JSDDPMLightningModule with CFG={self.use_cfg}, "
             f"zbin_priors_postprocess={self._use_zbin_priors}, "
@@ -168,6 +172,25 @@ class JSDDPMLightningModule(pl.LightningModule):
             logger.warning(f"Failed to load z-bin priors: {e}. Post-processing disabled.")
             self._use_zbin_priors = False
             self._zbin_priors = None
+
+    def _get_val_sampler(self) -> DiffusionSampler:
+        """Get or create the diffusion sampler for validation metrics.
+
+        Returns:
+            DiffusionSampler configured for inference.
+        """
+        if self._val_sampler is None:
+            self._val_sampler = DiffusionSampler(
+                model=self.model,
+                scheduler=self.inferer,
+                cfg=self.cfg,
+                device=self.device,
+            )
+            logger.info(
+                f"Created validation sampler with {self.cfg.sampler.num_inference_steps} "
+                f"inference steps for quality metrics"
+            )
+        return self._val_sampler
 
     def forward(
         self,
@@ -402,12 +425,106 @@ class JSDDPMLightningModule(pl.LightningModule):
 
         return loss
 
+    def _get_reconstruction_timesteps(self) -> list[int]:
+        """Timesteps for denoising-based monitoring.
+
+        Chosen to cover low/mid/high noise regimes for T=1000 while
+        avoiding the near-pure-noise endpoint where metrics get noisy.
+        """
+        T = self.scheduler.num_train_timesteps
+        # Scale anchors if T changes
+        anchors = [0.05, 0.25, 0.75]  # low, mid, high
+        ts = [min(int(round(a * T)), T - 1) for a in anchors]
+        # Ensure strictly increasing and within bounds
+        ts = sorted(set(max(0, t) for t in ts))
+        return ts
+
+
+    def _denoise_from_timestep(
+        self,
+        x_t: torch.Tensor,
+        start_timestep: int,
+        tokens: torch.Tensor,
+        anatomical_priors: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Denoise from a specific timestep back to x0.
+
+        Performs iterative denoising from timestep t down to 0 using the
+        scheduler's step function.
+
+        Args:
+            x_t: Noisy samples at timestep t, shape (B, 2, H, W).
+            start_timestep: Starting timestep for denoising.
+            tokens: Conditioning tokens, shape (B,).
+            anatomical_priors: Optional anatomical priors, shape (B, 1, H, W).
+
+        Returns:
+            Denoised samples x0_hat, shape (B, 2, H, W).
+        """
+        B = x_t.shape[0]
+        
+        # Set timesteps for the scheduler starting from start_timestep
+        # We need to find how many steps correspond to our start_timestep
+        sampler = self._get_val_sampler()
+        sampler.scheduler.set_timesteps(self.sampler_cfg.num_inference_steps)
+        
+        # Get all scheduler timesteps and filter to those >= start_timestep mapping
+        # The scheduler timesteps are evenly spaced, so we find the closest one
+        all_timesteps = sampler.scheduler.timesteps
+        
+        # Find timesteps that should be executed (those corresponding to <= start_timestep in noise space)
+        # Scheduler timesteps go from high to low (e.g., 999, 979, 959, ...)
+        # We want to start from the one closest to start_timestep
+        start_idx = 0
+        for i, t in enumerate(all_timesteps):
+            if t <= start_timestep:
+                start_idx = i
+                break
+        
+        timesteps_to_run = all_timesteps[start_idx:]
+        
+        current_x = x_t.clone()
+        
+        for t in timesteps_to_run:
+            timesteps_batch = torch.full((B,), t, device=self.device, dtype=torch.long)
+            
+            # Prepare model input
+            model_input = current_x
+            if self._use_anatomical_conditioning and anatomical_priors is not None:
+                model_input = torch.cat([current_x, anatomical_priors], dim=1)
+            
+            # Predict noise (no CFG during reconstruction evaluation)
+            noise_pred = self.model(model_input, timesteps=timesteps_batch, class_labels=tokens)
+            
+            # Scheduler step
+            if hasattr(sampler.scheduler, 'step'):
+                if hasattr(sampler, 'eta'):
+                    current_x, _ = sampler.scheduler.step(noise_pred, t, current_x, eta=sampler.eta)
+                else:
+                    current_x, _ = sampler.scheduler.step(noise_pred, t, current_x)
+            else:
+                current_x, _ = sampler.scheduler.step(noise_pred, t, current_x)
+        
+        return current_x
+
+    @property
+    def sampler_cfg(self) -> DictConfig:
+        """Get sampler configuration."""
+        return self.cfg.sampler
+
     def validation_step(
         self,
         batch: dict[str, Any],
         batch_idx: int,
     ) -> dict[str, torch.Tensor]:
         """Validation step.
+
+        Computes:
+        1. Validation loss using random timesteps (consistent with training)
+        2. Quality metrics (PSNR, SSIM, Dice, HD95) using RECONSTRUCTION at 4 fixed timesteps
+           - Reconstruction: noise real x0 to timestep t, denoise back, compare with original x0
+           - Timesteps: T/4, T/2, 3T/4, T (where T = num_train_timesteps)
+        3. Generation samples for visualization (pure noise -> denoised, not used for metrics)
 
         Args:
             batch: Batch dictionary.
@@ -423,8 +540,10 @@ class JSDDPMLightningModule(pl.LightningModule):
 
         x0 = torch.cat([image, mask], dim=1)
         B = x0.shape[0]
+        H, W = image.shape[2], image.shape[3]
 
-        # Sample timesteps and noise
+        # ========== Loss computation at random timesteps ==========
+        # This is consistent with training and monitors denoising performance
         timesteps = self._sample_timesteps(B)
         noise = torch.randn_like(x0)
 
@@ -432,22 +551,20 @@ class JSDDPMLightningModule(pl.LightningModule):
         x_t = self._add_noise(x0, noise, timesteps)
 
         # Concatenate anatomical priors if enabled
+        anatomical_priors = None
         if self._use_anatomical_conditioning and self._zbin_priors is not None:
-            # Get z_bins from batch metadata
-            z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
-
-            # Get anatomical priors as input channel
+            z_bins_batch = batch["metadata"]["z_bin"]
             anatomical_priors = get_anatomical_priors_as_input(
                 z_bins_batch,
                 self._zbin_priors,
                 device=x_t.device,
-            )  # (B, 1, H, W)
-
-            # Concatenate to x_t: (B, 2, H, W) + (B, 1, H, W) -> (B, 3, H, W)
-            x_t = torch.cat([x_t, anatomical_priors], dim=1)
+            )
+            x_t_with_priors = torch.cat([x_t, anatomical_priors], dim=1)
+        else:
+            x_t_with_priors = x_t
 
         # Predict
-        model_output = self(x_t, timesteps, tokens)
+        model_output = self(x_t_with_priors, timesteps, tokens)
 
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
@@ -455,40 +572,69 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Compute loss with mask for channel-separated multi-task learning
         loss, loss_details = self.criterion(model_output, target, mask)
 
-        # Predict x0 for metrics
-        # If anatomical conditioning is enabled, x_t has 3 channels but model_output has 2
-        # Extract only the first 2 channels (FLAIR + mask) for x0 prediction
-        x_t_for_pred = x_t[:, :2] if self._use_anatomical_conditioning else x_t
-        x0_hat = self._predict_x0(x_t_for_pred, model_output, timesteps)
-        x0_hat_image = x0_hat[:, 0:1]
-        x0_hat_mask = x0_hat[:, 1:2]
+        # ========== Quality metrics via RECONSTRUCTION at fixed timesteps ==========
+        # Reconstruction-based validation: noise x0 to t, denoise back, compare with original x0
+        # This measures true denoising fidelity (same image comparison)
+        reconstruction_timesteps = self._get_reconstruction_timesteps()
+        
+        all_metrics = {}
+        with torch.no_grad():
+            for t_val in reconstruction_timesteps:
+                # Create timestep tensor
+                t_tensor = torch.full((B,), t_val, device=self.device, dtype=torch.long)
+                
+                # Sample fresh noise for this timestep evaluation
+                noise_t = torch.randn_like(x0)
+                
+                # Add noise to get x_t at this specific timestep
+                x_t_eval = self._add_noise(x0, noise_t, t_tensor)
+                
+                # Denoise from t back to 0
+                x0_hat = self._denoise_from_timestep(
+                    x_t_eval, 
+                    t_val, 
+                    tokens, 
+                    anatomical_priors
+                )
+                
+                # Split into image and mask channels
+                recon_image = x0_hat[:, 0:1]  # (B, 1, H, W)
+                recon_mask = x0_hat[:, 1:2]   # (B, 1, H, W)
+                
+                # Apply z-bin prior post-processing before metrics (if enabled)
+                if self._use_zbin_priors and self._zbin_priors is not None:
+                    z_bins_batch = batch["metadata"]["z_bin"]
+                    recon_image, recon_mask = apply_postprocess_batch(
+                        recon_image, recon_mask, z_bins_batch,
+                        self._zbin_priors, self.cfg
+                    )
+                
+                # Compute metrics comparing reconstruction to ORIGINAL x0
+                metrics_t = self.metrics.compute_all(
+                    recon_image, image,  # Compare reconstructed vs original
+                    recon_mask, mask,
+                )
+                
+                # Store with timestep suffix
+                for metric_name, value in metrics_t.items():
+                    all_metrics[f"{metric_name}_t{t_val}"] = value
 
-        # Apply z-bin prior post-processing before metrics (if enabled)
-        if self._use_zbin_priors and self._zbin_priors is not None:
-            z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
-            x0_hat_image, x0_hat_mask = apply_postprocess_batch(
-                x0_hat_image, x0_hat_mask, z_bins_batch,
-                self._zbin_priors, self.cfg
-            )
-
-        # Compute image quality metrics
-        metrics = self.metrics.compute_all(
-            x0_hat_image, image,
-            x0_hat_mask, mask,
-        )
-
-        # Log metrics
+        # ========== Log metrics ==========
+        # Loss metrics
         self.log("val/loss", loss, sync_dist=True, batch_size=B)
         if "loss_image" in loss_details:
             self.log("val/loss_image", loss_details["loss_image"], sync_dist=True, batch_size=B)
         if "loss_mask" in loss_details:
             self.log("val/loss_mask", loss_details["loss_mask"], sync_dist=True, batch_size=B)
-        self.log("val/psnr", metrics["psnr"], sync_dist=True, batch_size=B)
-        self.log("val/ssim", metrics["ssim"], sync_dist=True, batch_size=B)
-        if "dice" in metrics:
-            self.log("val/dice", metrics["dice"], sync_dist=True, batch_size=B)
-        if "hd95" in metrics:
-            self.log("val/hd95", metrics["hd95"], sync_dist=True, batch_size=B)
+        
+        # Reconstruction metrics at each timestep
+        for t_val in reconstruction_timesteps:
+            self.log(f"val/psnr_t{t_val}", all_metrics[f"psnr_t{t_val}"], sync_dist=True, batch_size=B)
+            self.log(f"val/ssim_t{t_val}", all_metrics[f"ssim_t{t_val}"], sync_dist=True, batch_size=B)
+            if f"dice_t{t_val}" in all_metrics:
+                self.log(f"val/dice_t{t_val}", all_metrics[f"dice_t{t_val}"], sync_dist=True, batch_size=B)
+            if f"hd95_t{t_val}" in all_metrics:
+                self.log(f"val/hd95_t{t_val}", all_metrics[f"hd95_t{t_val}"], sync_dist=True, batch_size=B)
 
         # Log weighted loss metrics (always available when using multi-task loss)
         if "weighted_loss_0" in loss_details:
@@ -496,7 +642,6 @@ class JSDDPMLightningModule(pl.LightningModule):
             self.log("val/weighted_loss_mask", loss_details["weighted_loss_1"], sync_dist=True, batch_size=B)
 
         # Log uncertainty-specific metrics (only when uncertainty weighting is enabled)
-        # Note: These keys come from UncertaintyWeightedLoss.forward() when enabled
         if "log_var_0" in loss_details:
             self.log("val/log_var_image", loss_details["log_var_0"], sync_dist=True, batch_size=B)
             self.log("val/log_var_mask", loss_details["log_var_1"], sync_dist=True, batch_size=B)
@@ -507,7 +652,7 @@ class JSDDPMLightningModule(pl.LightningModule):
             self.log("val/precision_image", torch.exp(-loss_details["log_var_0"]), sync_dist=True, batch_size=B)
             self.log("val/precision_mask", torch.exp(-loss_details["log_var_1"]), sync_dist=True, batch_size=B)
 
-        return {"loss": loss, **metrics}
+        return {"loss": loss, **all_metrics}
 
     def configure_optimizers(self) -> dict[str, Any]:
         """Configure optimizer and learning rate scheduler.

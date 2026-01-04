@@ -58,8 +58,10 @@ class MetricsCalculator:
             sigma: SSIM Gaussian sigma.
         """
         # Image quality metrics
+        # max_val is the dynamic range (difference between max and min allowed values)
+        # For data in [-1, 1], the range is 2.0
         self.psnr_metric = PSNRMetric(
-            max_val=1.0,  # Maximum pixel value in [-1, 1] range
+            max_val=data_range,  # Use data_range for consistency (2.0 for [-1, 1])
             reduction="mean",
         )
 
