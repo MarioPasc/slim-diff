@@ -433,7 +433,7 @@ class JSDDPMLightningModule(pl.LightningModule):
         """
         T = self.scheduler.num_train_timesteps
         # Scale anchors if T changes
-        anchors = [0.05, 0.25, 0.75]  # low, mid, high
+        anchors = [0.05, 0.75]  # low, high (0.25 is mid)
         ts = [min(int(round(a * T)), T - 1) for a in anchors]
         # Ensure strictly increasing and within bounds
         ts = sorted(set(max(0, t) for t in ts))
