@@ -5,8 +5,8 @@
 # Experiment Metadata
 # =============================================================================
 experiment:
-  name: "jsddpm_weighted_mask_loss"
-  output_dir: "./outputs/jsddpm"
+  name: "jsddpm_sinus_kendall_weighted_anatomicalprior"
+  output_dir: "./outputs/jsddpm_sinus_kendall_weighted_anatomicalprior"
   seed: 42
 
 # =============================================================================

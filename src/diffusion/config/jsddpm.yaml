@@ -5,8 +5,8 @@
 # Experiment Metadata
 # =============================================================================
 experiment:
-  name: "jsddpm_weighted_mask_loss"
-  output_dir: "./outputs/jsddpm"
+  name: "jsddpm_sinus_kendall_weighted_anatomicalprior"
+  output_dir: "./outputs/jsddpm_sinus_kendall_weighted_anatomicalprior"
   seed: 42
 
 # =============================================================================
@@ -64,7 +64,7 @@ conditioning:
   # Total classes: 2 * z_bins = 100
 
   # Z-position encoding options
-  use_sinusoidal: false  # Use sinusoidal position encoding for z-position (default: false)
+  use_sinusoidal: true  # Use sinusoidal position encoding for z-position (default: false)
   max_z: 128  # Maximum z-index for sinusoidal encoding
 
   # Classifier-free guidance (CFG)
@@ -79,11 +79,11 @@ conditioning:
 model:
   type: "DiffusionModelUNet"
   spatial_dims: 2
-  in_channels: 2   # [image, mask]
+  in_channels: 2   # [image, mask] - factory.py auto-increases to 3 when anatomical_conditioning=true
   out_channels: 2  # [image, mask]
-  anatomical_conditioning: true  # Use anatomical input concatenation for conditioning (factory.py already handles in_channles += 1)
-                                 # Must set postprocessing.zbin_priors.enabled = true to use priors as input and rebuild the slice_cache
-                                 # to include them
+  anatomical_conditioning: true  # Uses z-bin priors as input channel for spatial guidance
+                                 # factory.py automatically handles in_channels += 1
+                                 # Requires postprocessing.zbin_priors.enabled = true
   # UNet architecture
   channels: [64, 128, 256, 256]
   attention_levels: [false, false, true, true]
@@ -193,11 +193,14 @@ training:
 
   # Exponential Moving Average (EMA)
   ema:
-    enabled: true  # Enable/disable EMA for improved sample quality
-    decay: 0.9999  # EMA decay rate (higher = slower adaptation)
-    update_every: 10  # Update EMA every N training steps
-    use_for_validation: true  # Use EMA weights for validation
-    use_for_generation: true  # Use EMA weights for sampling/generation
+    enabled: true
+    decay: 0.999  # CORRECTED: Was 0.9999, which was too slow. 0.999 is a common, effective value.
+    update_every: 10
+    update_start_step: 0      # Start EMA updates from the beginning.
+    store_on_cpu: true        # Saves GPU memory.
+    use_buffers: true         # Track buffers like BatchNorm stats.
+    use_for_validation: true
+    export_to_checkpoint: false # Optionally save EMA weights in checkpoints.
 
 # =============================================================================
 # Loss Configuration
@@ -205,15 +208,15 @@ training:
 loss:
   # Uncertainty weighting (Kendall et al.)
   uncertainty_weighting:
-    enabled: false
+    enabled: true  # ENABLED: Essential for multi-task learning balance
     initial_log_vars: [0.0, 0.0]  # [image, mask]
     learnable: true
     clamp_range: [-5.0, 5.0] # Min/max for clamping log_vars to prevent instability
 
   # Optional lesion-weighted mask loss
   lesion_weighted_mask:
-    enabled: false
-    lesion_weight: 2.5  # Extra weight for lesion pixels
+    enabled: true  # ENABLED: Improves lesion detection by upweighting lesion pixels
+    lesion_weight: 1.5  # Extra weight for lesion pixels
     background_weight: 1.0  
 
 # =============================================================================

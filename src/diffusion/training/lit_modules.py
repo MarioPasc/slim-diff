@@ -452,6 +452,11 @@ class JSDDPMLightningModule(pl.LightningModule):
         Performs iterative denoising from timestep t down to 0 using the
         scheduler's step function.
 
+        IMPORTANT: When we add noise at timestep t, we need to start denoising
+        from a scheduler timestep >= t (not < t) to ensure we cover the full
+        denoising trajectory. Otherwise, we'd skip the initial denoising step(s)
+        and get poor reconstruction quality.
+
         Args:
             x_t: Noisy samples at timestep t, shape (B, 2, H, W).
             start_timestep: Starting timestep for denoising.
@@ -462,40 +467,68 @@ class JSDDPMLightningModule(pl.LightningModule):
             Denoised samples x0_hat, shape (B, 2, H, W).
         """
         B = x_t.shape[0]
-        
-        # Set timesteps for the scheduler starting from start_timestep
-        # We need to find how many steps correspond to our start_timestep
+
+        # Set timesteps for the scheduler
         sampler = self._get_val_sampler()
         sampler.scheduler.set_timesteps(self.sampler_cfg.num_inference_steps)
-        
-        # Get all scheduler timesteps and filter to those >= start_timestep mapping
-        # The scheduler timesteps are evenly spaced, so we find the closest one
+
+        # Get all scheduler timesteps (descending order: [999, 994, 989, ..., 4, 0])
         all_timesteps = sampler.scheduler.timesteps
-        
-        # Find timesteps that should be executed (those corresponding to <= start_timestep in noise space)
-        # Scheduler timesteps go from high to low (e.g., 999, 979, 959, ...)
-        # We want to start from the one closest to start_timestep
-        start_idx = 0
+
+        # CRITICAL FIX: Find the first scheduler timestep that is >= start_timestep
+        # This ensures we start denoising from a noise level at least as high as
+        # where we added noise. The previous code found t <= start_timestep, which
+        # caused us to skip the initial denoising step(s).
+        #
+        # Example: If start_timestep=50 and scheduler timesteps are [999, 994, ..., 54, 49, ...]
+        # - Old behavior: start at 49 (skipping t=54 step)
+        # - New behavior: start at 54 (includes full denoising from >= 50)
+        start_idx = len(all_timesteps)  # Default: no timesteps to run
         for i, t in enumerate(all_timesteps):
             if t <= start_timestep:
-                start_idx = i
+                # Found the first timestep <= start_timestep
+                # We want to include the PREVIOUS timestep (the one > start_timestep)
+                # to ensure we start from >= start_timestep
+                start_idx = max(0, i - 1) if i > 0 else i
                 break
-        
+        else:
+            # All timesteps are > start_timestep, start from beginning
+            start_idx = 0
+
+        # If start_timestep is very small and all scheduler timesteps are above it,
+        # we might need to just use the last timestep
+        if start_idx >= len(all_timesteps):
+            # No scheduler timesteps <= start_timestep, likely start_timestep is very low
+            # Use all timesteps from the one closest to start_timestep
+            for i in range(len(all_timesteps) - 1, -1, -1):
+                if all_timesteps[i] >= start_timestep:
+                    start_idx = i
+                    break
+
         timesteps_to_run = all_timesteps[start_idx:]
-        
+
+        # Log for debugging (only first batch to avoid spam)
+        if B > 0:
+            logger.debug(
+                f"Denoising from t={start_timestep}: using scheduler timesteps "
+                f"[{timesteps_to_run[0].item() if len(timesteps_to_run) > 0 else 'none'}, ..., "
+                f"{timesteps_to_run[-1].item() if len(timesteps_to_run) > 0 else 'none'}] "
+                f"({len(timesteps_to_run)} steps)"
+            )
+
         current_x = x_t.clone()
-        
+
         for t in timesteps_to_run:
             timesteps_batch = torch.full((B,), t, device=self.device, dtype=torch.long)
-            
+
             # Prepare model input
             model_input = current_x
             if self._use_anatomical_conditioning and anatomical_priors is not None:
                 model_input = torch.cat([current_x, anatomical_priors], dim=1)
-            
+
             # Predict noise (no CFG during reconstruction evaluation)
-            noise_pred = self.model(model_input, timesteps=timesteps_batch, class_labels=tokens)
-            
+            noise_pred = sampler.model(model_input, timesteps=timesteps_batch, class_labels=tokens)
+
             # Scheduler step
             if hasattr(sampler.scheduler, 'step'):
                 if hasattr(sampler, 'eta'):
@@ -504,7 +537,7 @@ class JSDDPMLightningModule(pl.LightningModule):
                     current_x, _ = sampler.scheduler.step(noise_pred, t, current_x)
             else:
                 current_x, _ = sampler.scheduler.step(noise_pred, t, current_x)
-        
+
         return current_x
 
     @property

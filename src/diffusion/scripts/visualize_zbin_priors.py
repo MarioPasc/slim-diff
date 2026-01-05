@@ -146,6 +146,8 @@ def visualize_priors_with_patient(
     # Select representative z-bins to visualize (evenly spaced)
     bins_to_show = [0, z_bins // 4, z_bins // 2, 3 * z_bins // 4, z_bins - 1]
     bins_to_show = [b for b in bins_to_show if b in priors]
+    # Override, show all available bins 
+    bins_to_show = list(priors.keys())
 
     if not bins_to_show:
         print("⚠ No valid bins to visualize")

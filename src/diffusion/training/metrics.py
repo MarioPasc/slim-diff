@@ -92,6 +92,9 @@ class MetricsCalculator:
         """Compute all metrics using MONAI.
 
         Uses functional forms for Dice/HD95 to avoid state accumulation issues.
+        Dice and HD95 are only computed for samples that have lesions in the target
+        (i.e., target_mask has positive values). Samples without lesions are excluded
+        from segmentation metric computation.
 
         Args:
             pred_image: Predicted images, shape (B, 1, H, W).
@@ -125,33 +128,63 @@ class MetricsCalculator:
             if target_mask_binary.dim() == 3:
                 target_mask_binary = target_mask_binary.unsqueeze(1)
 
-            # Use functional forms (no state accumulation)
-            with torch.no_grad():
-                # compute_dice returns tensor of shape (B,) or scalar
-                dice_tensor = compute_dice(
-                    pred_mask_binary,
-                    target_mask_binary,
-                    include_background=True,
-                )
-                metrics["dice"] = dice_tensor.mean().item() if dice_tensor.numel() > 1 else dice_tensor.item()
+            # CRITICAL FIX: Filter samples to only include those with lesions in target
+            # This prevents NaN from propagating when computing mean over all samples
+            B = target_mask_binary.shape[0]
 
-                # Compute HD95 only if target has lesions
-                if target_mask_binary.sum() > 0:
-                    try:
-                        hd95_tensor = compute_hausdorff_distance(
-                            pred_mask_binary,
-                            target_mask_binary,
-                            include_background=False,
-                            distance_metric="euclidean",
-                            percentile=95,
-                        )
-                        metrics["hd95"] = hd95_tensor.mean().item() if hd95_tensor.numel() > 1 else hd95_tensor.item()
-                    except Exception as e:
-                        # MONAI HD95 can fail on edge cases (empty predictions, etc.)
-                        logger.warning(f"HD95 computation failed: {e}")
+            # Check per-sample if target has any lesion pixels
+            # Sum over C, H, W dimensions to get per-sample lesion counts
+            target_has_lesion = target_mask_binary.sum(dim=(1, 2, 3)) > 0  # Shape: (B,)
+
+            # Get indices of samples with lesions
+            lesion_indices = torch.where(target_has_lesion)[0]
+
+            if len(lesion_indices) == 0:
+                # No samples with lesions in this batch - skip segmentation metrics
+                metrics["dice"] = float('nan')
+                metrics["hd95"] = float('nan')
+            else:
+                # Filter to only samples with lesions
+                pred_filtered = pred_mask_binary[lesion_indices]
+                target_filtered = target_mask_binary[lesion_indices]
+
+                with torch.no_grad():
+                    # Compute Dice only on filtered samples (those with lesions)
+                    dice_tensor = compute_dice(
+                        pred_filtered,
+                        target_filtered,
+                        include_background=True,
+                    )
+                    metrics["dice"] = dice_tensor.mean().item() if dice_tensor.numel() > 1 else dice_tensor.item()
+
+                    # Compute HD95 on filtered samples
+                    # Also check if predictions have any positive pixels
+                    pred_has_lesion = pred_filtered.sum(dim=(1, 2, 3)) > 0
+                    valid_for_hd95 = pred_has_lesion  # Target already guaranteed to have lesions
+                    valid_indices = torch.where(valid_for_hd95)[0]
+
+                    if len(valid_indices) == 0:
+                        # No samples with lesions in both pred and target
                         metrics["hd95"] = float('nan')
-                else:
-                    metrics["hd95"] = float('nan')
+                    else:
+                        try:
+                            hd95_tensor = compute_hausdorff_distance(
+                                pred_filtered[valid_indices],
+                                target_filtered[valid_indices],
+                                include_background=False,
+                                distance_metric="euclidean",
+                                percentile=95,
+                            )
+                            # Filter out any remaining NaN values (edge cases)
+                            valid_hd95 = hd95_tensor[~torch.isnan(hd95_tensor)]
+                            if len(valid_hd95) > 0:
+                                metrics["hd95"] = valid_hd95.mean().item()
+                            else:
+                                metrics["hd95"] = float('nan')
+                        except Exception as e:
+                            # MONAI HD95 can fail on edge cases
+                            logger.warning(f"HD95 computation failed: {e}")
+                            metrics["hd95"] = float('nan')
 
         return metrics
 
