@@ -5,7 +5,7 @@
 # Experiment Metadata
 # =============================================================================
 experiment:
-  name: "jsddpm_weighted_mask_loss"
+  name: "jsddpm_anatomical_prior"
   output_dir: "./outputs/jsddpm"
   seed: 42
 
@@ -171,7 +171,7 @@ training:
     # patience: 10 # Number of epochs with no improvement after which learning rate will be reduced
 
   # Training duration
-  max_epochs: 500
+  max_epochs: 1000
   max_steps: null  # Override epochs if set
 
   # Precision and gradient handling
@@ -193,11 +193,14 @@ training:
 
   # Exponential Moving Average (EMA)
   ema:
-    enabled: true  # Enable/disable EMA for improved sample quality
-    decay: 0.9999  # EMA decay rate (higher = slower adaptation)
-    update_every: 10  # Update EMA every N training steps
-    use_for_validation: true  # Use EMA weights for validation
-    use_for_generation: true  # Use EMA weights for sampling/generation
+    enabled: true
+    decay: 0.999  # CORRECTED: Was 0.9999, which was too slow. 0.999 is a common, effective value.
+    update_every: 1
+    update_start_step: 0      # Start EMA updates from the beginning.
+    store_on_cpu: true        # Saves GPU memory.
+    use_buffers: true         # Track buffers like BatchNorm stats.
+    use_for_validation: true
+    export_to_checkpoint: true  # Save EMA weights in checkpoints for generation.
 
 # =============================================================================
 # Loss Configuration

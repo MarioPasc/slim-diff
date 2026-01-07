@@ -756,5 +756,152 @@ class TestAnatomicalConditioning:
         assert torch.allclose(priors_tensor, priors_list)
 
 
+class TestSamplerXTParameter:
+    """Tests for the x_T pre-generated noise parameter in DiffusionSampler."""
+
+    @pytest.fixture
+    def ddim_config(self, test_config):
+        """Create config with DDIM scheduler for deterministic sampling."""
+        from copy import deepcopy
+        cfg = deepcopy(test_config)
+        # Override scheduler to DDIM for deterministic tests
+        cfg.scheduler.type = "DDIM"
+        return OmegaConf.create(cfg)
+
+    def test_sample_with_x_T_uses_provided_noise_ddim(self, ddim_config):
+        """Test that x_T parameter uses provided noise (DDIM for determinism)."""
+        from src.diffusion.model.factory import DiffusionSampler, build_scheduler
+
+        # Set seed for reproducible model weights
+        torch.manual_seed(42)
+
+        model = build_model(ddim_config)
+        scheduler = build_scheduler(ddim_config)
+        sampler = DiffusionSampler(model, scheduler, ddim_config, device="cpu")
+
+        tokens = torch.tensor([5], dtype=torch.long)
+        shape = (1, 2, 64, 64)
+
+        # Create fixed noise
+        fixed_noise = torch.randn(shape)
+
+        # Sample twice with the same x_T - should get identical results with DDIM
+        result1 = sampler.sample(tokens, shape=shape, x_T=fixed_noise.clone())
+        result2 = sampler.sample(tokens, shape=shape, x_T=fixed_noise.clone())
+
+        assert torch.allclose(result1, result2, atol=1e-5), \
+            "Same x_T should produce identical results with DDIM scheduler"
+
+    def test_sample_x_T_different_from_generator(self, test_config):
+        """Test that x_T and generator produce different results for same token."""
+        from src.diffusion.model.factory import DiffusionSampler, build_scheduler
+
+        model = build_model(test_config)
+        scheduler = build_scheduler(test_config)
+        sampler = DiffusionSampler(model, scheduler, test_config, device="cpu")
+
+        tokens = torch.tensor([5], dtype=torch.long)
+        shape = (1, 2, 64, 64)
+
+        # Sample with generator
+        gen = torch.Generator().manual_seed(12345)
+        result_gen = sampler.sample(tokens, shape=shape, generator=gen)
+
+        # Sample with different x_T
+        different_noise = torch.randn(shape) * 2  # Different noise
+        result_x_T = sampler.sample(tokens, shape=shape, x_T=different_noise)
+
+        # Results should be different
+        assert not torch.allclose(result_gen, result_x_T), \
+            "Different noise should produce different results"
+
+    def test_sample_x_T_shape_validation(self, test_config):
+        """Test that x_T with wrong shape raises ValueError."""
+        from src.diffusion.model.factory import DiffusionSampler, build_scheduler
+
+        model = build_model(test_config)
+        scheduler = build_scheduler(test_config)
+        sampler = DiffusionSampler(model, scheduler, test_config, device="cpu")
+
+        tokens = torch.tensor([5], dtype=torch.long)
+        shape = (1, 2, 64, 64)
+
+        # Wrong batch size
+        wrong_batch = torch.randn(2, 2, 64, 64)
+        with pytest.raises(ValueError, match="x_T shape"):
+            sampler.sample(tokens, shape=shape, x_T=wrong_batch)
+
+        # Wrong channels
+        wrong_channels = torch.randn(1, 3, 64, 64)
+        with pytest.raises(ValueError, match="x_T shape"):
+            sampler.sample(tokens, shape=shape, x_T=wrong_channels)
+
+        # Wrong spatial dims
+        wrong_spatial = torch.randn(1, 2, 32, 32)
+        with pytest.raises(ValueError, match="x_T shape"):
+            sampler.sample(tokens, shape=shape, x_T=wrong_spatial)
+
+    def test_sample_x_T_matches_generator_equivalent_ddim(self, ddim_config):
+        """Test that x_T with pre-generated noise matches using generator with same seed (DDIM)."""
+        from src.diffusion.model.factory import DiffusionSampler, build_scheduler
+
+        # Set seed for reproducible model weights
+        torch.manual_seed(42)
+
+        model = build_model(ddim_config)
+        scheduler = build_scheduler(ddim_config)
+        sampler = DiffusionSampler(model, scheduler, ddim_config, device="cpu")
+
+        tokens = torch.tensor([5], dtype=torch.long)
+        shape = (1, 2, 64, 64)
+        seed = 12345
+
+        # Method 1: Use generator
+        gen1 = torch.Generator().manual_seed(seed)
+        result_gen = sampler.sample(tokens, shape=shape, generator=gen1)
+
+        # Method 2: Pre-generate noise with same seed, pass as x_T
+        gen2 = torch.Generator().manual_seed(seed)
+        pre_generated_noise = torch.randn(shape, generator=gen2)
+        result_x_T = sampler.sample(tokens, shape=shape, x_T=pre_generated_noise)
+
+        assert torch.allclose(result_gen, result_x_T, atol=1e-5), \
+            "x_T with same initial noise should produce identical results to generator with DDIM"
+
+    def test_sample_x_T_with_batched_different_seeds(self, test_config):
+        """Test batch generation with per-sample seeds via x_T."""
+        from src.diffusion.model.factory import DiffusionSampler, build_scheduler
+
+        model = build_model(test_config)
+        scheduler = build_scheduler(test_config)
+        sampler = DiffusionSampler(model, scheduler, test_config, device="cpu")
+
+        batch_size = 3
+        tokens = torch.tensor([5, 10, 15], dtype=torch.long)
+        shape = (batch_size, 2, 64, 64)
+
+        # Generate per-sample noise with different seeds
+        seeds = [100, 200, 300]
+        noise_list = []
+        for seed in seeds:
+            gen = torch.Generator().manual_seed(seed)
+            noise = torch.randn((2, 64, 64), generator=gen)
+            noise_list.append(noise)
+        x_T = torch.stack(noise_list, dim=0)
+
+        assert x_T.shape == shape
+
+        # Sample
+        result = sampler.sample(tokens, shape=shape, x_T=x_T)
+
+        assert result.shape == shape, "Output shape should match input shape"
+
+        # Each sample should be different (different seeds)
+        assert not torch.allclose(result[0], result[1]), \
+            "Different seeds should produce different samples"
+        assert not torch.allclose(result[1], result[2]), \
+            "Different seeds should produce different samples"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

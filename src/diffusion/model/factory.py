@@ -234,12 +234,23 @@ class DiffusionSampler:
         shape: tuple[int, ...] = (1, 2, 128, 128),
         guidance_scale: float | None = None,
         generator: torch.Generator | None = None,
-        anatomical_mask: torch.Tensor | None = None,  # NEW ARGUMENT
+        anatomical_mask: torch.Tensor | None = None,
+        x_T: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Generate samples.
-        
+
         Args:
+            tokens: (B,) conditioning tokens.
+            shape: Output shape (B, C, H, W).
+            guidance_scale: CFG scale. If None, uses default from config.
+            generator: Optional torch.Generator for reproducible noise.
             anatomical_mask: (B, 1, H, W) Tensor. Required if anatomical_conditioning is True.
+            x_T: Optional (B, C, H, W) pre-generated initial noise. If provided,
+                 generator is ignored and x_T is used directly. Enables deterministic
+                 per-sample seeding for replica generation.
+
+        Returns:
+            Generated samples tensor (B, C, H, W).
         """
         if guidance_scale is None:
             guidance_scale = self.guidance_scale
@@ -247,7 +258,7 @@ class DiffusionSampler:
         B = tokens.shape[0]
         if shape[0] != B:
             shape = (B,) + shape[1:]
-            
+
         # Validation
         if self.use_anatomical_conditioning:
             if anatomical_mask is None:
@@ -255,7 +266,13 @@ class DiffusionSampler:
             if anatomical_mask.shape != (B, 1, shape[2], shape[3]):
                 raise ValueError(f"Mask shape {anatomical_mask.shape} mismatch. Expected ({B}, 1, {shape[2]}, {shape[3]})")
 
-        x_t = torch.randn(shape, device=self.device, generator=generator)
+        # Use pre-generated noise if provided, otherwise generate fresh noise
+        if x_T is not None:
+            if x_T.shape != shape:
+                raise ValueError(f"x_T shape {x_T.shape} != expected {shape}")
+            x_t = x_T.to(device=self.device, dtype=torch.float32)
+        else:
+            x_t = torch.randn(shape, device=self.device, generator=generator)
         self.scheduler.set_timesteps(self.num_inference_steps)
 
         for t in self.scheduler.timesteps:

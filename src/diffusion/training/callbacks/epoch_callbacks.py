@@ -747,7 +747,7 @@ class EMACallback(Callback):
                 "update_start_step": self.update_start_step,
                 "store_on_cpu": self.store_on_cpu,
                 "use_buffers": self.use_buffers,
-                "num_updates": self.num_updates,
+                "num_updates": self._num_updates,
             }
 
     def on_load_checkpoint(
