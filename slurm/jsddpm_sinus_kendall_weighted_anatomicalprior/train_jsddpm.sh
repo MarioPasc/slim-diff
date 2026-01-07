@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH -J log_jsddpm_sinus_kendall_weighted_anatomicalprior
-#SBATCH --time=2-12:00:00
+#SBATCH --time=4-12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G

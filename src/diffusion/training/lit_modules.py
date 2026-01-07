@@ -670,7 +670,10 @@ class JSDDPMLightningModule(pl.LightningModule):
             self.log("val/precision_image", torch.exp(-loss_details["log_var_0"]), sync_dist=True, batch_size=B)
             self.log("val/precision_mask", torch.exp(-loss_details["log_var_1"]), sync_dist=True, batch_size=B)
 
-        return {"loss": loss, **all_metrics}
+        if len(ANCHORS) != 0:
+            return {"loss": loss, **all_metrics}
+        else:
+            return {"loss": loss}
 
     def configure_optimizers(self) -> dict[str, Any]:
         """Configure optimizer and learning rate scheduler.
