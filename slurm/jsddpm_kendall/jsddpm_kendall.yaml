@@ -171,7 +171,7 @@ training:
     # patience: 10 # Number of epochs with no improvement after which learning rate will be reduced
 
   # Training duration
-  max_epochs: 500
+  max_epochs: 1000
   max_steps: null  # Override epochs if set
 
   # Precision and gradient handling
