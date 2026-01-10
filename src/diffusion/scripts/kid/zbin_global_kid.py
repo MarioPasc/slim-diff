@@ -3,18 +3,39 @@
 This module orchestrates KID computation across all replicas, performs statistical
 tests (Wilcoxon signed-rank + FDR correction), and generates CSV outputs.
 
+Supports two modes:
+1. Test-only mode (original): Compare replicas against test set distribution
+2. Multi-split mode: Compare replicas against union of train/val/test splits
+   (useful for uniformly-sampled synthetic replicas)
 
-python -m src.diffusion.scripts.kid.zbin_global_kid \
-    --replicas-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas \
-    --test-slices-csv /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache/test.csv \
-    --test-dist-csv docs/test_analysis/test_zbin_distribution.csv \
-    --output-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/quality_report \
-    --subset-size 1000 \
-    --num-subsets 100 \
-    --degree 3 \
-    --batch-size 32 \
-    --device cuda \
-    --merge-replicas 5
+Usage (test-only, backwards compatible):
+    python -m src.diffusion.scripts.kid.zbin_global_kid \
+        --replicas-dir /path/to/replicas \
+        --test-slices-csv /path/to/slice_cache/test.csv \
+        --test-dist-csv docs/test_analysis/test_zbin_distribution.csv \
+        --output-dir /path/to/quality_report \
+        --subset-size 1000 \
+        --num-subsets 100 \
+        --degree 3 \
+        --batch-size 32 \
+        --device cuda \
+        --merge-replicas 5
+
+Usage (multi-split, for uniform replicas):
+    python -m src.diffusion.scripts.kid.zbin_global_kid \
+        --replicas-dir /path/to/replicas \
+        --train-slices-csv /path/to/slice_cache/train.csv \
+        --train-dist-csv docs/train_analysis/train_zbin_distribution.csv \
+        --val-slices-csv /path/to/slice_cache/val.csv \
+        --val-dist-csv docs/val_analysis/val_zbin_distribution.csv \
+        --test-slices-csv /path/to/slice_cache/test.csv \
+        --test-dist-csv docs/test_analysis/test_zbin_distribution.csv \
+        --output-dir /path/to/quality_report \
+        --subset-size 1000 \
+        --num-subsets 100 \
+        --merge-replicas 5
+
+    The real image set will be the union of all provided splits.
 """
 
 from __future__ import annotations
@@ -29,6 +50,46 @@ from statsmodels.stats.multitest import multipletests
 from tqdm import tqdm
 
 from .kid import compute_global_kid, compute_zbin_kid, load_replica, load_test_slices
+
+
+def load_multi_split_slices(
+    split_configs: list[tuple[Path, str]],
+    valid_zbins: list[int] | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Load and merge images from multiple data splits.
+
+    Args:
+        split_configs: List of (slices_csv_path, split_name) tuples.
+            Each CSV should have columns: filepath, z_bin, etc.
+        valid_zbins: List of valid z-bins to include (default: 0-29).
+
+    Returns:
+        images: (N, H, W) float32 array in [-1, 1] (merged from all splits)
+        zbins: (N,) int array (merged from all splits)
+        splits_used: List of split names that were loaded
+    """
+    if valid_zbins is None:
+        valid_zbins = list(range(30))
+
+    all_images = []
+    all_zbins = []
+    splits_used = []
+
+    for csv_path, split_name in split_configs:
+        print(f"  Loading {split_name} split from {csv_path}...")
+        images, zbins = load_test_slices(csv_path, valid_zbins=valid_zbins)
+        all_images.append(images)
+        all_zbins.append(zbins)
+        splits_used.append(split_name)
+        print(f"    -> {len(images)} slices from {split_name}")
+
+    # Concatenate all splits
+    merged_images = np.concatenate(all_images, axis=0)
+    merged_zbins = np.concatenate(all_zbins, axis=0)
+
+    print(f"  Total: {len(merged_images)} slices from {len(splits_used)} splits ({', '.join(splits_used)})")
+
+    return merged_images, merged_zbins, splits_used
 
 
 def compute_all_replicas_global(
@@ -427,7 +488,7 @@ def main(args):
     """Main CLI entry point.
 
     Steps:
-        1. Load test slices (once, shared across replicas)
+        1. Load real slices (from one or more splits: train/val/test)
         2. Discover all replica NPZ files
         3. Compute global KID for each replica → save CSV
         4. Compute zbin KID for each replica
@@ -437,7 +498,6 @@ def main(args):
     """
     # Convert paths
     replicas_dir = Path(args.replicas_dir)
-    test_csv = Path(args.test_slices_csv)
     output_dir = Path(args.output_dir)
 
     # Create output directory
@@ -446,12 +506,36 @@ def main(args):
     # Define valid z-bins (0-29)
     valid_zbins = list(range(30))
 
-    # Step 1: Load test slices
+    # Build list of splits to load
+    split_configs: list[tuple[Path, str]] = []
+
+    if args.train_slices_csv:
+        split_configs.append((Path(args.train_slices_csv), "train"))
+    if args.val_slices_csv:
+        split_configs.append((Path(args.val_slices_csv), "val"))
+    if args.test_slices_csv:
+        split_configs.append((Path(args.test_slices_csv), "test"))
+
+    # Validate that at least one split is provided
+    if not split_configs:
+        raise ValueError(
+            "At least one split must be provided. Use --train-slices-csv, "
+            "--val-slices-csv, or --test-slices-csv."
+        )
+
+    # Step 1: Load real slices (from one or more splits)
     print("=" * 80)
-    print("STEP 1: Loading test slices")
+    if len(split_configs) == 1:
+        print(f"STEP 1: Loading {split_configs[0][1]} slices")
+    else:
+        split_names = [s[1] for s in split_configs]
+        print(f"STEP 1: Loading slices from {len(split_configs)} splits ({', '.join(split_names)})")
     print("=" * 80)
-    test_images, test_zbins = load_test_slices(test_csv, valid_zbins=valid_zbins)
-    print(f"Loaded {len(test_images)} test slices")
+
+    real_images, real_zbins, splits_used = load_multi_split_slices(
+        split_configs, valid_zbins=valid_zbins
+    )
+    print(f"Loaded {len(real_images)} real slices total")
 
     # Step 2: Compute global KID
     print("\n" + "=" * 80)
@@ -459,13 +543,17 @@ def main(args):
     print("=" * 80)
     df_global = compute_all_replicas_global(
         replicas_dir,
-        test_images,
+        real_images,
         subset_size=args.subset_size,
         num_subsets=args.num_subsets,
         degree=args.degree,
         batch_size=args.batch_size,
         device=args.device,
     )
+
+    # Add metadata about real images source
+    df_global["real_splits"] = ",".join(splits_used)
+    df_global["n_real_total"] = len(real_images)
 
     # Save global CSV
     global_csv_path = output_dir / "kid_replica_global.csv"
@@ -483,8 +571,8 @@ def main(args):
     if args.merge_replicas > 1:
         df_zbin = compute_all_replicas_zbin_merged(
             replicas_dir,
-            test_images,
-            test_zbins,
+            real_images,
+            real_zbins,
             valid_zbins=valid_zbins,
             merge_replicas=args.merge_replicas,
             subset_size=args.subset_size,
@@ -496,8 +584,8 @@ def main(args):
     else:
         df_zbin = compute_all_replicas_zbin(
             replicas_dir,
-            test_images,
-            test_zbins,
+            real_images,
+            real_zbins,
             valid_zbins=valid_zbins,
             subset_size=args.subset_size,
             num_subsets=args.num_subsets,
@@ -505,6 +593,9 @@ def main(args):
             batch_size=args.batch_size,
             device=args.device,
         )
+
+    # Add metadata about real images source
+    df_zbin["real_splits"] = ",".join(splits_used)
 
     # Step 4: Perform statistical analysis
     print("\n" + "=" * 80)
@@ -553,7 +644,17 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Compute global and per-zbin KID metrics for synthetic replicas"
+        description="Compute global and per-zbin KID metrics for synthetic replicas. "
+        "Supports comparing against one or more data splits (train/val/test).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Test-only (backwards compatible):
+  %(prog)s --replicas-dir /path/to/replicas --test-slices-csv test.csv --test-dist-csv test_dist.csv --output-dir /output
+
+  # Multi-split (for uniform replicas):
+  %(prog)s --replicas-dir /path/to/replicas --train-slices-csv train.csv --val-slices-csv val.csv --test-slices-csv test.csv --output-dir /output
+""",
     )
     parser.add_argument(
         "--replicas-dir",
@@ -561,18 +662,49 @@ if __name__ == "__main__":
         required=True,
         help="Directory containing replica_{ID:03d}.npz files",
     )
-    parser.add_argument(
+
+    # Split arguments (at least one required)
+    split_group = parser.add_argument_group(
+        "Data splits",
+        "Provide at least one split. Multiple splits will be merged as the real image set.",
+    )
+    split_group.add_argument(
+        "--train-slices-csv",
+        type=str,
+        default=None,
+        help="Path to train.csv file (optional)",
+    )
+    split_group.add_argument(
+        "--train-dist-csv",
+        type=str,
+        default=None,
+        help="Path to train_zbin_distribution.csv (for reference, not used in computation)",
+    )
+    split_group.add_argument(
+        "--val-slices-csv",
+        type=str,
+        default=None,
+        help="Path to val.csv file (optional)",
+    )
+    split_group.add_argument(
+        "--val-dist-csv",
+        type=str,
+        default=None,
+        help="Path to val_zbin_distribution.csv (for reference, not used in computation)",
+    )
+    split_group.add_argument(
         "--test-slices-csv",
         type=str,
-        required=True,
-        help="Path to test.csv file",
+        default=None,
+        help="Path to test.csv file (optional, but at least one split is required)",
     )
-    parser.add_argument(
+    split_group.add_argument(
         "--test-dist-csv",
         type=str,
-        required=True,
+        default=None,
         help="Path to test_zbin_distribution.csv (for reference, not used in computation)",
     )
+
     parser.add_argument(
         "--output-dir",
         type=str,
