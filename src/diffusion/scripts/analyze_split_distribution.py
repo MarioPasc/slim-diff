@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Analyze test set distribution and extract empirical statistics.
+"""Analyze dataset split distribution and extract empirical statistics.
 
-This script analyzes the test set data from the slice cache and computes
-statistics for synthetic data generation that matches the empirical distribution.
+This script analyzes a specific dataset split (train, val, or test) from the slice cache
+and computes statistics for synthetic data generation or dataset analysis.
 
 Output CSV contains one row per (zbin, lesion_present, domain) combination with:
 - Slice counts
@@ -11,9 +11,9 @@ Output CSV contains one row per (zbin, lesion_present, domain) combination with:
 - Lesion area statistics (when applicable)
 
 Usage:
-    python src/diffusion/scripts/analyze_test_distribution.py \
+    python src/diffusion/scripts/analyze_split_distribution.py \
         --config src/diffusion/config/jsddpm.yaml \
-        --output test_zbin_distribution.csv \
+        --test \
         --output-dir outputs/test_analysis
 """
 
@@ -27,7 +27,6 @@ from typing import Dict, List, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from numpy.typing import NDArray
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
@@ -65,23 +64,24 @@ def load_config(config_path: str) -> DictConfig:
     return cfg
 
 
-def load_test_csv(cache_dir: Path) -> pd.DataFrame:
-    """Load test.csv from cache directory.
+def load_split_csv(cache_dir: Path, split: str) -> pd.DataFrame:
+    """Load split CSV (train.csv, val.csv, or test.csv) from cache directory.
 
     Args:
         cache_dir: Path to slice cache directory.
+        split: Split name ('train', 'val', or 'test').
 
     Returns:
         DataFrame with columns: subject_id, z_index, z_bin, pathology_class,
         token, source, split, has_lesion, filepath.
 
     Raises:
-        FileNotFoundError: If test.csv doesn't exist.
+        FileNotFoundError: If CSV doesn't exist.
         ValueError: If required columns are missing.
     """
-    csv_path = cache_dir / "test.csv"
+    csv_path = cache_dir / f"{split}.csv"
     if not csv_path.exists():
-        raise FileNotFoundError(f"Test CSV not found: {csv_path}")
+        raise FileNotFoundError(f"{split.capitalize()} CSV not found: {csv_path}")
 
     df = pd.read_csv(csv_path)
 
@@ -89,9 +89,9 @@ def load_test_csv(cache_dir: Path) -> pd.DataFrame:
     required_cols = ['z_bin', 'has_lesion', 'source', 'filepath']
     missing = set(required_cols) - set(df.columns)
     if missing:
-        raise ValueError(f"Missing required columns in test.csv: {missing}")
+        raise ValueError(f"Missing required columns in {split}.csv: {missing}")
 
-    logger.info(f"Loaded {len(df)} test slices from {csv_path}")
+    logger.info(f"Loaded {len(df)} {split} slices from {csv_path}")
     return df
 
 
@@ -223,12 +223,13 @@ def aggregate_group_statistics(stats_list: List[Dict[str, float]]) -> Dict[str, 
     return aggregated
 
 
-def analyze_test_distribution(
+def analyze_distribution(
     df: pd.DataFrame,
     cache_dir: Path,
     cfg: DictConfig,
+    split: str,
 ) -> pd.DataFrame:
-    """Analyze test set distribution and compute statistics.
+    """Analyze dataset split distribution and compute statistics.
 
     Algorithm:
     1. Create grouping columns from CSV data
@@ -242,9 +243,10 @@ def analyze_test_distribution(
     4. Combine all rows into output DataFrame
 
     Args:
-        df: Test CSV DataFrame.
+        df: Split CSV DataFrame.
         cache_dir: Path to cache directory.
         cfg: Configuration object.
+        split: Split name.
 
     Returns:
         DataFrame with columns: split, zbin, lesion_present, domain, n_slices,
@@ -307,7 +309,7 @@ def analyze_test_distribution(
 
         # Create result row
         row = {
-            'split': 'test',
+            'split': split,
             'zbin': int(z_bin),
             'lesion_present': int(lesion_present),
             'domain': domain,
@@ -347,11 +349,11 @@ def save_distribution_csv(df: pd.DataFrame, output_path: Path) -> None:
     logger.info(f"Saved distribution CSV to {output_path}")
 
 
-def print_summary_statistics(df: pd.DataFrame) -> None:
-    """Print console summary of test distribution.
+def print_summary_statistics(df: pd.DataFrame, split: str) -> None:
+    """Print console summary of distribution.
 
     Prints:
-    1. Total N_test (sum of n_slices)
+    1. Total N (sum of n_slices)
     2. Per-zbin totals (grouped sum)
     3. Mixture proportions:
         - Control vs Epilepsy
@@ -361,14 +363,15 @@ def print_summary_statistics(df: pd.DataFrame) -> None:
 
     Args:
         df: Results DataFrame.
+        split: Split name.
     """
     print("\n" + "=" * 70)
-    print("TEST SET DISTRIBUTION SUMMARY")
+    print(f"{split.upper()} SET DISTRIBUTION SUMMARY")
     print("=" * 70)
 
-    # Total N_test
+    # Total N
     total_n = df['n_slices'].sum()
-    print(f"\nTotal test slices: {total_n}")
+    print(f"\nTotal {split} slices: {total_n}")
 
     # Per-zbin totals
     print(f"\nSlices per z-bin:")
@@ -426,6 +429,7 @@ def create_visualizations(
     df: pd.DataFrame,
     output_dir: Path,
     z_bins: int,
+    split: str,
 ) -> None:
     """Create distribution visualization plots.
 
@@ -439,13 +443,14 @@ def create_visualizations(
         df: Results DataFrame.
         output_dir: Output directory for plots.
         z_bins: Total number of z-bins.
+        split: Split name.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create figure with 2x2 subplots
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('Test Set Distribution Analysis', fontsize=16, fontweight='bold')
+    fig.suptitle(f'{split.capitalize()} Set Distribution Analysis', fontsize=16, fontweight='bold')
 
     # Color scheme
     colors = {
@@ -563,7 +568,7 @@ def create_visualizations(
 
     # Adjust layout and save
     plt.tight_layout()
-    output_path = output_dir / 'test_distribution_analysis.png'
+    output_path = output_dir / f'{split}_distribution_analysis.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
 
@@ -615,9 +620,9 @@ def validate_output(df: pd.DataFrame, z_bins: int) -> None:
 
 
 def main() -> None:
-    """Main entry point for test distribution analysis."""
+    """Main entry point for split distribution analysis."""
     parser = argparse.ArgumentParser(
-        description='Analyze test set distribution and extract empirical statistics'
+        description='Analyze dataset split distribution and extract empirical statistics'
     )
     parser.add_argument(
         '--config',
@@ -625,17 +630,24 @@ def main() -> None:
         default='src/diffusion/config/jsddpm.yaml',
         help='Path to configuration YAML file'
     )
+    
+    # Split selection group
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--train', action='store_true', help='Analyze train split')
+    group.add_argument('--val', action='store_true', help='Analyze validation split')
+    group.add_argument('--test', action='store_true', help='Analyze test split')
+
     parser.add_argument(
         '--output',
         type=str,
-        default='test_zbin_distribution.csv',
-        help='Output CSV file path'
+        default=None,
+        help='Output CSV file path (optional, defaults to {split}_zbin_distribution.csv)'
     )
     parser.add_argument(
         '--output-dir',
         type=str,
-        default='outputs/test_analysis',
-        help='Output directory for visualizations'
+        default=None,
+        help='Output directory for visualizations (optional, defaults to outputs/{split}_analysis)'
     )
     parser.add_argument(
         '--no-visualizations',
@@ -645,9 +657,24 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Determine split
+    if args.train:
+        split = 'train'
+    elif args.val:
+        split = 'val'
+    else:
+        split = 'test'
+
+    # Set default output paths if not provided
+    if args.output is None:
+        args.output = f'{split}_zbin_distribution.csv'
+    
+    if args.output_dir is None:
+        args.output_dir = f'outputs/{split}_analysis'
+
     try:
         # Load configuration
-        logger.info("Starting test distribution analysis...")
+        logger.info(f"Starting {split} distribution analysis...")
         cfg = load_config(args.config)
 
         # Extract paths and parameters
@@ -657,24 +684,24 @@ def main() -> None:
         logger.info(f"Cache directory: {cache_dir}")
         logger.info(f"Z-bins: {z_bins}")
 
-        # Load test CSV
-        df = load_test_csv(cache_dir)
+        # Load split CSV
+        df = load_split_csv(cache_dir, split)
 
         # Analyze distribution
-        results_df = analyze_test_distribution(df, cache_dir, cfg)
+        results_df = analyze_distribution(df, cache_dir, cfg, split)
 
         # Validate output
         validate_output(results_df, z_bins)
 
         # Save CSV
-        save_distribution_csv(results_df, args.output)
+        save_distribution_csv(results_df, Path(args.output_dir) / args.output)
 
         # Print summary
-        print_summary_statistics(results_df)
+        print_summary_statistics(results_df, split)
 
         # Create visualizations (if not disabled)
         if not args.no_visualizations:
-            create_visualizations(results_df, args.output_dir, z_bins)
+            create_visualizations(results_df, args.output_dir, z_bins, split)
 
         logger.info("Analysis complete!")
 
