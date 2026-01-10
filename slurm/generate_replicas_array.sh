@@ -7,8 +7,8 @@
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=dgx
-#SBATCH --output=%x.%j.out
-#SBATCH --error=%x.%j.err
+#SBATCH --output=logs/gen_replicas/%x.%j.out
+#SBATCH --error=logs/gen_replicas/%x.%j.err
 
 # ========================================================================
 # JS-DDPM Replica Generation Script for SLURM Job Arrays
@@ -39,7 +39,8 @@ echo "Start time: $(date)"
 MODEL="jsddpm_sinus_kendall_weighted_anatomicalprior"
 
 REPO_ROOT="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
-CONFIG="${REPO_ROOT}/slurm/${MODEL}/${MODEL}.yaml"
+DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
+CONFIG_ORIG="${REPO_ROOT}/slurm/${MODEL}/${MODEL}.yaml"
 CHECKPOINT="/mnt/home/users/tic_163_uma/mpascual/fscratch/weights_${MODEL}/best.ckpt"
 TEST_CSV="${REPO_ROOT}/docs/test_analysis/test_zbin_distribution.csv"
 OUT_DIR="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/replicas_${MODEL}"
@@ -53,8 +54,8 @@ CONDA_ENV_NAME="jsddpm"
 # ===========================================
 
 # Validate configuration
-if [ ! -f "${CONFIG}" ]; then
-    echo "ERROR: Config not found: ${CONFIG}"
+if [ ! -f "${CONFIG_ORIG}" ]; then
+    echo "ERROR: Config not found: ${CONFIG_ORIG}"
     exit 1
 fi
 
@@ -71,6 +72,19 @@ fi
 # Create output and log directories
 mkdir -p "${OUT_DIR}/replicas"
 mkdir -p "${REPO_ROOT}/logs/gen_replicas"
+
+# Copy and modify config for cluster paths (only first task does this)
+CONFIG="${OUT_DIR}/${MODEL}.yaml"
+if [ ! -f "${CONFIG}" ]; then
+    echo "Copying and modifying config for cluster paths..."
+    cp "${CONFIG_ORIG}" "${CONFIG}"
+    sed -i "s|  root_dir: .*|  root_dir: \"${DATA_SRC}\"|" "${CONFIG}"
+    sed -i "s|  cache_dir: .*|  cache_dir: \"${DATA_SRC}/slice_cache\"|" "${CONFIG}"
+    sed -i "s|  output_dir: .*|  output_dir: \"${OUT_DIR}\"|" "${CONFIG}"
+    echo "Modified config saved to: ${CONFIG}"
+else
+    echo "Using existing modified config: ${CONFIG}"
+fi
 
 # Dynamic GPU assignment
 export CUDA_VISIBLE_DEVICES=0
