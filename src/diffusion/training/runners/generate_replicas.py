@@ -1,10 +1,18 @@
 """Replica-based synthetic image generation for JS-DDPM.
 
-CLI entrypoint for generating deterministic replicas of synthetic datasets
-matching the test set distribution. Each replica is independently generated
-with per-sample SHA256 seeding for full reproducibility.
+CLI entrypoint for generating deterministic replicas of synthetic datasets.
+Supports two modes:
 
-Usage:
+1. CSV mode (default): Generate replicas matching the test set distribution
+   from a test_zbin_distribution.csv file.
+
+2. Uniform mode: Generate equal samples for each (zbin, domain) combination,
+   yielding a uniform distribution across all conditions.
+
+Each replica is independently generated with per-sample SHA256 seeding for
+full reproducibility.
+
+Usage (CSV mode - matches test distribution):
     python -m src.diffusion.training.runners.generate_replicas \
         --config path/to/config.yaml \
         --checkpoint path/to/checkpoint.ckpt \
@@ -12,6 +20,18 @@ Usage:
         --out_dir path/to/output \
         --replica_id 0 \
         --num_replicas 30
+
+Usage (Uniform mode - equal samples per mode):
+    python -m src.diffusion.training.runners.generate_replicas \
+        --config path/to/config.yaml \
+        --checkpoint path/to/checkpoint.ckpt \
+        --uniform_modes_generation \
+        --n_samples_per_mode 1000 \
+        --out_dir path/to/output \
+        --replica_id 0 \
+        --num_replicas 30
+
+    This generates 30 zbins × 2 domains × 1000 samples = 60,000 samples per replica.
 """
 
 from __future__ import annotations
@@ -127,6 +147,48 @@ def load_test_distribution(csv_path: Path) -> tuple[list[ManifestEntry], int]:
     return manifest, total
 
 
+def create_uniform_distribution(
+    n_zbins: int,
+    n_samples_per_mode: int,
+) -> tuple[list[ManifestEntry], int]:
+    """Create a uniform distribution manifest for all zbin-domain combinations.
+
+    Generates a manifest with equal samples for each (zbin, domain) pair.
+    For control domain, lesion_present is always 0.
+    For epilepsy domain, lesion_present is set to 0 (non-lesional epilepsy).
+
+    Args:
+        n_zbins: Number of z-bins (typically 30).
+        n_samples_per_mode: Number of samples per (zbin, domain) combination.
+
+    Returns:
+        Tuple of (manifest_entries, total_samples).
+    """
+    manifest = []
+    total = 0
+
+    for zbin in range(n_zbins):
+        for domain_str, domain_int in DOMAIN_MAP.items():
+            # For uniform mode, we use lesion_present=0 for both domains
+            # This represents non-lesional samples (control or epilepsy without visible lesion)
+            entry = ManifestEntry(
+                zbin=zbin,
+                lesion_present=0,
+                domain_str=domain_str,
+                domain_int=domain_int,
+                n_slices=n_samples_per_mode,
+            )
+            manifest.append(entry)
+            total += n_samples_per_mode
+
+    n_conditions = len(manifest)
+    logger.info(
+        f"Created uniform distribution: {n_zbins} zbins x {len(DOMAIN_MAP)} domains = "
+        f"{n_conditions} conditions, {n_samples_per_mode} samples each, {total} total"
+    )
+    return manifest, total
+
+
 def load_model_with_ema(
     checkpoint_path: Path,
     cfg: DictConfig,
@@ -195,19 +257,27 @@ def load_model_with_ema(
 
 def validate_inputs(
     cfg: DictConfig,
-    csv_path: Path,
     checkpoint_path: Path,
     replica_id: int,
     num_replicas: int,
+    csv_path: Path | None = None,
+    uniform_modes: bool = False,
+    n_samples_per_mode: int | None = None,
 ) -> tuple[list[ManifestEntry], int]:
     """Validate all inputs before generation.
 
+    Supports two modes:
+    1. CSV mode (default): Load distribution from test_zbin_distribution.csv
+    2. Uniform mode: Generate equal samples for each (zbin, domain) combination
+
     Args:
         cfg: Configuration object.
-        csv_path: Path to distribution CSV.
         checkpoint_path: Path to checkpoint.
         replica_id: Replica ID.
         num_replicas: Total number of replicas.
+        csv_path: Path to distribution CSV (required if not uniform_modes).
+        uniform_modes: If True, generate uniform distribution instead of CSV.
+        n_samples_per_mode: Samples per (zbin, domain) pair (required if uniform_modes).
 
     Returns:
         Tuple of (manifest, total_samples).
@@ -216,39 +286,52 @@ def validate_inputs(
         FileNotFoundError: If required files don't exist.
         ValueError: If validation fails.
     """
-    if not csv_path.exists():
-        raise FileNotFoundError(f"Distribution CSV not found: {csv_path}")
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
     if not (0 <= replica_id < num_replicas):
         raise ValueError(f"replica_id {replica_id} not in [0, {num_replicas})")
 
-    manifest, total = load_test_distribution(csv_path)
-
-    # Validate manifest is not empty
-    if not manifest:
-        raise ValueError(
-            f"No valid test conditions found in CSV: {csv_path}. "
-            "Ensure the CSV contains rows with split='test' and n_slices > 0."
-        )
-
-    # Validate z-bins are within valid range
     config_z_bins = cfg.conditioning.z_bins
-    min_zbin = min(e.zbin for e in manifest)
-    max_zbin = max(e.zbin for e in manifest)
 
-    if min_zbin < 0:
-        raise ValueError(
-            f"CSV contains negative zbin={min_zbin}. "
-            "Z-bin values must be non-negative integers in [0, z_bins-1]."
-        )
+    if uniform_modes:
+        # Uniform mode: generate equal samples per (zbin, domain)
+        if n_samples_per_mode is None or n_samples_per_mode <= 0:
+            raise ValueError(
+                "--n_samples_per_mode must be a positive integer when using --uniform_modes_generation"
+            )
+        manifest, total = create_uniform_distribution(config_z_bins, n_samples_per_mode)
+    else:
+        # CSV mode: load from file
+        if csv_path is None:
+            raise ValueError("--test_dist_csv is required when not using --uniform_modes_generation")
+        if not csv_path.exists():
+            raise FileNotFoundError(f"Distribution CSV not found: {csv_path}")
 
-    if max_zbin >= config_z_bins:
-        raise ValueError(
-            f"CSV contains zbin={max_zbin} but config has z_bins={config_z_bins}. "
-            f"Max allowed zbin is {config_z_bins - 1}."
-        )
+        manifest, total = load_test_distribution(csv_path)
+
+        # Validate manifest is not empty
+        if not manifest:
+            raise ValueError(
+                f"No valid test conditions found in CSV: {csv_path}. "
+                "Ensure the CSV contains rows with split='test' and n_slices > 0."
+            )
+
+        # Validate z-bins are within valid range
+        min_zbin = min(e.zbin for e in manifest)
+        max_zbin = max(e.zbin for e in manifest)
+
+        if min_zbin < 0:
+            raise ValueError(
+                f"CSV contains negative zbin={min_zbin}. "
+                "Z-bin values must be non-negative integers in [0, z_bins-1]."
+            )
+
+        if max_zbin >= config_z_bins:
+            raise ValueError(
+                f"CSV contains zbin={max_zbin} but config has z_bins={config_z_bins}. "
+                f"Max allowed zbin is {config_z_bins - 1}."
+            )
 
     return manifest, total
 
@@ -501,8 +584,20 @@ def main() -> None:
     parser.add_argument(
         "--test_dist_csv",
         type=str,
-        required=True,
-        help="Path to test_zbin_distribution.csv",
+        required=False,
+        default=None,
+        help="Path to test_zbin_distribution.csv (required unless --uniform_modes_generation is used)",
+    )
+    parser.add_argument(
+        "--uniform_modes_generation",
+        action="store_true",
+        help="Generate uniform distribution: equal samples for each (zbin, domain) combination",
+    )
+    parser.add_argument(
+        "--n_samples_per_mode",
+        type=int,
+        default=None,
+        help="Number of samples per (zbin, domain) mode (required with --uniform_modes_generation)",
     )
     parser.add_argument(
         "--out_dir",
@@ -594,7 +689,7 @@ def main() -> None:
     # Resolve paths
     config_path = Path(args.config)
     checkpoint_path = Path(args.checkpoint)
-    csv_path = Path(args.test_dist_csv)
+    csv_path = Path(args.test_dist_csv) if args.test_dist_csv else None
     out_dir = Path(args.out_dir)
 
     # Load config
@@ -625,7 +720,11 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info(f"Config: {config_path}")
     logger.info(f"Checkpoint: {checkpoint_path}")
-    logger.info(f"Distribution CSV: {csv_path}")
+    if args.uniform_modes_generation:
+        logger.info(f"Mode: UNIFORM ({args.n_samples_per_mode} samples per zbin-domain)")
+    else:
+        logger.info(f"Mode: CSV distribution")
+        logger.info(f"Distribution CSV: {csv_path}")
     logger.info(f"Output: {out_dir}")
     logger.info(f"Batch size: {args.batch_size}")
     logger.info(f"Use EMA: {use_ema}")
@@ -634,11 +733,13 @@ def main() -> None:
 
     # Validate inputs
     manifest, total_samples = validate_inputs(
-        cfg,
-        csv_path,
-        checkpoint_path,
-        args.replica_id,
-        args.num_replicas,
+        cfg=cfg,
+        checkpoint_path=checkpoint_path,
+        replica_id=args.replica_id,
+        num_replicas=args.num_replicas,
+        csv_path=csv_path,
+        uniform_modes=args.uniform_modes_generation,
+        n_samples_per_mode=args.n_samples_per_mode,
     )
 
     logger.info(f"Conditions: {len(manifest)}, Total samples: {total_samples}")
@@ -690,6 +791,7 @@ def main() -> None:
         "n_samples": total_samples,
         "n_conditions": len(manifest),
         "generation_timestamp": datetime.now().isoformat(),
+        "generation_mode": "uniform" if args.uniform_modes_generation else "csv",
         "config": {
             "checkpoint_path": str(checkpoint_path),
             "config_path": str(config_path),
@@ -710,6 +812,16 @@ def main() -> None:
         "domain_mapping": DOMAIN_MAP,
         "domain_mapping_inverse": {str(k): v for k, v in DOMAIN_MAP_INV.items()},
     }
+
+    # Add mode-specific metadata
+    if args.uniform_modes_generation:
+        metadata["uniform_mode"] = {
+            "n_samples_per_mode": args.n_samples_per_mode,
+            "n_zbins": cfg.conditioning.z_bins,
+            "n_domains": len(DOMAIN_MAP),
+        }
+    else:
+        metadata["csv_path"] = str(csv_path) if csv_path else None
 
     # Save replica
     npz_path = save_replica(

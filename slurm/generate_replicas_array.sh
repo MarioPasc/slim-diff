@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -J jsddpm_gen_replicas
-#SBATCH --array=0-14              # 15 replicas (adjust as needed)
-#SBATCH --time=04:00:00           # 4 hours per replica (conservative)
+#SBATCH --array=0-19              # 20 replicas (adjust as needed)
+#SBATCH --time=2-00:00:00           # 2 days per replica (conservative)
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=6G
@@ -13,15 +13,21 @@
 # ========================================================================
 # JS-DDPM Replica Generation Script for SLURM Job Arrays
 # ========================================================================
-# Generates deterministic replicas of synthetic samples matching the test
-# distribution. Each job array task generates one replica.
+# Generates deterministic replicas of synthetic samples. Supports two modes:
+#
+# 1. CSV mode (default): Match test set distribution from CSV file
+# 2. Uniform mode: Generate equal samples for each (zbin, domain) pair
 #
 # Usage:
-#   sbatch slurm/generate_replicas_array.slurm
+#   # CSV mode (default):
+#   sbatch slurm/generate_replicas_array.sh
+#
+#   # Uniform mode (set UNIFORM_MODE=true below):
+#   sbatch slurm/generate_replicas_array.sh
 #
 # Prerequisites:
 #   1. Model trained with export_to_checkpoint: true for EMA weights
-#   2. test_zbin_distribution.csv exists
+#   2. For CSV mode: test_zbin_distribution.csv exists
 # ========================================================================
 
 set -euo pipefail
@@ -46,11 +52,15 @@ TEST_CSV="${REPO_ROOT}/docs/test_analysis/test_zbin_distribution.csv"
 OUT_DIR="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/replicas_${MODEL}"
 
 # Generation parameters
-NUM_REPLICAS=15
+NUM_REPLICAS=20
 BATCH_SIZE=32
 SEED_BASE=42
 DTYPE="float16"
 CONDA_ENV_NAME="jsddpm"
+
+# Uniform mode parameters (set UNIFORM_MODE=true to enable)
+UNIFORM_MODE=true  # Set to true for uniform (zbin, domain) sampling
+N_SAMPLES_PER_MODE=150  # Only used if UNIFORM_MODE=true
 # ===========================================
 
 # Validate configuration
@@ -64,8 +74,10 @@ if [ ! -f "${CHECKPOINT}" ]; then
     exit 1
 fi
 
-if [ ! -f "${TEST_CSV}" ]; then
+# Only require CSV in non-uniform mode
+if [ "${UNIFORM_MODE}" = "false" ] && [ ! -f "${TEST_CSV}" ]; then
     echo "ERROR: Test distribution CSV not found: ${TEST_CSV}"
+    echo "       Use UNIFORM_MODE=true if you want to generate uniform distribution"
     exit 1
 fi
 
@@ -138,7 +150,12 @@ echo "Configuration"
 echo "=========================================================================="
 echo "Config: ${CONFIG}"
 echo "Checkpoint: ${CHECKPOINT}"
-echo "Test CSV: ${TEST_CSV}"
+if [ "${UNIFORM_MODE}" = "true" ]; then
+    echo "Mode: UNIFORM (${N_SAMPLES_PER_MODE} samples per zbin-domain)"
+else
+    echo "Mode: CSV distribution"
+    echo "Test CSV: ${TEST_CSV}"
+fi
 echo "Output: ${OUT_DIR}"
 echo "Replica ID: ${SLURM_ARRAY_TASK_ID} / ${NUM_REPLICAS}"
 echo "Batch size: ${BATCH_SIZE}"
@@ -149,18 +166,26 @@ echo "==========================================================================
 echo "Starting Generation"
 echo "=========================================================================="
 
-python -m src.diffusion.training.runners.generate_replicas \
-    --config "${CONFIG}" \
-    --checkpoint "${CHECKPOINT}" \
-    --test_dist_csv "${TEST_CSV}" \
-    --out_dir "${OUT_DIR}" \
-    --replica_id "${SLURM_ARRAY_TASK_ID}" \
-    --num_replicas "${NUM_REPLICAS}" \
-    --batch_size "${BATCH_SIZE}" \
-    --seed_base "${SEED_BASE}" \
-    --dtype "${DTYPE}" \
+# Build command based on mode
+CMD="python -m src.diffusion.training.runners.generate_replicas \
+    --config \"${CONFIG}\" \
+    --checkpoint \"${CHECKPOINT}\" \
+    --out_dir \"${OUT_DIR}\" \
+    --replica_id ${SLURM_ARRAY_TASK_ID} \
+    --num_replicas ${NUM_REPLICAS} \
+    --batch_size ${BATCH_SIZE} \
+    --seed_base ${SEED_BASE} \
+    --dtype ${DTYPE} \
     --use_ema \
-    --device cuda
+    --device cuda"
+
+if [ "${UNIFORM_MODE}" = "true" ]; then
+    CMD="${CMD} --uniform_modes_generation --n_samples_per_mode ${N_SAMPLES_PER_MODE}"
+else
+    CMD="${CMD} --test_dist_csv \"${TEST_CSV}\""
+fi
+
+eval "${CMD}"
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
