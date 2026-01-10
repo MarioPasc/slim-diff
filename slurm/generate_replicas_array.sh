@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #SBATCH -J jsddpm_gen_replicas
-#SBATCH --array=0-9              # 10 replicas (adjust as needed)
+#SBATCH --array=0-14              # 15 replicas (adjust as needed)
 #SBATCH --time=04:00:00           # 4 hours per replica (conservative)
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=dgx
-#SBATCH --output=logs/gen_replicas/%A_%a.out
-#SBATCH --error=logs/gen_replicas/%A_%a.err
+#SBATCH --output=%x.%j.out
+#SBATCH --error=%x.%j.err
 
 # ========================================================================
 # JS-DDPM Replica Generation Script for SLURM Job Arrays
@@ -22,7 +22,6 @@
 # Prerequisites:
 #   1. Model trained with export_to_checkpoint: true for EMA weights
 #   2. test_zbin_distribution.csv exists
-#   3. logs/gen_replicas/ directory exists
 # ========================================================================
 
 set -euo pipefail
@@ -46,7 +45,7 @@ TEST_CSV="${REPO_ROOT}/docs/test_analysis/test_zbin_distribution.csv"
 OUT_DIR="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/replicas_${MODEL}"
 
 # Generation parameters
-NUM_REPLICAS=10
+NUM_REPLICAS=15
 BATCH_SIZE=32
 SEED_BASE=42
 DTYPE="float16"

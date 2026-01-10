@@ -149,11 +149,12 @@ def load_model_with_ema(
     # Load checkpoint dict for EMA extraction
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
-    # Load Lightning module
+    # Load Lightning module (weights_only=False needed for OmegaConf in checkpoint)
     lit_module = JSDDPMLightningModule.load_from_checkpoint(
         str(checkpoint_path),
         cfg=cfg,
         map_location=device,
+        weights_only=False,
     )
     lit_module.eval()
     lit_module.to(device)
