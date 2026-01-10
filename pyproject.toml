@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your@email.com"}
+    {name = "Mario Pascual González", email = "mpascual@uma.es"}
 ]
 dependencies = [
     "torch>=2.0.0",
@@ -27,6 +27,9 @@ dependencies = [
     "rich>=13.0.0",
     "wandb>=0.15.0",
     "scipy>=1.10.0",
+    "torch-fidelity>=0.3.0",
+    "torchmetrics>=1.0.0",
+    "statsmodels>=0.14.0",
 ]
 
 [project.optional-dependencies]

@@ -3,8 +3,8 @@
 #SBATCH --array=0-14              # 15 replicas (adjust as needed)
 #SBATCH --time=04:00:00           # 4 hours per replica (conservative)
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=6G
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=dgx
 #SBATCH --output=logs/gen_replicas/%x.%j.out
@@ -77,7 +77,8 @@ mkdir -p "${REPO_ROOT}/logs/gen_replicas"
 CONFIG="${OUT_DIR}/${MODEL}.yaml"
 if [ ! -f "${CONFIG}" ]; then
     echo "Copying and modifying config for cluster paths..."
-    cp "${CONFIG_ORIG}" "${CONFIG}"
+    # For copying even though file exists (to avoid race conditions)
+    cp -f "${CONFIG_ORIG}" "${CONFIG}"
     sed -i "s|  root_dir: .*|  root_dir: \"${DATA_SRC}\"|" "${CONFIG}"
     sed -i "s|  cache_dir: .*|  cache_dir: \"${DATA_SRC}/slice_cache\"|" "${CONFIG}"
     sed -i "s|  output_dir: .*|  output_dir: \"${OUT_DIR}\"|" "${CONFIG}"
