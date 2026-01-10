@@ -225,9 +225,24 @@ def validate_inputs(
 
     manifest, total = load_test_distribution(csv_path)
 
-    # Validate z-bins are within config range
-    max_zbin = max(e.zbin for e in manifest)
+    # Validate manifest is not empty
+    if not manifest:
+        raise ValueError(
+            f"No valid test conditions found in CSV: {csv_path}. "
+            "Ensure the CSV contains rows with split='test' and n_slices > 0."
+        )
+
+    # Validate z-bins are within valid range
     config_z_bins = cfg.conditioning.z_bins
+    min_zbin = min(e.zbin for e in manifest)
+    max_zbin = max(e.zbin for e in manifest)
+
+    if min_zbin < 0:
+        raise ValueError(
+            f"CSV contains negative zbin={min_zbin}. "
+            "Z-bin values must be non-negative integers in [0, z_bins-1]."
+        )
+
     if max_zbin >= config_z_bins:
         raise ValueError(
             f"CSV contains zbin={max_zbin} but config has z_bins={config_z_bins}. "
@@ -317,7 +332,9 @@ def generate_replica(
     Returns:
         Dictionary of numpy arrays for NPZ saving.
     """
-    H, W = 128, 128
+    # Read image dimensions from config (roi_size is [H, W, D] for 3D, we use H, W)
+    roi_size = cfg.data.transforms.roi_size
+    H, W = roi_size[0], roi_size[1]
     z_bins = cfg.conditioning.z_bins
     use_anatomical = cfg.model.get("anatomical_conditioning", False)
 
@@ -533,13 +550,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--use_ema",
+        dest="use_ema",
         action="store_true",
         default=True,
-        help="Use EMA weights (default: True)",
+        help="Use EMA weights (default)",
     )
     parser.add_argument(
         "--no_ema",
-        action="store_true",
+        dest="use_ema",
+        action="store_false",
         help="Disable EMA weights",
     )
     parser.add_argument(
@@ -591,8 +610,8 @@ def main() -> None:
         cfg.sampler.guidance_scale = args.override_guidance
         logger.info(f"Override: guidance_scale = {args.override_guidance}")
 
-    # Determine EMA usage
-    use_ema = args.use_ema and not args.no_ema
+    # Determine EMA usage (--use_ema is default, --no_ema disables it)
+    use_ema = args.use_ema
 
     # Determine dtype
     dtype = np.float16 if args.dtype == "float16" else np.float32
@@ -674,6 +693,7 @@ def main() -> None:
             "checkpoint_path": str(checkpoint_path),
             "config_path": str(config_path),
             "z_bins": cfg.conditioning.z_bins,
+            "image_size": list(cfg.data.transforms.roi_size[:2]),
             "batch_size": args.batch_size,
             "use_ema": use_ema,
             "ema_loaded": ema_loaded,

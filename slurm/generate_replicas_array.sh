@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH -J jsddpm_gen_replicas
-#SBATCH --array=0-29              # 30 replicas (adjust as needed)
+#SBATCH --array=0-9              # 10 replicas (adjust as needed)
 #SBATCH --time=04:00:00           # 4 hours per replica (conservative)
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -37,15 +37,17 @@ echo "Start time: $(date)"
 
 # ============== CONFIGURATION ==============
 # Paths - UPDATE THESE FOR YOUR CLUSTER
+MODEL="jsddpm_sinus_kendall_weighted_anatomicalprior"
+
 REPO_ROOT="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
-CONFIG="${REPO_ROOT}/slurm/jsddpm_sinus_kendall_weighted_anatomicalprior/jsddpm_sinus_kendall_weighted_anatomicalprior.yaml"
-CHECKPOINT="${REPO_ROOT}/outputs/jsddpm_anatomical/checkpoints/best.ckpt"
+CONFIG="${REPO_ROOT}/slurm/${MODEL}/${MODEL}.yaml"
+CHECKPOINT="/mnt/home/users/tic_163_uma/mpascual/fscratch/weights_${MODEL}/best.ckpt"
 TEST_CSV="${REPO_ROOT}/docs/test_analysis/test_zbin_distribution.csv"
-OUT_DIR="${REPO_ROOT}/outputs/replicas"
+OUT_DIR="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/replicas_${MODEL}"
 
 # Generation parameters
-NUM_REPLICAS=30
-BATCH_SIZE=16
+NUM_REPLICAS=10
+BATCH_SIZE=32
 SEED_BASE=42
 DTYPE="float16"
 CONDA_ENV_NAME="jsddpm"
