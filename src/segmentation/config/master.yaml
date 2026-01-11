@@ -225,7 +225,7 @@ logging:
 
   # Primary logger (W&B)
   wandb:
-    enabled: true
+    enabled: false  # Disabled - using CSV logging only
     project: "epilepsy-segmentation"
     entity: "mario-pg02-icai"
     offline: true  # Sync later (for cluster)

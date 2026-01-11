@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
-import wandb
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from src.segmentation.callbacks.logging_callbacks import CSVLoggingCallback
@@ -23,6 +22,17 @@ from src.segmentation.training.lit_module import SegmentationLitModule
 from src.segmentation.utils.seeding import seed_everything
 
 logger = logging.getLogger(__name__)
+
+# Suppress specific warnings
+warnings.filterwarnings("ignore", message=".*num_workers.*bottleneck.*")
+warnings.filterwarnings("ignore", message=".*Precision 16-mixed.*")
+warnings.filterwarnings("ignore", message=".*always_return_as_numpy.*")
+warnings.filterwarnings("ignore", message=".*single channel prediction.*")
+warnings.filterwarnings("ignore", message=".*ground truth of class 0 is all 0.*")
+warnings.filterwarnings("ignore", message=".*prediction of class 0 is all 0.*")
+
+# Set matmul precision for Tensor Cores
+torch.set_float32_matmul_precision('medium')
 
 
 class KFoldSegmentationRunner:
@@ -107,10 +117,7 @@ class KFoldSegmentationRunner:
         # Create callbacks
         callbacks = self._build_callbacks(fold_cfg, fold_idx)
 
-        # Create logger
-        wandb_logger = self._build_logger(fold_cfg, fold_idx)
-
-        # Create trainer
+        # Create trainer (no wandb logger)
         trainer = pl.Trainer(
             default_root_dir=fold_dir,
             max_epochs=fold_cfg.training.max_epochs,
@@ -123,7 +130,7 @@ class KFoldSegmentationRunner:
             check_val_every_n_epoch=fold_cfg.training.check_val_every_n_epoch,
             log_every_n_steps=fold_cfg.logging.log_every_n_steps,
             callbacks=callbacks,
-            logger=wandb_logger,
+            logger=False,  # Disable default logger, using CSV only
             enable_progress_bar=True,
             accelerator="auto",
             devices="auto",
@@ -158,10 +165,6 @@ class KFoldSegmentationRunner:
             "best_model_path": best_model_path,
             "test_results": test_results,
         }
-
-        # Finish wandb run to avoid run reuse in next fold
-        if wandb_logger is not None:
-            wandb.finish()
 
         return fold_result
 
@@ -283,8 +286,8 @@ class KFoldSegmentationRunner:
         # Load best checkpoint if available
         if best_model_path and Path(best_model_path).exists():
             logger.info(f"Loading best checkpoint: {best_model_path}")
-            # Load checkpoint using PyTorch Lightning's method
-            checkpoint = torch.load(best_model_path)
+            # Load checkpoint - weights_only=False is safe for checkpoints we created ourselves
+            checkpoint = torch.load(best_model_path, weights_only=False)
             model.load_state_dict(checkpoint["state_dict"])
         else:
             logger.warning("No checkpoint found, using current model weights")
@@ -431,30 +434,6 @@ class KFoldSegmentationRunner:
             )
 
         return callbacks
-
-    def _build_logger(self, cfg: DictConfig, fold_idx: int):
-        """Build W&B logger.
-
-        Args:
-            cfg: Configuration
-            fold_idx: Fold index
-
-        Returns:
-            WandbLogger or None
-        """
-        if not cfg.logging.wandb.enabled:
-            return None
-
-        return WandbLogger(
-            project=cfg.logging.wandb.project,
-            entity=cfg.logging.wandb.entity,
-            name=cfg.experiment.name,
-            save_dir=Path(cfg.experiment.output_dir) / "logs",
-            offline=cfg.logging.wandb.offline,
-            tags=list(cfg.logging.wandb.tags) + [f"fold_{fold_idx}"],
-            group=cfg.model.name,
-            job_type=f"fold_{fold_idx}",
-        )
 
     def _aggregate_results(self, fold_results: list):
         """Aggregate results across folds.

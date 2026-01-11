@@ -221,7 +221,7 @@ logging:
 
   # Primary logger (W&B)
   wandb:
-    enabled: true
+    enabled: false
     project: "epilepsy-segmentation"
     entity: "mario-pg02-icai"
     offline: true  # Sync later (for cluster)
@@ -266,4 +266,4 @@ visualization:
 
   # Output
   save_png: true
-  log_to_wandb: true
+  log_to_wandb: false
