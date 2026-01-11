@@ -120,6 +120,7 @@ class KFoldPlanner:
 
         # Storage
         self.real_subjects: dict[str, SubjectInfo] = {}
+        self.test_samples: list[SampleRecord] = []  # Test set samples
         self.synthetic_samples: list[SampleRecord] = []
         self.folds: list[tuple[list[str], list[str]]] = []
 
@@ -141,20 +142,53 @@ class KFoldPlanner:
             self._load_synthetic_data()
 
     def _load_real_data(self):
-        """Load real data from train.csv and val.csv."""
+        """Load real data from train.csv, val.csv, and test.csv."""
         csv_files = ["train.csv", "val.csv"]
 
-        # Optionally exclude test subjects
-        test_subjects = set()
-        if self.exclude_test:
-            test_csv = self.real_cache_dir / "test.csv"
-            if test_csv.exists():
-                with open(test_csv, "r") as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        test_subjects.add(row["subject_id"])
-                logger.info(f"Excluding {len(test_subjects)} test subjects from k-fold")
+        # Load test samples first
+        test_csv = self.real_cache_dir / "test.csv"
+        test_subjects_dict: dict[str, SubjectInfo] = {}
 
+        if test_csv.exists():
+            with open(test_csv, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    subject_id = row["subject_id"]
+
+                    # Create sample record
+                    sample = SampleRecord(
+                        subject_id=subject_id,
+                        filepath=row["filepath"],
+                        z_index=int(row["z_index"]),
+                        z_bin=int(row["z_bin"]),
+                        has_lesion=row["has_lesion"].lower() == "true",
+                        source="real",
+                    )
+
+                    # Add to test subjects dict
+                    if subject_id not in test_subjects_dict:
+                        test_subjects_dict[subject_id] = SubjectInfo(subject_id=subject_id)
+                    test_subjects_dict[subject_id].add_sample(sample)
+
+            # Update has_lesion_subject for test samples
+            for subject in test_subjects_dict.values():
+                subject.update_has_lesion_subject()
+
+            # Flatten to test_samples list
+            for subject in test_subjects_dict.values():
+                self.test_samples.extend(subject.samples)
+
+            logger.info(
+                f"Loaded test data: {len(test_subjects_dict)} subjects, "
+                f"{len(self.test_samples)} samples"
+            )
+
+        # Get test subject IDs for exclusion
+        test_subjects = set(test_subjects_dict.keys())
+        if self.exclude_test and test_subjects:
+            logger.info(f"Excluding {len(test_subjects)} test subjects from k-fold")
+
+        # Load train and val data
         for csv_name in csv_files:
             csv_path = self.real_cache_dir / csv_name
             if not csv_path.exists():
@@ -166,8 +200,8 @@ class KFoldPlanner:
                 for row in reader:
                     subject_id = row["subject_id"]
 
-                    # Skip test subjects if configured
-                    if subject_id in test_subjects:
+                    # Skip test subjects if exclude_test is enabled
+                    if self.exclude_test and subject_id in test_subjects:
                         continue
 
                     # Create sample record
@@ -194,7 +228,7 @@ class KFoldPlanner:
         lesion_subjects = sum(1 for s in self.real_subjects.values() if s.has_lesion)
 
         logger.info(
-            f"Loaded real data: {len(self.real_subjects)} subjects, "
+            f"Loaded real train/val data: {len(self.real_subjects)} subjects, "
             f"{total_samples} samples, {lesion_subjects} subjects with lesions"
         )
 
@@ -501,6 +535,9 @@ class KFoldPlanner:
     def plan(self) -> Path:
         """Generate fold CSV files.
 
+        Includes train, val, and test splits for each fold.
+        Test samples are the same across all folds (repeated for convenience).
+
         Returns:
             Path to the generated CSV file
         """
@@ -512,11 +549,17 @@ class KFoldPlanner:
         for fold_idx in range(self.n_folds):
             train_samples, val_samples = self.get_fold(fold_idx)
 
+            # Add train samples
             for sample in train_samples:
                 all_rows.append(sample.to_dict(fold_idx, "train"))
 
+            # Add val samples
             for sample in val_samples:
                 all_rows.append(sample.to_dict(fold_idx, "val"))
+
+            # Add test samples (same for all folds)
+            for sample in self.test_samples:
+                all_rows.append(sample.to_dict(fold_idx, "test"))
 
         # Write CSV
         fieldnames = [
@@ -529,7 +572,10 @@ class KFoldPlanner:
             writer.writeheader()
             writer.writerows(all_rows)
 
-        logger.info(f"Generated fold plan: {csv_path} ({len(all_rows)} rows)")
+        logger.info(
+            f"Generated fold plan: {csv_path} "
+            f"({len(all_rows)} rows, {len(self.test_samples)} test samples per fold)"
+        )
 
         return csv_path
 
@@ -540,7 +586,7 @@ class KFoldPlanner:
             fold_idx: Fold index
 
         Returns:
-            Dict with fold statistics
+            Dict with fold statistics (includes train, val, and test)
         """
         train_samples, val_samples = self.get_fold(fold_idx)
 
@@ -548,6 +594,7 @@ class KFoldPlanner:
             "fold": fold_idx,
             "train": self._compute_split_stats(train_samples),
             "val": self._compute_split_stats(val_samples),
+            "test": self._compute_split_stats(self.test_samples),
         }
 
         return stats
@@ -604,7 +651,7 @@ class KFoldPlanner:
         print(f"\nFold {fold_idx} Statistics:")
         print("=" * 60)
 
-        for split in ["train", "val"]:
+        for split in ["train", "val", "test"]:
             s = stats[split]
             print(f"\n{split.upper()}:")
             print(f"  Total samples: {s['total']}")

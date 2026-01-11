@@ -31,6 +31,7 @@ dependencies = [
     "torchmetrics>=1.0.0",
     "statsmodels>=0.14.0",
     "scikit-learn>=1.2.0",
+    "seaborn>=0.12.0",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +47,7 @@ wandb = ["wandb>=0.15.0"]
 jsddpm-train = "src.diffusion.training.runners.train:main"
 jsddpm-generate = "src.diffusion.training.runners.generate:main"
 jsddpm-cache = "src.diffusion.data.caching:main"
+jsddpm-segmentation-kfold = "src.segmentation.cli.kfold_segmentation:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
