@@ -74,13 +74,9 @@ k_fold:
   folds_to_run: null  # e.g., [0, 1, 2]
 
 # =============================================================================
-# Model Configuration (placeholder - overridden by model-specific YAML)
+# Model Configuration (loaded from model-specific YAML based on CLI --model arg)
 # =============================================================================
-model:
-  name: "unet"
-  spatial_dims: 2
-  in_channels: 1  # Grayscale FLAIR
-  out_channels: 1  # Binary lesion mask
+# DO NOT include model section here - it will be loaded from src/segmentation/config/models/{model}.yaml
 
 # =============================================================================
 # Training Configuration
