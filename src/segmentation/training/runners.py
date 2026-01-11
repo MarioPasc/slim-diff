@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytorch_lightning as pl
+import torch
 import wandb
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
@@ -133,24 +134,30 @@ class KFoldSegmentationRunner:
         logger.info(f"Training fold {fold_idx}...")
         trainer.fit(model, train_loader, val_loader)
 
-        # Extract best metrics
+        # Extract best validation metrics
         best_score = trainer.checkpoint_callback.best_model_score
         if best_score is not None:
-            best_dice = best_score.item()
+            best_val_dice = best_score.item()
         else:
             logger.warning(f"Fold {fold_idx}: No best model score found (likely all NaN)")
-            best_dice = float("nan")
+            best_val_dice = float("nan")
         best_model_path = trainer.checkpoint_callback.best_model_path
+
+        logger.info(
+            f"Fold {fold_idx} training complete. Best Val Dice: {best_val_dice:.4f}"
+        )
+
+        # Evaluate on test set
+        test_results = self._evaluate_test_set(
+            trainer, model, fold_idx, fold_dir, best_model_path
+        )
 
         fold_result = {
             "fold": fold_idx,
-            "best_dice": best_dice,
+            "best_val_dice": best_val_dice,
             "best_model_path": best_model_path,
+            "test_results": test_results,
         }
-
-        logger.info(
-            f"Fold {fold_idx} complete. Best Dice: {best_dice:.4f}"
-        )
 
         # Finish wandb run to avoid run reuse in next fold
         if wandb_logger is not None:
@@ -237,6 +244,118 @@ class KFoldSegmentationRunner:
         )
 
         return train_loader, val_loader
+
+    def _evaluate_test_set(
+        self,
+        trainer: pl.Trainer,
+        model: pl.LightningModule,
+        fold_idx: int,
+        fold_dir: Path,
+        best_model_path: str,
+    ) -> dict:
+        """Evaluate best model on test set.
+
+        Args:
+            trainer: Lightning trainer
+            model: Lightning module
+            fold_idx: Fold index
+            fold_dir: Fold output directory
+            best_model_path: Path to best checkpoint
+
+        Returns:
+            Dictionary with test metrics
+        """
+        logger.info(f"\n{'='*80}")
+        logger.info(f"EVALUATING ON TEST SET - Fold {fold_idx}")
+        logger.info(f"{'='*80}")
+
+        # Create test dataloader
+        test_loader = self._create_test_dataloader()
+
+        if test_loader is None:
+            logger.warning("No test set available, skipping test evaluation")
+            return {
+                "test/dice": float("nan"),
+                "test/hd95": float("nan"),
+                "test/loss": float("nan"),
+            }
+
+        # Load best checkpoint if available
+        if best_model_path and Path(best_model_path).exists():
+            logger.info(f"Loading best checkpoint: {best_model_path}")
+            # Load checkpoint using PyTorch Lightning's method
+            checkpoint = torch.load(best_model_path)
+            model.load_state_dict(checkpoint["state_dict"])
+        else:
+            logger.warning("No checkpoint found, using current model weights")
+
+        # Run test
+        logger.info(f"Running test evaluation on {len(test_loader.dataset)} samples...")
+        test_results = trainer.test(model, test_loader, verbose=False)
+
+        # Extract metrics (test_results is a list with one dict)
+        if test_results and len(test_results) > 0:
+            test_metrics = test_results[0]
+        else:
+            logger.warning("No test results returned")
+            test_metrics = {}
+
+        # Save test results to JSON
+        test_results_path = fold_dir / "test_results.json"
+        with open(test_results_path, "w") as f:
+            json.dump({
+                "fold": fold_idx,
+                "best_model_path": str(best_model_path),
+                "metrics": test_metrics,
+            }, f, indent=2)
+
+        logger.info(f"Test results saved to: {test_results_path}")
+        logger.info(f"Test Dice: {test_metrics.get('test/dice', float('nan')):.4f}")
+        logger.info(f"Test HD95: {test_metrics.get('test/hd95', float('nan')):.2f}")
+        logger.info(f"Test Loss: {test_metrics.get('test/loss', float('nan')):.4f}")
+
+        return test_metrics
+
+    def _create_test_dataloader(self):
+        """Create test dataloader (same for all folds).
+
+        Returns:
+            DataLoader for test set
+        """
+        # Get test samples from planner (same across all folds)
+        test_samples = self.planner.test_samples
+
+        if not test_samples:
+            logger.warning("No test samples found")
+            return None
+
+        # Build transforms (use validation transforms for test)
+        test_transforms = SegmentationTransforms.build_val_transforms(
+            self.cfg
+        )
+
+        # Create dataset - test uses only real data
+        test_dataset = PlannedFoldDataset(
+            samples=test_samples,
+            real_cache_dir=Path(self.cfg.data.real.cache_dir),
+            synthetic_dir=None,  # Test uses only real data
+            transform=test_transforms,
+            mask_threshold=self.cfg.data.mask.binarize_threshold,
+        )
+
+        # Create dataloader
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=self.cfg.training.batch_size,
+            shuffle=False,
+            num_workers=self.cfg.training.num_workers,
+            pin_memory=self.cfg.training.pin_memory,
+            drop_last=False,
+        )
+
+        logger.info(f"Created test dataloader: {len(test_dataset)} samples")
+
+        return test_loader
 
     def _create_weighted_sampler(self, dataset):
         """Create weighted sampler for class balancing.
@@ -343,29 +462,127 @@ class KFoldSegmentationRunner:
         Args:
             fold_results: List of fold result dicts
         """
-        dice_scores = [r["best_dice"] for r in fold_results]
+        # Validation metrics
+        val_dice_scores = [r["best_val_dice"] for r in fold_results]
+        val_dice_scores_clean = [d for d in val_dice_scores if not np.isnan(d)]
+
+        # Test metrics
+        test_dice_scores = [
+            r["test_results"].get("test/dice", float("nan"))
+            for r in fold_results
+        ]
+        test_dice_scores_clean = [d for d in test_dice_scores if not np.isnan(d)]
+
+        test_hd95_scores = [
+            r["test_results"].get("test/hd95", float("nan"))
+            for r in fold_results
+        ]
+        test_hd95_scores_clean = [h for h in test_hd95_scores if not np.isnan(h)]
+
+        test_loss_scores = [
+            r["test_results"].get("test/loss", float("nan"))
+            for r in fold_results
+        ]
+        test_loss_scores_clean = [l for l in test_loss_scores if not np.isnan(l)]
+
+        # Validation summary
+        val_summary = {
+            "mean": float(np.mean(val_dice_scores_clean)) if val_dice_scores_clean else float("nan"),
+            "std": float(np.std(val_dice_scores_clean)) if val_dice_scores_clean else float("nan"),
+            "min": float(np.min(val_dice_scores_clean)) if val_dice_scores_clean else float("nan"),
+            "max": float(np.max(val_dice_scores_clean)) if val_dice_scores_clean else float("nan"),
+        }
+
+        # Test summary
+        test_summary = {
+            "dice": {
+                "mean": float(np.mean(test_dice_scores_clean)) if test_dice_scores_clean else float("nan"),
+                "std": float(np.std(test_dice_scores_clean)) if test_dice_scores_clean else float("nan"),
+                "min": float(np.min(test_dice_scores_clean)) if test_dice_scores_clean else float("nan"),
+                "max": float(np.max(test_dice_scores_clean)) if test_dice_scores_clean else float("nan"),
+            },
+            "hd95": {
+                "mean": float(np.mean(test_hd95_scores_clean)) if test_hd95_scores_clean else float("nan"),
+                "std": float(np.std(test_hd95_scores_clean)) if test_hd95_scores_clean else float("nan"),
+                "min": float(np.min(test_hd95_scores_clean)) if test_hd95_scores_clean else float("nan"),
+                "max": float(np.max(test_hd95_scores_clean)) if test_hd95_scores_clean else float("nan"),
+            },
+            "loss": {
+                "mean": float(np.mean(test_loss_scores_clean)) if test_loss_scores_clean else float("nan"),
+                "std": float(np.std(test_loss_scores_clean)) if test_loss_scores_clean else float("nan"),
+                "min": float(np.min(test_loss_scores_clean)) if test_loss_scores_clean else float("nan"),
+                "max": float(np.max(test_loss_scores_clean)) if test_loss_scores_clean else float("nan"),
+            },
+        }
 
         results_summary = {
-            "mean_dice": float(np.mean(dice_scores)),
-            "std_dice": float(np.std(dice_scores)),
-            "min_dice": float(np.min(dice_scores)),
-            "max_dice": float(np.max(dice_scores)),
+            "validation": val_summary,
+            "test": test_summary,
             "fold_results": fold_results,
         }
 
-        # Save to JSON
+        # Save aggregated results to JSON
         with open(self.output_dir / "kfold_results.json", "w") as f:
             json.dump(results_summary, f, indent=2)
 
+        # Save test results CSV
+        self._save_test_results_csv(fold_results)
+
+        # Print summary
         logger.info("\n" + "=" * 80)
         logger.info("K-FOLD RESULTS SUMMARY")
         logger.info("=" * 80)
+        logger.info("\nVALIDATION METRICS:")
         logger.info(
-            f"Mean Dice: {results_summary['mean_dice']:.4f} ± "
-            f"{results_summary['std_dice']:.4f}"
+            f"  Mean Dice: {val_summary['mean']:.4f} ± {val_summary['std']:.4f}"
         )
         logger.info(
-            f"Range: [{results_summary['min_dice']:.4f}, "
-            f"{results_summary['max_dice']:.4f}]"
+            f"  Range: [{val_summary['min']:.4f}, {val_summary['max']:.4f}]"
+        )
+        logger.info("\nTEST METRICS:")
+        logger.info(
+            f"  Dice: {test_summary['dice']['mean']:.4f} ± {test_summary['dice']['std']:.4f}"
+        )
+        logger.info(
+            f"  HD95: {test_summary['hd95']['mean']:.2f} ± {test_summary['hd95']['std']:.2f} mm"
+        )
+        logger.info(
+            f"  Loss: {test_summary['loss']['mean']:.4f} ± {test_summary['loss']['std']:.4f}"
         )
         logger.info("=" * 80)
+
+    def _save_test_results_csv(self, fold_results: list):
+        """Save test results to CSV.
+
+        Args:
+            fold_results: List of fold result dicts
+        """
+        import csv as csv_module
+
+        csv_path = self.output_dir / "test_results.csv"
+
+        with open(csv_path, "w", newline="") as f:
+            writer = csv_module.writer(f)
+            # Header
+            writer.writerow([
+                "fold",
+                "best_val_dice",
+                "test_dice",
+                "test_hd95",
+                "test_loss",
+                "best_model_path",
+            ])
+
+            # Data rows
+            for result in fold_results:
+                test_metrics = result["test_results"]
+                writer.writerow([
+                    result["fold"],
+                    result["best_val_dice"],
+                    test_metrics.get("test/dice", float("nan")),
+                    test_metrics.get("test/hd95", float("nan")),
+                    test_metrics.get("test/loss", float("nan")),
+                    result["best_model_path"],
+                ])
+
+        logger.info(f"Test results CSV saved to: {csv_path}")

@@ -45,6 +45,10 @@ class CSVLoggingCallback(Callback):
             trainer: Lightning trainer
             pl_module: Lightning module
         """
+        # Skip sanity check validation
+        if trainer.sanity_checking:
+            return
+
         epoch = trainer.current_epoch
         global_step = trainer.global_step
 
@@ -82,39 +86,49 @@ class CSVLoggingCallback(Callback):
 
         file_exists = self.csv_path.exists()
 
-        if not file_exists:
+        # Check if columns have changed (new metrics appeared)
+        current_columns = None
+        if file_exists:
+            try:
+                with open(self.csv_path, "r", newline="") as f:
+                    reader = csv.DictReader(f)
+                    current_columns = reader.fieldnames
+            except Exception as e:
+                logger.warning(f"Could not read CSV header: {e}")
+                current_columns = None
+
+        # Need to rewrite if columns changed or file doesn't exist
+        need_rewrite = (not file_exists) or (current_columns is not None and set(current_columns) != set(columns))
+
+        if need_rewrite and file_exists:
+            # Read existing data
+            existing_rows = []
+            try:
+                with open(self.csv_path, "r", newline="") as f:
+                    reader = csv.DictReader(f)
+                    existing_rows = list(reader)
+            except Exception as e:
+                logger.warning(f"Could not read existing CSV: {e}")
+                existing_rows = []
+
+            # Rewrite with new columns
             with open(self.csv_path, "w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=columns)
+                writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
+                writer.writeheader()
+                for row in existing_rows:
+                    writer.writerow(row)
+                writer.writerow(row_data)
+        elif not file_exists:
+            # Create new file
+            with open(self.csv_path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
                 writer.writeheader()
                 writer.writerow(row_data)
-            self._header_written = True
         else:
-            # Check if we need to rewrite with new columns
-            if not self._header_written:
-                # Read existing data
-                existing_rows = []
-                try:
-                    with open(self.csv_path, "r", newline="") as f:
-                        reader = csv.DictReader(f)
-                        existing_rows = list(reader)
-                except Exception as e:
-                    logger.warning(f"Could not read existing CSV: {e}")
-                    existing_rows = []
-
-                # Rewrite with new columns
-                with open(self.csv_path, "w", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=columns)
-                    writer.writeheader()
-                    for row in existing_rows:
-                        writer.writerow(row)
-                    writer.writerow(row_data)
-
-                self._header_written = True
-            else:
-                # Just append
-                with open(self.csv_path, "a", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=columns)
-                    writer.writerow(row_data)
+            # Just append
+            with open(self.csv_path, "a", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=columns, extrasaction='ignore')
+                writer.writerow(row_data)
 
 
 class FoldMetricsAggregator(Callback):

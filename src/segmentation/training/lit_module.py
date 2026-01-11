@@ -146,6 +146,55 @@ class SegmentationLitModule(pl.LightningModule):
 
         return {"loss": loss, "dice": dice, "hd95": hd95}
 
+    def test_step(self, batch, batch_idx):
+        """Test step.
+
+        Args:
+            batch: Dict with 'image' and 'mask'
+            batch_idx: Batch index
+
+        Returns:
+            Dict of outputs
+        """
+        images = batch["image"]
+        masks = batch["mask"]
+
+        # Forward
+        preds = self(images)
+
+        # Compute loss
+        loss = self.criterion(preds, masks)
+
+        # Apply sigmoid to get probabilities
+        preds_prob = torch.sigmoid(preds)
+
+        # Binarize predictions
+        preds_binary = (preds_prob > 0.5).float()
+
+        # Compute metrics
+        dice = self.dice_metric(preds_binary, masks)
+        hd95 = self.hd95_metric(preds_binary, masks)
+
+        # Log
+        B = images.shape[0]
+        self.log("test/loss", loss, sync_dist=True, batch_size=B)
+
+        # Handle NaN dice values
+        if torch.isnan(dice) or torch.isinf(dice):
+            has_pred_positive = preds_binary.sum() > 0
+            has_gt_positive = masks.sum() > 0
+            if not has_gt_positive and not has_pred_positive:
+                dice = torch.tensor(1.0, device=dice.device)
+            else:
+                dice = torch.tensor(0.0, device=dice.device)
+
+        self.log("test/dice", dice, sync_dist=True, batch_size=B, prog_bar=True)
+
+        if not torch.isnan(hd95) and not torch.isinf(hd95):
+            self.log("test/hd95", hd95, sync_dist=True, batch_size=B)
+
+        return {"loss": loss, "dice": dice, "hd95": hd95}
+
     def configure_optimizers(self):
         """Configure optimizer and scheduler.
 
