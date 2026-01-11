@@ -1,18 +1,36 @@
 #!/usr/bin/env python3
-"""Quality check for synthetic replicas against test distribution.
+"""Quality check for synthetic replicas against real data distribution.
 
 This script validates generated synthetic replicas by:
 1. Statistical comparison: Sample counts, brain fraction, intensity, lesion areas
-2. Outlier detection: Identifies samples > 2 std from test distribution
-3. Visual inspection: Image grids comparing test vs synthetic samples
+2. Outlier detection: Identifies samples > 2 std from reference distribution
+3. Visual inspection: Image grids comparing real vs synthetic samples
+
+Supports two modes:
+1. Single-split mode (original): Compare replicas against test set only
+2. Multi-split mode: Compare replicas against union of train/val/test splits
+   (useful for uniformly-sampled synthetic replicas)
 
 Output includes detailed plots, CSV reports, and JSON summary.
 
-Usage:
+Usage (single-split, backwards compatible):
     python src/diffusion/scripts/check_replica_quality.py \\
         --replicas-dir outputs/replicas/replicas \\
         --test-dist-csv docs/test_analysis/test_zbin_distribution.csv \\
         --output-dir outputs/quality_check
+
+Usage (multi-split, for uniform replicas):
+    python src/diffusion/scripts/check_replica_quality.py \\
+        --replicas-dir outputs/replicas/replicas \\
+        --train-dist-csv docs/train_analysis/train_zbin_distribution.csv \\
+        --train-slices-csv /path/to/slice_cache/train.csv \\
+        --val-dist-csv docs/val_analysis/val_zbin_distribution.csv \\
+        --val-slices-csv /path/to/slice_cache/val.csv \\
+        --test-dist-csv docs/test_analysis/test_zbin_distribution.csv \\
+        --test-slices-csv /path/to/slice_cache/test.csv \\
+        --output-dir outputs/quality_check
+
+    Plots will show each split as separate series for comparison.
 """
 
 from __future__ import annotations
@@ -124,11 +142,16 @@ def create_overlay(
 # Data Loading Module
 # =============================================================================
 
-def load_test_distribution(csv_path: Path) -> pd.DataFrame:
-    """Load test distribution CSV.
+def load_split_distribution(
+    csv_path: Path,
+    split_name: str = "test"
+) -> pd.DataFrame:
+    """Load distribution CSV for a specific split.
 
     Args:
-        csv_path: Path to test_zbin_distribution.csv.
+        csv_path: Path to {split}_zbin_distribution.csv.
+        split_name: Name of the split (train, val, test). Used for filtering
+            and as a label in the returned DataFrame.
 
     Returns:
         DataFrame with columns: split, zbin, lesion_present, domain, n_slices,
@@ -139,12 +162,17 @@ def load_test_distribution(csv_path: Path) -> pd.DataFrame:
         ValueError: If required columns are missing.
     """
     if not csv_path.exists():
-        raise FileNotFoundError(f"Test distribution CSV not found: {csv_path}")
+        raise FileNotFoundError(f"Distribution CSV not found: {csv_path}")
 
     df = pd.read_csv(csv_path)
 
-    # Filter to test split
-    df = df[df['split'] == 'test'].copy()
+    # Filter to specified split if 'split' column exists
+    if 'split' in df.columns:
+        df = df[df['split'] == split_name].copy()
+    else:
+        # Add split column if not present
+        df = df.copy()
+        df['split'] = split_name
 
     # Validate required columns
     required_cols = ['zbin', 'lesion_present', 'domain', 'n_slices',
@@ -153,10 +181,53 @@ def load_test_distribution(csv_path: Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
 
-    logger.info(f"Loaded test distribution: {len(df)} conditions, "
+    logger.info(f"Loaded {split_name} distribution: {len(df)} conditions, "
                 f"{df['n_slices'].sum()} total samples")
 
     return df
+
+
+def load_test_distribution(csv_path: Path) -> pd.DataFrame:
+    """Load test distribution CSV (backwards compatible wrapper).
+
+    Args:
+        csv_path: Path to test_zbin_distribution.csv.
+
+    Returns:
+        DataFrame with test distribution.
+    """
+    return load_split_distribution(csv_path, split_name="test")
+
+
+def load_multi_split_distribution(
+    split_configs: List[Tuple[Path, str]]
+) -> Tuple[pd.DataFrame, List[str]]:
+    """Load and merge distribution CSVs from multiple splits.
+
+    Args:
+        split_configs: List of (csv_path, split_name) tuples.
+
+    Returns:
+        Tuple of:
+            - combined_df: DataFrame with all splits, 'split' column preserved
+            - splits_used: List of split names that were loaded
+    """
+    all_dfs = []
+    splits_used = []
+
+    for csv_path, split_name in split_configs:
+        df = load_split_distribution(csv_path, split_name)
+        df['split'] = split_name  # Ensure split column is set
+        all_dfs.append(df)
+        splits_used.append(split_name)
+
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+
+    total_samples = combined_df['n_slices'].sum()
+    logger.info(f"Combined {len(splits_used)} splits: {len(combined_df)} total conditions, "
+                f"{total_samples} total samples")
+
+    return combined_df, splits_used
 
 
 def load_replica(npz_path: Path) -> Optional[Dict[str, Any]]:
@@ -247,30 +318,32 @@ def load_all_replicas(
     return replicas
 
 
-def load_test_slices(
+def load_split_slices(
     csv_path: Path,
+    split_name: str = "test",
     verbose: bool = True
 ) -> Dict[Tuple[int, int, int], List[Dict[str, Any]]]:
-    """Load test slices from CSV.
+    """Load slices from CSV for a specific split.
 
     Args:
-        csv_path: Path to test.csv with columns:
+        csv_path: Path to {split}.csv with columns:
             subject_id, z_index, z_bin, pathology_class, token, source, split,
             has_lesion, filepath
+        split_name: Name of the split (train, val, test).
         verbose: Show progress.
 
     Returns:
         Dict mapping (zbin, lesion_present, domain) -> list of slice dicts with
-        keys: image, mask, subject_id, z_index.
+        keys: image, mask, subject_id, z_index, split.
     """
     if not csv_path.exists():
-        raise FileNotFoundError(f"Test slices CSV not found: {csv_path}")
+        raise FileNotFoundError(f"Slices CSV not found: {csv_path}")
 
     df = pd.read_csv(csv_path)
 
-    # Filter to test split if column exists
+    # Filter to specified split if column exists
     if 'split' in df.columns:
-        df = df[df['split'] == 'test'].copy()
+        df = df[df['split'] == split_name].copy()
 
     # Map source to domain int
     source_to_domain = {'control': 0, 'epilepsy': 1}
@@ -281,7 +354,7 @@ def load_test_slices(
     # Group slices by condition
     slices_by_condition: Dict[Tuple[int, int, int], List[Dict[str, Any]]] = {}
 
-    iterator = tqdm(df.iterrows(), total=len(df), desc="Loading test slices", disable=not verbose)
+    iterator = tqdm(df.iterrows(), total=len(df), desc=f"Loading {split_name} slices", disable=not verbose)
 
     for _, row in iterator:
         zbin = int(row['z_bin'])
@@ -302,6 +375,7 @@ def load_test_slices(
                 'mask': data['mask'] if 'mask' in data else np.zeros_like(data['image']),
                 'subject_id': row['subject_id'],
                 'z_index': row['z_index'],
+                'split': split_name,
             }
 
             if key not in slices_by_condition:
@@ -313,9 +387,59 @@ def load_test_slices(
             continue
 
     total_slices = sum(len(v) for v in slices_by_condition.values())
-    logger.info(f"Loaded {total_slices} test slices across {len(slices_by_condition)} conditions")
+    logger.info(f"Loaded {total_slices} {split_name} slices across {len(slices_by_condition)} conditions")
 
     return slices_by_condition
+
+
+def load_test_slices(
+    csv_path: Path,
+    verbose: bool = True
+) -> Dict[Tuple[int, int, int], List[Dict[str, Any]]]:
+    """Load test slices from CSV (backwards compatible wrapper).
+
+    Args:
+        csv_path: Path to test.csv.
+        verbose: Show progress.
+
+    Returns:
+        Dict mapping (zbin, lesion_present, domain) -> list of slice dicts.
+    """
+    return load_split_slices(csv_path, split_name="test", verbose=verbose)
+
+
+def load_multi_split_slices(
+    split_configs: List[Tuple[Path, str]],
+    verbose: bool = True
+) -> Tuple[Dict[Tuple[int, int, int], List[Dict[str, Any]]], List[str]]:
+    """Load and merge slices from multiple splits.
+
+    Args:
+        split_configs: List of (csv_path, split_name) tuples.
+        verbose: Show progress.
+
+    Returns:
+        Tuple of:
+            - combined_slices: Dict mapping (zbin, lesion_present, domain) -> list of slice dicts
+            - splits_used: List of split names that were loaded
+    """
+    combined_slices: Dict[Tuple[int, int, int], List[Dict[str, Any]]] = {}
+    splits_used = []
+
+    for csv_path, split_name in split_configs:
+        slices = load_split_slices(csv_path, split_name, verbose=verbose)
+        splits_used.append(split_name)
+
+        # Merge into combined dict
+        for key, slice_list in slices.items():
+            if key not in combined_slices:
+                combined_slices[key] = []
+            combined_slices[key].extend(slice_list)
+
+    total_slices = sum(len(v) for v in combined_slices.values())
+    logger.info(f"Combined {len(splits_used)} splits: {total_slices} total slices")
+
+    return combined_slices, splits_used
 
 
 # =============================================================================
@@ -1523,19 +1647,28 @@ def save_outliers_csv(
 
 def run_quality_check(
     replicas_dir: Path,
-    test_dist_csv: Path,
     output_dir: Path,
     config: Dict[str, Any],
-    test_slices_csv: Optional[Path] = None
+    dist_configs: Optional[List[Tuple[Path, str]]] = None,
+    slices_configs: Optional[List[Tuple[Path, str]]] = None,
+    # Legacy single-split arguments for backwards compatibility
+    test_dist_csv: Optional[Path] = None,
+    test_slices_csv: Optional[Path] = None,
 ) -> None:
     """Execute complete quality check pipeline.
 
+    Supports two modes:
+    1. Legacy mode: Single test distribution (test_dist_csv, test_slices_csv)
+    2. Multi-split mode: Multiple splits via dist_configs and slices_configs
+
     Args:
         replicas_dir: Directory with replica NPZ files.
-        test_dist_csv: Path to test distribution CSV.
         output_dir: Output directory.
         config: Configuration dict with parameters.
-        test_slices_csv: Optional path to test slices CSV for image comparison.
+        dist_configs: List of (csv_path, split_name) for distribution CSVs.
+        slices_configs: List of (csv_path, split_name) for slice CSVs.
+        test_dist_csv: Legacy - Path to test distribution CSV.
+        test_slices_csv: Legacy - Path to test slices CSV.
     """
     # Setup output directories
     plots_dir = output_dir / 'plots'
@@ -1547,16 +1680,38 @@ def run_quality_check(
     logger.info("STARTING REPLICA QUALITY CHECK")
     logger.info("=" * 80)
 
-    # Load data
-    logger.info("Loading data...")
-    test_df = load_test_distribution(test_dist_csv)
+    # Handle backwards compatibility: convert legacy args to configs
+    if dist_configs is None and test_dist_csv is not None:
+        dist_configs = [(test_dist_csv, 'test')]
+    if slices_configs is None and test_slices_csv is not None:
+        slices_configs = [(test_slices_csv, 'test')]
+
+    if dist_configs is None or len(dist_configs) == 0:
+        raise ValueError("At least one distribution CSV must be provided")
+
+    # Load distribution data
+    logger.info("Loading distribution data...")
+    if len(dist_configs) == 1:
+        # Single split mode
+        ref_df = load_split_distribution(dist_configs[0][0], dist_configs[0][1])
+        splits_used = [dist_configs[0][1]]
+    else:
+        # Multi-split mode
+        ref_df, splits_used = load_multi_split_distribution(dist_configs)
+
+    logger.info(f"Using splits: {', '.join(splits_used)}")
+
+    # Load replicas
     replicas = load_all_replicas(replicas_dir, max_replicas=config.get('max_replicas'))
 
-    # Load test slices if provided
-    test_slices = None
-    if test_slices_csv is not None:
-        logger.info("Loading test slices for image comparison...")
-        test_slices = load_test_slices(test_slices_csv)
+    # Load slices for image comparison if provided
+    real_slices = None
+    if slices_configs is not None and len(slices_configs) > 0:
+        logger.info("Loading real slices for image comparison...")
+        if len(slices_configs) == 1:
+            real_slices = load_split_slices(slices_configs[0][0], slices_configs[0][1])
+        else:
+            real_slices, _ = load_multi_split_slices(slices_configs)
 
     # Compute statistics
     logger.info("Computing statistics...")
@@ -1569,48 +1724,48 @@ def run_quality_check(
 
     replica_mean_df, replica_std_df = compute_mean_std_across_replicas(replicas)
 
-    # Detect outliers
+    # Detect outliers (use combined reference distribution)
     logger.info("Detecting outliers...")
     outliers_df = detect_outliers(
         replicas,
-        test_df,
+        ref_df,
         threshold_std=config.get('outlier_threshold', 2.0)
     )
 
     # Compute deviations
     logger.info("Computing deviation metrics...")
-    deviation_df = compute_deviation_metrics(test_df, replica_mean_df)
+    deviation_df = compute_deviation_metrics(ref_df, replica_mean_df)
 
     # Generate visualizations
     if not config.get('skip_images', False):
         logger.info("Generating visualizations...")
 
         plot_sample_count_comparison(
-            test_df, replica_mean_df, replica_std_df,
+            ref_df, replica_mean_df, replica_std_df,
             plots_dir / 'sample_count_comparison.png',
             dpi=config.get('dpi', 300)
         )
 
         plot_brain_fraction_comparison(
-            test_df, replicas, outliers_df,
+            ref_df, replicas, outliers_df,
             plots_dir / 'brain_fraction_comparison.png',
             dpi=config.get('dpi', 300)
         )
 
         plot_intensity_comparison(
-            test_df, replicas, outliers_df,
+            ref_df, replicas, outliers_df,
             plots_dir / 'intensity_comparison.png',
             dpi=config.get('dpi', 300)
         )
 
         plot_lesion_area_comparison(
-            test_df, replicas, outliers_df,
+            ref_df, replicas, outliers_df,
             plots_dir / 'lesion_area_comparison.png',
             dpi=config.get('dpi', 300)
         )
 
         # Image grids
-        all_zbins = sorted(test_df['zbin'].unique())
+        all_zbins = sorted(ref_df['zbin'].unique())
         representative_zbins = select_representative_zbins(
             all_zbins,
             n_bins=config.get('n_representative_zbins', 5)
@@ -1621,7 +1776,7 @@ def run_quality_check(
             all_zbins,
             n_images_per_condition=config.get('n_images_per_condition', 3),
             output_path=plots_dir / 'image_grid_detailed.png',
-            test_slices=test_slices,
+            test_slices=real_slices,
             dpi=config.get('dpi', 150),
             title_suffix=" (All Z-bins)"
         )
@@ -1631,7 +1786,7 @@ def run_quality_check(
             representative_zbins,
             n_images_per_condition=config.get('n_images_per_condition', 3),
             output_path=plots_dir / 'image_grid_representative.png',
-            test_slices=test_slices,
+            test_slices=real_slices,
             dpi=config.get('dpi', 150),
             title_suffix=" (Representative Z-bins)"
         )
@@ -1639,7 +1794,7 @@ def run_quality_check(
     # Generate reports
     logger.info("Generating reports...")
 
-    summary_text = generate_summary_report(test_df, replicas, outliers_df, deviation_df)
+    summary_text = generate_summary_report(ref_df, replicas, outliers_df, deviation_df)
     with open(reports_dir / 'summary.txt', 'w') as f:
         f.write(summary_text)
     print(summary_text)
@@ -1647,8 +1802,9 @@ def run_quality_check(
     summary_json = {
         'metadata': {
             'n_replicas': len(replicas),
-            'n_test_samples': int(test_df['n_slices'].sum()),
-            'n_conditions': len(test_df),
+            'n_ref_samples': int(ref_df['n_slices'].sum()),
+            'n_conditions': len(ref_df),
+            'splits_used': splits_used,
             'outlier_threshold': config.get('outlier_threshold', 2.0),
             'timestamp': datetime.now().isoformat(),
         },
@@ -1682,37 +1838,52 @@ def run_quality_check(
 def main() -> None:
     """CLI entrypoint."""
     parser = argparse.ArgumentParser(
-        description='Quality check for synthetic replicas against test distribution',
+        description='Quality check for synthetic replicas against real data distribution. '
+                    'Supports comparing against one or more data splits (train/val/test).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
-python -m src.diffusion.scripts.check_replica_quality \
---replicas-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas \
---test-dist-csv docs/test_analysis/test_zbin_distribution.csv \
---output-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/quality_check
-
-  # With custom thresholds
-  python check_replica_quality.py \\
+  # Single-split (backwards compatible):
+  python -m src.diffusion.scripts.check_replica_quality \\
       --replicas-dir outputs/replicas/replicas \\
-      --test-dist-csv test_zbin_distribution.csv \\
-      --output-dir outputs/quality_check \\
-      --outlier-threshold 2.5 \\
-      --n-images-per-condition 5
+      --test-dist-csv docs/test_analysis/test_zbin_distribution.csv \\
+      --output-dir outputs/quality_check
+
+  # Multi-split (for uniform replicas):
+  python -m src.diffusion.scripts.check_replica_quality \\
+      --replicas-dir outputs/replicas/replicas \\
+      --train-dist-csv docs/train_analysis/train_zbin_distribution.csv \\
+      --train-slices-csv /path/to/slice_cache/train.csv \\
+      --val-dist-csv docs/val_analysis/val_zbin_distribution.csv \\
+      --test-dist-csv docs/test_analysis/test_zbin_distribution.csv \\
+      --test-slices-csv /path/to/slice_cache/test.csv \\
+      --output-dir outputs/quality_check
         """
     )
 
     # Required arguments
     parser.add_argument('--replicas-dir', type=str, required=True,
                         help='Directory containing replica_*.npz files')
-    parser.add_argument('--test-dist-csv', type=str, required=True,
-                        help='Path to test_zbin_distribution.csv')
     parser.add_argument('--output-dir', type=str, required=True,
                         help='Output directory for reports and plots')
 
-    # Test slices for image comparison
-    parser.add_argument('--test-slices-csv', type=str, default=None,
-                        help='Path to test.csv with slice filepaths for image comparison')
+    # Split arguments (at least one dist-csv required)
+    split_group = parser.add_argument_group(
+        'Data splits',
+        'Provide at least one distribution CSV. Multiple splits will be combined.'
+    )
+    split_group.add_argument('--train-dist-csv', type=str, default=None,
+                             help='Path to train_zbin_distribution.csv (optional)')
+    split_group.add_argument('--train-slices-csv', type=str, default=None,
+                             help='Path to train.csv with slice filepaths (optional)')
+    split_group.add_argument('--val-dist-csv', type=str, default=None,
+                             help='Path to val_zbin_distribution.csv (optional)')
+    split_group.add_argument('--val-slices-csv', type=str, default=None,
+                             help='Path to val.csv with slice filepaths (optional)')
+    split_group.add_argument('--test-dist-csv', type=str, default=None,
+                             help='Path to test_zbin_distribution.csv (optional, but at least one dist-csv required)')
+    split_group.add_argument('--test-slices-csv', type=str, default=None,
+                             help='Path to test.csv with slice filepaths (optional)')
 
     # Optional configuration
     parser.add_argument('--config', type=str, default=None,
@@ -1750,17 +1921,55 @@ python -m src.diffusion.scripts.check_replica_quality \
 
     # Convert to Path objects
     replicas_dir = Path(args.replicas_dir)
-    test_dist_csv = Path(args.test_dist_csv)
     output_dir = Path(args.output_dir)
-    test_slices_csv = Path(args.test_slices_csv) if args.test_slices_csv else None
 
-    # Validate inputs
+    # Build split configs
+    dist_configs: List[Tuple[Path, str]] = []
+    slices_configs: List[Tuple[Path, str]] = []
+
+    if args.train_dist_csv:
+        train_dist_path = Path(args.train_dist_csv)
+        if not train_dist_path.exists():
+            raise FileNotFoundError(f"Train distribution CSV not found: {train_dist_path}")
+        dist_configs.append((train_dist_path, 'train'))
+        if args.train_slices_csv:
+            train_slices_path = Path(args.train_slices_csv)
+            if not train_slices_path.exists():
+                raise FileNotFoundError(f"Train slices CSV not found: {train_slices_path}")
+            slices_configs.append((train_slices_path, 'train'))
+
+    if args.val_dist_csv:
+        val_dist_path = Path(args.val_dist_csv)
+        if not val_dist_path.exists():
+            raise FileNotFoundError(f"Val distribution CSV not found: {val_dist_path}")
+        dist_configs.append((val_dist_path, 'val'))
+        if args.val_slices_csv:
+            val_slices_path = Path(args.val_slices_csv)
+            if not val_slices_path.exists():
+                raise FileNotFoundError(f"Val slices CSV not found: {val_slices_path}")
+            slices_configs.append((val_slices_path, 'val'))
+
+    if args.test_dist_csv:
+        test_dist_path = Path(args.test_dist_csv)
+        if not test_dist_path.exists():
+            raise FileNotFoundError(f"Test distribution CSV not found: {test_dist_path}")
+        dist_configs.append((test_dist_path, 'test'))
+        if args.test_slices_csv:
+            test_slices_path = Path(args.test_slices_csv)
+            if not test_slices_path.exists():
+                raise FileNotFoundError(f"Test slices CSV not found: {test_slices_path}")
+            slices_configs.append((test_slices_path, 'test'))
+
+    # Validate that at least one distribution CSV is provided
+    if not dist_configs:
+        raise ValueError(
+            "At least one distribution CSV must be provided. "
+            "Use --train-dist-csv, --val-dist-csv, or --test-dist-csv."
+        )
+
+    # Validate replicas directory
     if not replicas_dir.exists():
         raise FileNotFoundError(f"Replicas directory not found: {replicas_dir}")
-    if not test_dist_csv.exists():
-        raise FileNotFoundError(f"Test distribution CSV not found: {test_dist_csv}")
-    if test_slices_csv is not None and not test_slices_csv.exists():
-        raise FileNotFoundError(f"Test slices CSV not found: {test_slices_csv}")
 
     # Setup logging to file
     log_file = output_dir / 'check_replica_quality.log'
@@ -1790,8 +1999,14 @@ python -m src.diffusion.scripts.check_replica_quality \
             config['gaussian_sigma_px'] = pp_cfg.get('gaussian_sigma_px', config['gaussian_sigma_px'])
             config['min_component_px'] = pp_cfg.get('min_component_px', config['min_component_px'])
 
-    # Run quality check
-    run_quality_check(replicas_dir, test_dist_csv, output_dir, config, test_slices_csv)
+    # Run quality check with split configs
+    run_quality_check(
+        replicas_dir=replicas_dir,
+        output_dir=output_dir,
+        config=config,
+        dist_configs=dist_configs if dist_configs else None,
+        slices_configs=slices_configs if slices_configs else None,
+    )
 
 
 if __name__ == "__main__":

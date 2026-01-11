@@ -16,19 +16,40 @@ experiment:
 # Data Configuration
 # =============================================================================
 data:
-  # Real data location
+  # Real data
   real:
+    enabled: true
     cache_dir: "/media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache"
     train_csv: "train.csv"
     val_csv: "val.csv"
-    test_csv: "test.csv"  # Excluded from k-fold
+    test_csv: "test.csv"  # Excluded from k-fold, used for final per-fold evaluation
 
-  # Synthetic data (optional)
+  # Synthetic data
   synthetic:
-    enabled: false
-    samples_dir: null  # e.g., "./outputs/diffusion/generated_samples"
-    index_csv: "generated_samples.csv"
-    ratio: 0.0  # Ratio of synthetic to real (0.0 = real only, 1.0 = equal)
+    enabled: true
+    samples_dir: "/media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas"  # e.g., "./outputs/diffusion/generated_samples"
+    # Replicas to use
+    replicas: 
+      - "replica_019.npz"  # Each replica has 30 zbins * 2 conditions (lesion/no lesion) * 150 samples = 9000 samples
+      - "replica_018.npz"  # Add more replicas as needed
+    
+    merging_strategy: "concat" # Options: "concat", "balance"
+
+  # Guidelines:
+  # You can train with the following modes:
+  # 1) Real data only (set synthetic.enabled: false)
+  # 2) Synthetic data only (set real.enabled: false) 
+  # 3) Combined real + synthetic data (both enabled)
+  #     3.1) Concatenate all samples (merging_strategy: "concat"). 
+  #          This means that we preserve class imbalance but augment the number of samples.
+  #     3.2) Balance classes (merging_strategy: "balance").
+  #          This means that we oversample the minority class (lesion) for each z-bin with 
+  #          synthetic samples until we reach the number of majority class (no lesion) for that bin.  
+  #          Then, we keep adding images in a balanced way until the "replicas:" list is exhausted.
+    
+  # The kfold organizer will create a csv file with all the samples metadata and generate balancing plots. 
+  # Columns: fold, split, subject_id, image_path, mask_path, has_lesion_slice, has_lesion_subject, source (real/synthetic), zbin
+  # For subject_id, synthetic samples will be named as "synth_<replica>_<index>"
 
   # Mask preprocessing
   mask:
@@ -66,13 +87,13 @@ model:
 # =============================================================================
 training:
   # Batch size and workers
-  batch_size: 16
+  batch_size: 32
   num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues (was 4)
   pin_memory: true
 
   # Class balancing
   class_balancing:
-    enabled: true
+    enabled: false
     method: "weighted_sampler"  # Options: "weighted_sampler", "weighted_loss", "none"
     lesion_weight: 5.0  # Weight multiplier for lesion slices
 
@@ -153,7 +174,7 @@ metrics:
 # Data Augmentation
 # =============================================================================
 augmentation:
-  enabled: true
+  enabled: false
 
   # Spatial transforms (apply to both image and mask)
   random_flip:

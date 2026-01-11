@@ -83,8 +83,13 @@ class HausdorffDistance95:
             # Compute HD95 only on valid samples
             hd95 = self.metric(preds, targets)
 
-            # Filter out invalid values
-            valid_hd95 = hd95[~torch.isnan(hd95)]
+            # Flatten if necessary (B, 1) -> (B,)
+            if hd95.dim() > 1:
+                hd95 = hd95.flatten()
+
+            # Filter out invalid values using the mask we computed
+            # This handles cases where metric returns inf for empty sets
+            valid_hd95 = hd95[valid_mask]
 
             if len(valid_hd95) == 0:
                 return torch.tensor(float("nan"), device=preds.device)

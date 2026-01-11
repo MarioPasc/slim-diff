@@ -21,7 +21,7 @@ Usage (CSV mode - matches test distribution):
         --replica_id 0 \
         --num_replicas 30
 
-Usage (Uniform mode - equal samples per mode):
+Usage (Uniform mode - balanced control vs epilepsy-with-lesion):
     python -m src.diffusion.training.runners.generate_replicas \
         --config path/to/config.yaml \
         --checkpoint path/to/checkpoint.ckpt \
@@ -31,7 +31,8 @@ Usage (Uniform mode - equal samples per mode):
         --replica_id 0 \
         --num_replicas 30
 
-    This generates 30 zbins × 2 domains × 1000 samples = 60,000 samples per replica.
+    This generates 30 zbins × 2 conditions (control + epilepsy-with-lesion) × 1000 samples
+    = 60,000 samples per replica, with equal representation of both classes.
 """
 
 from __future__ import annotations
@@ -153,13 +154,17 @@ def create_uniform_distribution(
 ) -> tuple[list[ManifestEntry], int]:
     """Create a uniform distribution manifest for all zbin-domain combinations.
 
-    Generates a manifest with equal samples for each (zbin, domain) pair.
-    For control domain, lesion_present is always 0.
-    For epilepsy domain, lesion_present is set to 0 (non-lesional epilepsy).
+    Generates a manifest with equal samples for each (zbin, condition) pair:
+    - Control domain (domain=0): lesion_present=0 (healthy controls)
+    - Epilepsy domain (domain=1): lesion_present=1 (epilepsy with visible lesion)
+
+    This produces balanced classes: equal control vs epilepsy-with-lesion samples.
+    Non-lesional epilepsy (domain=1, lesion_present=0) is excluded as it doesn't
+    represent a positive case for lesion detection.
 
     Args:
         n_zbins: Number of z-bins (typically 30).
-        n_samples_per_mode: Number of samples per (zbin, domain) combination.
+        n_samples_per_mode: Number of samples per (zbin, condition) combination.
 
     Returns:
         Tuple of (manifest_entries, total_samples).
@@ -168,23 +173,33 @@ def create_uniform_distribution(
     total = 0
 
     for zbin in range(n_zbins):
-        for domain_str, domain_int in DOMAIN_MAP.items():
-            # For uniform mode, we use lesion_present=0 for both domains
-            # This represents non-lesional samples (control or epilepsy without visible lesion)
-            entry = ManifestEntry(
-                zbin=zbin,
-                lesion_present=0,
-                domain_str=domain_str,
-                domain_int=domain_int,
-                n_slices=n_samples_per_mode,
-            )
-            manifest.append(entry)
-            total += n_samples_per_mode
+        # Control: domain=0, lesion_present=0 (healthy controls have no lesion)
+        entry_control = ManifestEntry(
+            zbin=zbin,
+            lesion_present=0,
+            domain_str="control",
+            domain_int=DOMAIN_MAP["control"],
+            n_slices=n_samples_per_mode,
+        )
+        manifest.append(entry_control)
+        total += n_samples_per_mode
+
+        # Epilepsy with lesion: domain=1, lesion_present=1 (actual positive cases)
+        entry_epilepsy = ManifestEntry(
+            zbin=zbin,
+            lesion_present=1,
+            domain_str="epilepsy",
+            domain_int=DOMAIN_MAP["epilepsy"],
+            n_slices=n_samples_per_mode,
+        )
+        manifest.append(entry_epilepsy)
+        total += n_samples_per_mode
 
     n_conditions = len(manifest)
     logger.info(
-        f"Created uniform distribution: {n_zbins} zbins x {len(DOMAIN_MAP)} domains = "
-        f"{n_conditions} conditions, {n_samples_per_mode} samples each, {total} total"
+        f"Created uniform distribution: {n_zbins} zbins x 2 conditions "
+        f"(control + epilepsy-with-lesion) = {n_conditions} conditions, "
+        f"{n_samples_per_mode} samples each, {total} total"
     )
     return manifest, total
 

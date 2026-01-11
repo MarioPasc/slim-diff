@@ -6,6 +6,7 @@ import csv
 import logging
 import random
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -13,7 +14,129 @@ from torch.utils.data import Dataset
 
 from src.segmentation.utils.io import load_npz_sample
 
+if TYPE_CHECKING:
+    from src.segmentation.data.kfold_planner import SampleRecord
+
 logger = logging.getLogger(__name__)
+
+
+class PlannedFoldDataset(Dataset):
+    """Dataset that loads samples from KFoldPlanner output.
+
+    This dataset is designed to work with the KFoldPlanner class, which handles
+    all the logic for combining real and synthetic data with various strategies.
+
+    Features:
+    - Loads real data from slice_cache NPZ files
+    - Loads synthetic data from replica NPZ files
+    - Converts masks from {-1,+1} to {0,1}
+    - Returns (image, mask, metadata) tuples
+    """
+
+    def __init__(
+        self,
+        samples: list["SampleRecord"],
+        real_cache_dir: Path | str,
+        synthetic_dir: Path | str | None = None,
+        transform=None,
+        mask_threshold: float = 0.0,
+    ):
+        """Initialize dataset.
+
+        Args:
+            samples: List of SampleRecord from KFoldPlanner
+            real_cache_dir: Path to slice_cache directory for real samples
+            synthetic_dir: Path to synthetic replicas directory
+            transform: MONAI transforms to apply
+            mask_threshold: Threshold for binarizing mask in {-1,+1} space
+        """
+        self.samples = samples
+        self.real_cache_dir = Path(real_cache_dir)
+        self.synthetic_dir = Path(synthetic_dir) if synthetic_dir else None
+        self.transform = transform
+        self.mask_threshold = mask_threshold
+
+        # Cache for loaded replica data
+        self._replica_cache: dict[str, np.lib.npyio.NpzFile] = {}
+
+        # Log dataset info
+        n_real = sum(1 for s in samples if s.source == "real")
+        n_synth = sum(1 for s in samples if s.source == "synthetic")
+        logger.info(f"PlannedFoldDataset: {len(samples)} samples ({n_real} real, {n_synth} synthetic)")
+
+    def _load_replica(self, replica_name: str) -> np.lib.npyio.NpzFile:
+        """Load and cache a replica NPZ file.
+
+        Args:
+            replica_name: Name of the replica file
+
+        Returns:
+            Loaded NPZ file
+        """
+        if replica_name not in self._replica_cache:
+            replica_path = self.synthetic_dir / replica_name
+            self._replica_cache[replica_name] = np.load(replica_path)
+        return self._replica_cache[replica_name]
+
+    def __len__(self) -> int:
+        """Get dataset length."""
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> dict:
+        """Get a sample.
+
+        Args:
+            idx: Sample index
+
+        Returns:
+            dict with keys:
+                - image: (1, H, W) float32 tensor in [-1, 1]
+                - mask: (1, H, W) float32 tensor in {0, 1}
+                - subject_id, has_lesion, source, z_bin
+        """
+        sample = self.samples[idx]
+
+        if sample.source == "real":
+            # Load from slice_cache NPZ
+            npz_path = self.real_cache_dir / sample.filepath
+            data = load_npz_sample(npz_path)
+            image = data["image"]  # (128, 128) in [-1, 1]
+            mask = data["mask"]    # (128, 128) in {-1, +1}
+        else:
+            # Load from replica NPZ
+            # filepath format: "replica_name.npz:index"
+            replica_name, idx_str = sample.filepath.split(":")
+            sample_idx = int(idx_str)
+
+            replica_data = self._load_replica(replica_name)
+            image = replica_data["images"][sample_idx].astype(np.float32)
+            mask = replica_data["masks"][sample_idx].astype(np.float32)
+
+        # Convert mask: {-1, +1} -> {0, 1}
+        mask_binary = (mask > self.mask_threshold).astype(np.float32)
+
+        # Add channel dimension
+        image = image[np.newaxis, ...].astype(np.float32)  # (1, 128, 128)
+        mask_binary = mask_binary[np.newaxis, ...].astype(np.float32)  # (1, 128, 128)
+
+        # Convert to torch
+        image = torch.from_numpy(image)
+        mask_binary = torch.from_numpy(mask_binary)
+
+        result = {
+            "image": image,
+            "mask": mask_binary,
+            "subject_id": sample.subject_id,
+            "has_lesion": sample.has_lesion,
+            "source": sample.source,
+            "z_bin": sample.z_bin,
+        }
+
+        # Apply transforms
+        if self.transform is not None:
+            result = self.transform(result)
+
+        return result
 
 
 class SegmentationSliceDataset(Dataset):
@@ -24,6 +147,8 @@ class SegmentationSliceDataset(Dataset):
     - Optionally mixes synthetic data at configurable ratio
     - Converts masks from {-1,+1} to {0,1}
     - Returns (image, mask, metadata) tuples
+
+    Note: For new code, prefer using PlannedFoldDataset with KFoldPlanner.
     """
 
     def __init__(

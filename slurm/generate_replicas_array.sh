@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #SBATCH -J jsddpm_gen_replicas
-#SBATCH --array=0-19              # 20 replicas (adjust as needed)
+#SBATCH --array=0-12              # 13 replicas (adjust as needed)
 #SBATCH --time=2-00:00:00           # 2 days per replica (conservative)
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=6G
+#SBATCH --mem=3G
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=dgx
 #SBATCH --output=logs/gen_replicas/%x.%j.out

@@ -54,8 +54,6 @@ class SegmentationLitModule(pl.LightningModule):
         self.dice_metric = DiceMetric(cfg)
         self.hd95_metric = HausdorffDistance95(cfg)
 
-        # Store predictions for epoch-end aggregation
-        self.validation_step_outputs = []
 
     def forward(self, x):
         """Forward pass.
@@ -129,19 +127,7 @@ class SegmentationLitModule(pl.LightningModule):
         if not torch.isnan(hd95):
             self.log("val/hd95", hd95, sync_dist=True, batch_size=B)
 
-        # Store for epoch-end processing
-        self.validation_step_outputs.append({
-            "loss": loss,
-            "dice": dice,
-            "hd95": hd95,
-        })
-
         return {"loss": loss, "dice": dice, "hd95": hd95}
-
-    def on_validation_epoch_end(self):
-        """Called at end of validation epoch."""
-        # Clear stored outputs
-        self.validation_step_outputs.clear()
 
     def configure_optimizers(self):
         """Configure optimizer and scheduler.
