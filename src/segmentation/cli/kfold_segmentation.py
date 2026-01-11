@@ -83,6 +83,12 @@ Examples:
         default="src/segmentation/config/master.yaml",
         help="Path to master configuration file (default: %(default)s)",
     )
+    parser.add_argument(
+        "--experiment-config",
+        type=str,
+        default=None,
+        help="Path to experiment configuration file (optional, used by orchestrator)",
+    )
 
     # Dry run mode
     parser.add_argument(
@@ -471,23 +477,42 @@ def main():
     # Load and merge configurations
     logger.info(f"Model: {args.model}")
     logger.info(f"Config: {args.config}")
+    if args.experiment_config:
+        logger.info(f"Experiment config: {args.experiment_config}")
     logger.info(f"Mode: {'DRY RUN' if args.dry_run else 'TRAINING'}")
 
-    # Build CLI overrides
+    # Load experiment config first if provided (used by orchestrator)
+    exp_overrides = {}
+    if args.experiment_config:
+        exp_cfg = OmegaConf.load(args.experiment_config)
+        logger.info(f"Loading experiment config: {args.experiment_config}")
+        exp_overrides = OmegaConf.to_container(exp_cfg, resolve=True)
+
+    # Build CLI overrides (these take precedence over experiment config)
     cli_overrides = build_cli_overrides(args)
 
-    if cli_overrides:
-        logger.info("CLI overrides applied:")
-        for key, value in cli_overrides.items():
-            logger.info(f"  {key}: {value}")
+    # Merge all overrides: experiment config first, then CLI overrides
+    all_overrides = OmegaConf.merge(exp_overrides, cli_overrides)
 
-    # Load configuration
+    if all_overrides:
+        logger.info("Configuration overrides:")
+        if exp_overrides:
+            logger.info("  From experiment config:")
+            for key, value in exp_overrides.items():
+                logger.info(f"    {key}: {value}")
+        if cli_overrides:
+            logger.info("  From CLI (takes precedence):")
+            for key, value in cli_overrides.items():
+                logger.info(f"    {key}: {value}")
+
+    # Load configuration with all overrides
     try:
         cfg = load_and_merge_configs(
             master_path=args.config,
             model_name=args.model,
-            cli_overrides=cli_overrides,
+            cli_overrides=all_overrides,
         )
+
     except FileNotFoundError as e:
         logger.error(f"Configuration file not found: {e}")
         sys.exit(1)

@@ -1,0 +1,273 @@
+# =============================================================================
+# Segmentation Master Configuration
+# =============================================================================
+# Joint-Synthesis DDPM Epilepsy Lesion Segmentation
+# K-fold cross-validation with multiple MONAI models
+
+# =============================================================================
+# Experiment Metadata
+# =============================================================================
+experiment:
+  name: "segmentation_unet_fold0"  # Overridden by CLI
+  output_dir: "./outputs/segmentation"
+  seed: 42
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  # Real data
+  real:
+    enabled: true
+    cache_dir: "/media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache"
+    train_csv: "train.csv"
+    val_csv: "val.csv"
+    test_csv: "test.csv"  # Excluded from k-fold, used for final per-fold evaluation
+
+  # Synthetic data
+  synthetic:
+    enabled: true
+    samples_dir: "/media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas"  # e.g., "./outputs/diffusion/generated_samples"
+    # Replicas to use
+    replicas: 
+      - "replica_019.npz"  # Each replica has 30 zbins * 2 conditions (lesion/no lesion) * 150 samples = 9000 samples
+      - "replica_018.npz"  # Add more replicas as needed
+    
+    merging_strategy: "concat" # Options: "concat", "balance"
+
+  # Guidelines:
+  # You can train with the following modes:
+  # 1) Real data only (set synthetic.enabled: false)
+  # 2) Synthetic data only (set real.enabled: false) 
+  # 3) Combined real + synthetic data (both enabled)
+  #     3.1) Concatenate all samples (merging_strategy: "concat"). 
+  #          This means that we preserve class imbalance but augment the number of samples.
+  #     3.2) Balance classes (merging_strategy: "balance").
+  #          This means that we oversample the minority class (lesion) for each z-bin with 
+  #          synthetic samples until we reach the number of majority class (no lesion) for that bin.  
+  #          Then, we keep adding images in a balanced way until the "replicas:" list is exhausted.
+    
+  # The kfold organizer will create a csv file with all the samples metadata and generate balancing plots. 
+  # Columns: fold, split, subject_id, image_path, mask_path, has_lesion_slice, has_lesion_subject, source (real/synthetic), zbin
+  # For subject_id, synthetic samples will be named as "synth_<replica>_<index>"
+
+  # Mask preprocessing
+  mask:
+    convert_range: true  # Convert {-1,+1} to {0,1}
+    binarize_threshold: 0.0  # Threshold in {-1,+1} space
+
+  # Image validation
+  image:
+    check_range: true  # Verify images are in [-1,1]
+
+# =============================================================================
+# K-Fold Cross-Validation
+# =============================================================================
+k_fold:
+  n_folds: 5
+  split_level: "subject"  # Subject-level splits
+  exclude_test: true  # Exclude test.csv subjects from k-fold
+  stratify_by: "has_lesion_subject"  # Stratify by lesion presence
+  seed: 42
+
+  # Which folds to run (null = all)
+  folds_to_run: null  # e.g., [0, 1, 2]
+
+# =============================================================================
+# Model Configuration (placeholder - overridden by model-specific YAML)
+# =============================================================================
+model:
+  name: "unet"
+  spatial_dims: 2
+  in_channels: 1  # Grayscale FLAIR
+  out_channels: 1  # Binary lesion mask
+
+# =============================================================================
+# Training Configuration
+# =============================================================================
+training:
+  # Batch size and workers
+  batch_size: 32
+  num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues (was 4)
+  pin_memory: true
+
+  # Class balancing
+  class_balancing:
+    enabled: false
+    method: "weighted_sampler"  # Options: "weighted_sampler", "weighted_loss", "none"
+    lesion_weight: 5.0  # Weight multiplier for lesion slices
+
+  # Optimizer
+  optimizer:
+    type: "AdamW"
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+
+  # Learning rate scheduler
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: null  # Set to max_epochs if null
+    eta_min: 1.0e-6
+
+  # Training duration
+  max_epochs: 100
+  max_steps: null  # Override epochs if set
+
+  # Precision and gradient handling
+  precision: "16-mixed"
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: "norm"
+  accumulate_grad_batches: 1
+
+  # Validation frequency
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+
+  # Early stopping
+  early_stopping:
+    enabled: true
+    monitor: "val/dice"
+    patience: 20
+    mode: "max"
+
+# =============================================================================
+# Loss Configuration
+# =============================================================================
+loss:
+  type: "DiceCELoss"  # MONAI DiceCELoss
+
+  # DiceCELoss parameters
+  include_background: false
+  to_onehot_y: false
+  sigmoid: true
+  softmax: false
+  squared_pred: false
+  jaccard: false
+  reduction: "mean"
+
+  # Loss weighting
+  lambda_dice: 1.0
+  lambda_ce: 1.0
+
+# =============================================================================
+# Metrics Configuration
+# =============================================================================
+metrics:
+  # Dice Score Coefficient
+  dice:
+    include_background: false
+    reduction: "mean_batch"
+    get_not_nans: false
+
+  # Hausdorff Distance 95
+  hd95:
+    percentile: 95
+    spacing: [1.875, 1.875]  # Physical spacing
+    handle_empty: "nan"  # Return NaN for empty masks
+
+  # Additional metrics
+  compute_iou: true  # Intersection over Union
+
+# =============================================================================
+# Data Augmentation
+# =============================================================================
+augmentation:
+  enabled: false
+
+  # Spatial transforms (apply to both image and mask)
+  random_flip:
+    enabled: true
+    prob: 0.5
+    spatial_axis: [0, 1]
+
+  random_rotate:
+    enabled: true
+    prob: 0.5
+    range_x: 0.26  # ~15 degrees
+    range_y: 0.26
+    mode: "bilinear"
+    padding_mode: "zeros"
+
+  random_scale:
+    enabled: true
+    prob: 0.3
+    scale_range: [0.9, 1.1]
+
+  random_shift:
+    enabled: false
+    prob: 0.3
+    shift_range: [0.1, 0.1]
+
+  # Intensity transforms (image only)
+  random_gamma:
+    enabled: true
+    prob: 0.3
+    gamma_range: [0.8, 1.2]
+
+  random_gaussian_noise:
+    enabled: true
+    prob: 0.2
+    mean: 0.0
+    std: 0.05
+
+  random_gaussian_smooth:
+    enabled: true
+    prob: 0.2
+    sigma_range: [0.5, 1.0]
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  log_every_n_steps: 50
+
+  # Primary logger (W&B)
+  wandb:
+    enabled: true
+    project: "epilepsy-segmentation"
+    entity: "mario-pg02-icai"
+    offline: true  # Sync later (for cluster)
+    tags: ["segmentation", "k-fold"]
+    group: null  # Set to model name
+    job_type: null  # Set to "fold_0", "fold_1", etc.
+
+  # CSV logging
+  csv:
+    enabled: true
+    per_fold: true  # Separate CSV per fold
+    aggregate: true  # Aggregated CSV across folds
+
+  # Checkpointing
+  checkpointing:
+    save_top_k: 3
+    monitor: "val/dice"
+    mode: "max"
+    save_last: true
+    every_n_epochs: 1
+    filename: "seg-{epoch:04d}-{val_dice:.4f}"
+
+# =============================================================================
+# Visualization Configuration
+# =============================================================================
+visualization:
+  enabled: true
+  every_n_epochs: 5
+
+  # Number of samples to visualize
+  n_samples: 4
+
+  # Sample selection strategy
+  selection_strategy: "mixed"  # Options: "random", "worst", "best", "mixed"
+
+  # Overlay settings
+  overlay:
+    enabled: true
+    alpha: 0.5
+    pred_color: [255, 0, 0]  # Red for predictions
+    gt_color: [0, 255, 0]  # Green for ground truth
+
+  # Output
+  save_png: true
+  log_to_wandb: true

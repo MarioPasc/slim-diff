@@ -1,0 +1,18 @@
+# =============================================================================
+# Experiment: Real Data Only
+# =============================================================================
+# Train segmentation models using only real epilepsy MRI data.
+# No synthetic data augmentation.
+
+experiment:
+  name: "real_only"
+
+data:
+  # Real data enabled
+  real:
+    enabled: true
+
+  # Synthetic data disabled
+  synthetic:
+    enabled: false
+    replicas: []

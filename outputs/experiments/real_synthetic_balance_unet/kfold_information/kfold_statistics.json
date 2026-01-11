@@ -1,0 +1,2867 @@
+[
+  {
+    "fold": 0,
+    "train": {
+      "total": 6410,
+      "real": 6410,
+      "synthetic": 0,
+      "lesion": 802,
+      "no_lesion": 5608,
+      "lesion_ratio": 0.12511700468018722,
+      "zbins": {
+        "0": {
+          "lesion": 3,
+          "no_lesion": 270,
+          "real": 273,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 2,
+          "no_lesion": 182,
+          "real": 184,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 182,
+          "real": 184,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 273,
+          "real": 276,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 2,
+          "no_lesion": 182,
+          "real": 184,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 4,
+          "no_lesion": 180,
+          "real": 184,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 8,
+          "no_lesion": 268,
+          "real": 276,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 8,
+          "no_lesion": 176,
+          "real": 184,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 11,
+          "no_lesion": 173,
+          "real": 184,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 17,
+          "no_lesion": 167,
+          "real": 184,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 34,
+          "no_lesion": 242,
+          "real": 276,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 26,
+          "no_lesion": 158,
+          "real": 184,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 28,
+          "no_lesion": 156,
+          "real": 184,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 36,
+          "no_lesion": 240,
+          "real": 276,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 21,
+          "no_lesion": 163,
+          "real": 184,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 28,
+          "no_lesion": 156,
+          "real": 184,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 57,
+          "no_lesion": 219,
+          "real": 276,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 49,
+          "no_lesion": 135,
+          "real": 184,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 50,
+          "no_lesion": 134,
+          "real": 184,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 53,
+          "no_lesion": 131,
+          "real": 184,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 79,
+          "no_lesion": 197,
+          "real": 276,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 50,
+          "no_lesion": 134,
+          "real": 184,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 50,
+          "no_lesion": 134,
+          "real": 184,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 64,
+          "no_lesion": 212,
+          "real": 276,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 33,
+          "no_lesion": 151,
+          "real": 184,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 27,
+          "no_lesion": 157,
+          "real": 184,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 32,
+          "no_lesion": 244,
+          "real": 276,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 8,
+          "no_lesion": 176,
+          "real": 184,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 8,
+          "no_lesion": 176,
+          "real": 184,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 9,
+          "no_lesion": 240,
+          "real": 249,
+          "synthetic": 0
+        }
+      }
+    },
+    "val": {
+      "total": 1673,
+      "real": 1673,
+      "synthetic": 0,
+      "lesion": 227,
+      "no_lesion": 1446,
+      "lesion_ratio": 0.13568439928272563,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 72,
+          "real": 72,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 0,
+          "no_lesion": 48,
+          "real": 48,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 0,
+          "no_lesion": 48,
+          "real": 48,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 0,
+          "no_lesion": 72,
+          "real": 72,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 0,
+          "no_lesion": 48,
+          "real": 48,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 0,
+          "no_lesion": 48,
+          "real": 48,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 2,
+          "no_lesion": 70,
+          "real": 72,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 2,
+          "no_lesion": 46,
+          "real": 48,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 2,
+          "no_lesion": 46,
+          "real": 48,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 2,
+          "no_lesion": 46,
+          "real": 48,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 5,
+          "no_lesion": 67,
+          "real": 72,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 4,
+          "no_lesion": 44,
+          "real": 48,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 5,
+          "no_lesion": 43,
+          "real": 48,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 13,
+          "no_lesion": 59,
+          "real": 72,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 12,
+          "no_lesion": 36,
+          "real": 48,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 14,
+          "no_lesion": 34,
+          "real": 48,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 23,
+          "no_lesion": 49,
+          "real": 72,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 11,
+          "no_lesion": 37,
+          "real": 48,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 11,
+          "no_lesion": 37,
+          "real": 48,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 10,
+          "no_lesion": 38,
+          "real": 48,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 15,
+          "no_lesion": 57,
+          "real": 72,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 10,
+          "no_lesion": 38,
+          "real": 48,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 12,
+          "no_lesion": 36,
+          "real": 48,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 18,
+          "no_lesion": 54,
+          "real": 72,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 11,
+          "no_lesion": 37,
+          "real": 48,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 10,
+          "no_lesion": 38,
+          "real": 48,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 15,
+          "no_lesion": 57,
+          "real": 72,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 8,
+          "no_lesion": 40,
+          "real": 48,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 7,
+          "no_lesion": 41,
+          "real": 48,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 5,
+          "no_lesion": 60,
+          "real": 65,
+          "synthetic": 0
+        }
+      }
+    },
+    "test": {
+      "total": 1744,
+      "real": 1744,
+      "synthetic": 0,
+      "lesion": 239,
+      "no_lesion": 1505,
+      "lesion_ratio": 0.13704128440366972,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 75,
+          "real": 75,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 1,
+          "no_lesion": 49,
+          "real": 50,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 48,
+          "real": 50,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 72,
+          "real": 75,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 3,
+          "no_lesion": 47,
+          "real": 50,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 9,
+          "no_lesion": 66,
+          "real": 75,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 12,
+          "no_lesion": 63,
+          "real": 75,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 10,
+          "no_lesion": 40,
+          "real": 50,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 15,
+          "no_lesion": 60,
+          "real": 75,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 14,
+          "no_lesion": 61,
+          "real": 75,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 10,
+          "no_lesion": 65,
+          "real": 75,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 6,
+          "no_lesion": 63,
+          "real": 69,
+          "synthetic": 0
+        }
+      }
+    }
+  },
+  {
+    "fold": 1,
+    "train": {
+      "total": 6477,
+      "real": 6477,
+      "synthetic": 0,
+      "lesion": 835,
+      "no_lesion": 5642,
+      "lesion_ratio": 0.1289177088158098,
+      "zbins": {
+        "0": {
+          "lesion": 3,
+          "no_lesion": 273,
+          "real": 276,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 276,
+          "real": 279,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 4,
+          "no_lesion": 182,
+          "real": 186,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 10,
+          "no_lesion": 269,
+          "real": 279,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 9,
+          "no_lesion": 177,
+          "real": 186,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 11,
+          "no_lesion": 175,
+          "real": 186,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 15,
+          "no_lesion": 171,
+          "real": 186,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 35,
+          "no_lesion": 244,
+          "real": 279,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 28,
+          "no_lesion": 158,
+          "real": 186,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 31,
+          "no_lesion": 155,
+          "real": 186,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 45,
+          "no_lesion": 234,
+          "real": 279,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 30,
+          "no_lesion": 156,
+          "real": 186,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 37,
+          "no_lesion": 149,
+          "real": 186,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 73,
+          "no_lesion": 206,
+          "real": 279,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 52,
+          "no_lesion": 134,
+          "real": 186,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 50,
+          "no_lesion": 136,
+          "real": 186,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 50,
+          "no_lesion": 136,
+          "real": 186,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 71,
+          "no_lesion": 208,
+          "real": 279,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 46,
+          "no_lesion": 140,
+          "real": 186,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 46,
+          "no_lesion": 140,
+          "real": 186,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 61,
+          "no_lesion": 218,
+          "real": 279,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 32,
+          "no_lesion": 154,
+          "real": 186,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 26,
+          "no_lesion": 160,
+          "real": 186,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 34,
+          "no_lesion": 245,
+          "real": 279,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 10,
+          "no_lesion": 176,
+          "real": 186,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 9,
+          "no_lesion": 177,
+          "real": 186,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 8,
+          "no_lesion": 241,
+          "real": 249,
+          "synthetic": 0
+        }
+      }
+    },
+    "val": {
+      "total": 1606,
+      "real": 1606,
+      "synthetic": 0,
+      "lesion": 194,
+      "no_lesion": 1412,
+      "lesion_ratio": 0.12079701120797011,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 69,
+          "real": 69,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 0,
+          "no_lesion": 69,
+          "real": 69,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 0,
+          "no_lesion": 69,
+          "real": 69,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 1,
+          "no_lesion": 45,
+          "real": 46,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 4,
+          "no_lesion": 65,
+          "real": 69,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 4,
+          "no_lesion": 65,
+          "real": 69,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 3,
+          "no_lesion": 43,
+          "real": 46,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 5,
+          "no_lesion": 41,
+          "real": 46,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 7,
+          "no_lesion": 62,
+          "real": 69,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 8,
+          "no_lesion": 38,
+          "real": 46,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 11,
+          "no_lesion": 35,
+          "real": 46,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 13,
+          "no_lesion": 33,
+          "real": 46,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 23,
+          "no_lesion": 46,
+          "real": 69,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 14,
+          "no_lesion": 32,
+          "real": 46,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 16,
+          "no_lesion": 30,
+          "real": 46,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 21,
+          "no_lesion": 48,
+          "real": 69,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 12,
+          "no_lesion": 34,
+          "real": 46,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 11,
+          "no_lesion": 35,
+          "real": 46,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 13,
+          "no_lesion": 56,
+          "real": 69,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 6,
+          "no_lesion": 40,
+          "real": 46,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 6,
+          "no_lesion": 40,
+          "real": 46,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 6,
+          "no_lesion": 59,
+          "real": 65,
+          "synthetic": 0
+        }
+      }
+    },
+    "test": {
+      "total": 1744,
+      "real": 1744,
+      "synthetic": 0,
+      "lesion": 239,
+      "no_lesion": 1505,
+      "lesion_ratio": 0.13704128440366972,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 75,
+          "real": 75,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 1,
+          "no_lesion": 49,
+          "real": 50,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 48,
+          "real": 50,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 72,
+          "real": 75,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 3,
+          "no_lesion": 47,
+          "real": 50,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 9,
+          "no_lesion": 66,
+          "real": 75,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 12,
+          "no_lesion": 63,
+          "real": 75,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 10,
+          "no_lesion": 40,
+          "real": 50,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 15,
+          "no_lesion": 60,
+          "real": 75,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 14,
+          "no_lesion": 61,
+          "real": 75,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 10,
+          "no_lesion": 65,
+          "real": 75,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 6,
+          "no_lesion": 63,
+          "real": 69,
+          "synthetic": 0
+        }
+      }
+    }
+  },
+  {
+    "fold": 2,
+    "train": {
+      "total": 6481,
+      "real": 6481,
+      "synthetic": 0,
+      "lesion": 841,
+      "no_lesion": 5640,
+      "lesion_ratio": 0.12976392532016665,
+      "zbins": {
+        "0": {
+          "lesion": 3,
+          "no_lesion": 275,
+          "real": 278,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 276,
+          "real": 279,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 4,
+          "no_lesion": 182,
+          "real": 186,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 10,
+          "no_lesion": 269,
+          "real": 279,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 10,
+          "no_lesion": 176,
+          "real": 186,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 12,
+          "no_lesion": 174,
+          "real": 186,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 15,
+          "no_lesion": 171,
+          "real": 186,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 30,
+          "no_lesion": 249,
+          "real": 279,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 23,
+          "no_lesion": 163,
+          "real": 186,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 25,
+          "no_lesion": 161,
+          "real": 186,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 39,
+          "no_lesion": 240,
+          "real": 279,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 29,
+          "no_lesion": 157,
+          "real": 186,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 35,
+          "no_lesion": 151,
+          "real": 186,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 65,
+          "no_lesion": 214,
+          "real": 279,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 48,
+          "no_lesion": 138,
+          "real": 186,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 48,
+          "no_lesion": 138,
+          "real": 186,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 47,
+          "no_lesion": 139,
+          "real": 186,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 71,
+          "no_lesion": 208,
+          "real": 279,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 47,
+          "no_lesion": 139,
+          "real": 186,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 51,
+          "no_lesion": 135,
+          "real": 186,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 68,
+          "no_lesion": 211,
+          "real": 279,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 37,
+          "no_lesion": 149,
+          "real": 186,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 31,
+          "no_lesion": 155,
+          "real": 186,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 39,
+          "no_lesion": 240,
+          "real": 279,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 16,
+          "no_lesion": 170,
+          "real": 186,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 15,
+          "no_lesion": 171,
+          "real": 186,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 14,
+          "no_lesion": 237,
+          "real": 251,
+          "synthetic": 0
+        }
+      }
+    },
+    "val": {
+      "total": 1602,
+      "real": 1602,
+      "synthetic": 0,
+      "lesion": 188,
+      "no_lesion": 1414,
+      "lesion_ratio": 0.11735330836454431,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 67,
+          "real": 67,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 0,
+          "no_lesion": 69,
+          "real": 69,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 0,
+          "no_lesion": 69,
+          "real": 69,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 1,
+          "no_lesion": 45,
+          "real": 46,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 9,
+          "no_lesion": 60,
+          "real": 69,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 7,
+          "no_lesion": 39,
+          "real": 46,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 8,
+          "no_lesion": 38,
+          "real": 46,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 10,
+          "no_lesion": 59,
+          "real": 69,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 7,
+          "no_lesion": 39,
+          "real": 46,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 15,
+          "no_lesion": 54,
+          "real": 69,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 12,
+          "no_lesion": 34,
+          "real": 46,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 13,
+          "no_lesion": 33,
+          "real": 46,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 16,
+          "no_lesion": 30,
+          "real": 46,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 23,
+          "no_lesion": 46,
+          "real": 69,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 13,
+          "no_lesion": 33,
+          "real": 46,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 11,
+          "no_lesion": 35,
+          "real": 46,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 14,
+          "no_lesion": 55,
+          "real": 69,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 7,
+          "no_lesion": 39,
+          "real": 46,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 6,
+          "no_lesion": 40,
+          "real": 46,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 8,
+          "no_lesion": 61,
+          "real": 69,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 0,
+          "no_lesion": 63,
+          "real": 63,
+          "synthetic": 0
+        }
+      }
+    },
+    "test": {
+      "total": 1744,
+      "real": 1744,
+      "synthetic": 0,
+      "lesion": 239,
+      "no_lesion": 1505,
+      "lesion_ratio": 0.13704128440366972,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 75,
+          "real": 75,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 1,
+          "no_lesion": 49,
+          "real": 50,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 48,
+          "real": 50,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 72,
+          "real": 75,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 3,
+          "no_lesion": 47,
+          "real": 50,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 9,
+          "no_lesion": 66,
+          "real": 75,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 12,
+          "no_lesion": 63,
+          "real": 75,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 10,
+          "no_lesion": 40,
+          "real": 50,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 15,
+          "no_lesion": 60,
+          "real": 75,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 14,
+          "no_lesion": 61,
+          "real": 75,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 10,
+          "no_lesion": 65,
+          "real": 75,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 6,
+          "no_lesion": 63,
+          "real": 69,
+          "synthetic": 0
+        }
+      }
+    }
+  },
+  {
+    "fold": 3,
+    "train": {
+      "total": 6482,
+      "real": 6482,
+      "synthetic": 0,
+      "lesion": 813,
+      "no_lesion": 5669,
+      "lesion_ratio": 0.1254242517741438,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 277,
+          "real": 277,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 0,
+          "no_lesion": 186,
+          "real": 186,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 0,
+          "no_lesion": 186,
+          "real": 186,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 0,
+          "no_lesion": 279,
+          "real": 279,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 0,
+          "no_lesion": 186,
+          "real": 186,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 5,
+          "no_lesion": 274,
+          "real": 279,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 5,
+          "no_lesion": 181,
+          "real": 186,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 9,
+          "no_lesion": 177,
+          "real": 186,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 14,
+          "no_lesion": 172,
+          "real": 186,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 25,
+          "no_lesion": 254,
+          "real": 279,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 17,
+          "no_lesion": 169,
+          "real": 186,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 19,
+          "no_lesion": 167,
+          "real": 186,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 32,
+          "no_lesion": 247,
+          "real": 279,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 24,
+          "no_lesion": 162,
+          "real": 186,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 34,
+          "no_lesion": 152,
+          "real": 186,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 65,
+          "no_lesion": 214,
+          "real": 279,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 48,
+          "no_lesion": 138,
+          "real": 186,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 51,
+          "no_lesion": 135,
+          "real": 186,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 54,
+          "no_lesion": 132,
+          "real": 186,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 82,
+          "no_lesion": 197,
+          "real": 279,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 51,
+          "no_lesion": 135,
+          "real": 186,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 53,
+          "no_lesion": 133,
+          "real": 186,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 71,
+          "no_lesion": 208,
+          "real": 279,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 40,
+          "no_lesion": 146,
+          "real": 186,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 33,
+          "no_lesion": 153,
+          "real": 186,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 41,
+          "no_lesion": 238,
+          "real": 279,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 14,
+          "no_lesion": 172,
+          "real": 186,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 13,
+          "no_lesion": 173,
+          "real": 186,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 11,
+          "no_lesion": 242,
+          "real": 253,
+          "synthetic": 0
+        }
+      }
+    },
+    "val": {
+      "total": 1601,
+      "real": 1601,
+      "synthetic": 0,
+      "lesion": 216,
+      "no_lesion": 1385,
+      "lesion_ratio": 0.13491567770143661,
+      "zbins": {
+        "0": {
+          "lesion": 3,
+          "no_lesion": 65,
+          "real": 68,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 66,
+          "real": 69,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 5,
+          "no_lesion": 64,
+          "real": 69,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 5,
+          "no_lesion": 41,
+          "real": 46,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 5,
+          "no_lesion": 41,
+          "real": 46,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 14,
+          "no_lesion": 55,
+          "real": 69,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 13,
+          "no_lesion": 33,
+          "real": 46,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 14,
+          "no_lesion": 32,
+          "real": 46,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 17,
+          "no_lesion": 52,
+          "real": 69,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 9,
+          "no_lesion": 37,
+          "real": 46,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 8,
+          "no_lesion": 38,
+          "real": 46,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 15,
+          "no_lesion": 54,
+          "real": 69,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 12,
+          "no_lesion": 34,
+          "real": 46,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 10,
+          "no_lesion": 36,
+          "real": 46,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 9,
+          "no_lesion": 37,
+          "real": 46,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 12,
+          "no_lesion": 57,
+          "real": 69,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 9,
+          "no_lesion": 37,
+          "real": 46,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 9,
+          "no_lesion": 37,
+          "real": 46,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 11,
+          "no_lesion": 58,
+          "real": 69,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 6,
+          "no_lesion": 63,
+          "real": 69,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 3,
+          "no_lesion": 58,
+          "real": 61,
+          "synthetic": 0
+        }
+      }
+    },
+    "test": {
+      "total": 1744,
+      "real": 1744,
+      "synthetic": 0,
+      "lesion": 239,
+      "no_lesion": 1505,
+      "lesion_ratio": 0.13704128440366972,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 75,
+          "real": 75,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 1,
+          "no_lesion": 49,
+          "real": 50,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 48,
+          "real": 50,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 72,
+          "real": 75,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 3,
+          "no_lesion": 47,
+          "real": 50,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 9,
+          "no_lesion": 66,
+          "real": 75,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 12,
+          "no_lesion": 63,
+          "real": 75,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 10,
+          "no_lesion": 40,
+          "real": 50,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 15,
+          "no_lesion": 60,
+          "real": 75,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 14,
+          "no_lesion": 61,
+          "real": 75,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 10,
+          "no_lesion": 65,
+          "real": 75,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 6,
+          "no_lesion": 63,
+          "real": 69,
+          "synthetic": 0
+        }
+      }
+    }
+  },
+  {
+    "fold": 4,
+    "train": {
+      "total": 6482,
+      "real": 6482,
+      "synthetic": 0,
+      "lesion": 825,
+      "no_lesion": 5657,
+      "lesion_ratio": 0.12727553224313484,
+      "zbins": {
+        "0": {
+          "lesion": 3,
+          "no_lesion": 273,
+          "real": 276,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 276,
+          "real": 279,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 2,
+          "no_lesion": 184,
+          "real": 186,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 7,
+          "no_lesion": 272,
+          "real": 279,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 8,
+          "no_lesion": 178,
+          "real": 186,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 9,
+          "no_lesion": 177,
+          "real": 186,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 15,
+          "no_lesion": 171,
+          "real": 186,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 32,
+          "no_lesion": 247,
+          "real": 279,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 26,
+          "no_lesion": 160,
+          "real": 186,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 29,
+          "no_lesion": 157,
+          "real": 186,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 44,
+          "no_lesion": 235,
+          "real": 279,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 28,
+          "no_lesion": 158,
+          "real": 186,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 34,
+          "no_lesion": 152,
+          "real": 186,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 60,
+          "no_lesion": 219,
+          "real": 279,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 43,
+          "no_lesion": 143,
+          "real": 186,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 45,
+          "no_lesion": 141,
+          "real": 186,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 48,
+          "no_lesion": 138,
+          "real": 186,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 73,
+          "no_lesion": 206,
+          "real": 279,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 46,
+          "no_lesion": 140,
+          "real": 186,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 48,
+          "no_lesion": 138,
+          "real": 186,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 64,
+          "no_lesion": 215,
+          "real": 279,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 34,
+          "no_lesion": 152,
+          "real": 186,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 31,
+          "no_lesion": 155,
+          "real": 186,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 42,
+          "no_lesion": 237,
+          "real": 279,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 16,
+          "no_lesion": 170,
+          "real": 186,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 15,
+          "no_lesion": 171,
+          "real": 186,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 14,
+          "no_lesion": 240,
+          "real": 254,
+          "synthetic": 0
+        }
+      }
+    },
+    "val": {
+      "total": 1601,
+      "real": 1601,
+      "synthetic": 0,
+      "lesion": 204,
+      "no_lesion": 1397,
+      "lesion_ratio": 0.127420362273579,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 69,
+          "real": 69,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 0,
+          "no_lesion": 69,
+          "real": 69,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 3,
+          "no_lesion": 66,
+          "real": 69,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 2,
+          "no_lesion": 44,
+          "real": 46,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 7,
+          "no_lesion": 62,
+          "real": 69,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 4,
+          "no_lesion": 42,
+          "real": 46,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 5,
+          "no_lesion": 64,
+          "real": 69,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 5,
+          "no_lesion": 41,
+          "real": 46,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 8,
+          "no_lesion": 38,
+          "real": 46,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 20,
+          "no_lesion": 49,
+          "real": 69,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 17,
+          "no_lesion": 29,
+          "real": 46,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 16,
+          "no_lesion": 30,
+          "real": 46,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 15,
+          "no_lesion": 31,
+          "real": 46,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 21,
+          "no_lesion": 48,
+          "real": 69,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 14,
+          "no_lesion": 32,
+          "real": 46,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 14,
+          "no_lesion": 32,
+          "real": 46,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 18,
+          "no_lesion": 51,
+          "real": 69,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 10,
+          "no_lesion": 36,
+          "real": 46,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 6,
+          "no_lesion": 40,
+          "real": 46,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 5,
+          "no_lesion": 64,
+          "real": 69,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 0,
+          "no_lesion": 46,
+          "real": 46,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 0,
+          "no_lesion": 60,
+          "real": 60,
+          "synthetic": 0
+        }
+      }
+    },
+    "test": {
+      "total": 1744,
+      "real": 1744,
+      "synthetic": 0,
+      "lesion": 239,
+      "no_lesion": 1505,
+      "lesion_ratio": 0.13704128440366972,
+      "zbins": {
+        "0": {
+          "lesion": 0,
+          "no_lesion": 75,
+          "real": 75,
+          "synthetic": 0
+        },
+        "1": {
+          "lesion": 1,
+          "no_lesion": 49,
+          "real": 50,
+          "synthetic": 0
+        },
+        "2": {
+          "lesion": 2,
+          "no_lesion": 48,
+          "real": 50,
+          "synthetic": 0
+        },
+        "3": {
+          "lesion": 3,
+          "no_lesion": 72,
+          "real": 75,
+          "synthetic": 0
+        },
+        "4": {
+          "lesion": 3,
+          "no_lesion": 47,
+          "real": 50,
+          "synthetic": 0
+        },
+        "5": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "6": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "7": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "8": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "9": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "10": {
+          "lesion": 9,
+          "no_lesion": 66,
+          "real": 75,
+          "synthetic": 0
+        },
+        "11": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "12": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "13": {
+          "lesion": 12,
+          "no_lesion": 63,
+          "real": 75,
+          "synthetic": 0
+        },
+        "14": {
+          "lesion": 7,
+          "no_lesion": 43,
+          "real": 50,
+          "synthetic": 0
+        },
+        "15": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "16": {
+          "lesion": 11,
+          "no_lesion": 64,
+          "real": 75,
+          "synthetic": 0
+        },
+        "17": {
+          "lesion": 10,
+          "no_lesion": 40,
+          "real": 50,
+          "synthetic": 0
+        },
+        "18": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "19": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "20": {
+          "lesion": 15,
+          "no_lesion": 60,
+          "real": 75,
+          "synthetic": 0
+        },
+        "21": {
+          "lesion": 12,
+          "no_lesion": 38,
+          "real": 50,
+          "synthetic": 0
+        },
+        "22": {
+          "lesion": 11,
+          "no_lesion": 39,
+          "real": 50,
+          "synthetic": 0
+        },
+        "23": {
+          "lesion": 14,
+          "no_lesion": 61,
+          "real": 75,
+          "synthetic": 0
+        },
+        "24": {
+          "lesion": 9,
+          "no_lesion": 41,
+          "real": 50,
+          "synthetic": 0
+        },
+        "25": {
+          "lesion": 8,
+          "no_lesion": 42,
+          "real": 50,
+          "synthetic": 0
+        },
+        "26": {
+          "lesion": 10,
+          "no_lesion": 65,
+          "real": 75,
+          "synthetic": 0
+        },
+        "27": {
+          "lesion": 6,
+          "no_lesion": 44,
+          "real": 50,
+          "synthetic": 0
+        },
+        "28": {
+          "lesion": 5,
+          "no_lesion": 45,
+          "real": 50,
+          "synthetic": 0
+        },
+        "29": {
+          "lesion": 6,
+          "no_lesion": 63,
+          "real": 69,
+          "synthetic": 0
+        }
+      }
+    }
+  }
+]
