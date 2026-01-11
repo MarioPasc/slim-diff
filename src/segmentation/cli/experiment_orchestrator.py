@@ -9,7 +9,7 @@ Usage:
     # Dry run: create planification and folder structure only
     python -m src.segmentation.cli.experiment_orchestrator \
         --experiments real_only,real_synthetic_balance,real_synthetic_concat,synthetic_only \
-        --models unet,dynunet,swinunetr,unetplusplus \
+        --models unet,dynunet,swinunetr \
         --output-dir /media/hddb/mario/results/epilepsy/segmentation \
         --device 0,1 \
         --dry-run
@@ -31,8 +31,10 @@ import logging
 import os
 import subprocess
 import sys
+from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from omegaconf import OmegaConf
 
@@ -308,6 +310,36 @@ def parse_folds_arg(folds_str: str | None) -> Tuple[int | None, List[int] | None
         sys.exit(1)
 
 
+def execute_gpu_queue(
+    gpu_id: str,
+    experiments: List[dict],
+    config_dir: Path,
+    master_config: Path,
+    folds_arg: str | None,
+    dry_run: bool,
+) -> List[Tuple[dict, bool]]:
+    """Execute all experiments assigned to a single GPU sequentially.
+
+    Args:
+        gpu_id: GPU device ID
+        experiments: List of experiment entries for this GPU
+        config_dir: Base configuration directory
+        master_config: Path to master config
+        folds_arg: Folds argument to pass to kfold_segmentation
+        dry_run: Whether to run in dry-run mode
+
+    Returns:
+        List of (entry, success) tuples
+    """
+    results = []
+    for i, entry in enumerate(experiments, 1):
+        logger.info(f"[GPU {gpu_id}] Running experiment {i}/{len(experiments)}: "
+                    f"{entry['experiment']} + {entry['model']}")
+        success = execute_experiment(entry, config_dir, master_config, folds_arg, dry_run)
+        results.append((entry, success))
+    return results
+
+
 def execute_experiment(
     entry: dict,
     config_dir: Path,
@@ -453,25 +485,79 @@ def main():
     successful = 0
     failed = 0
 
-    for i, entry in enumerate(planification, 1):
-        logger.info(f"\n[{i}/{len(planification)}] Processing: {entry['experiment']} + {entry['model']}")
+    if args.sequential or len(devices) == 1:
+        # Sequential execution (original behavior)
+        logger.info("\nRunning experiments SEQUENTIALLY")
+        for i, entry in enumerate(planification, 1):
+            logger.info(f"\n[{i}/{len(planification)}] Processing: {entry['experiment']} + {entry['model']}")
 
-        success = execute_experiment(
-            entry,
-            config_dir,
-            master_config,
-            args.folds,
-            args.dry_run,
-        )
+            success = execute_experiment(
+                entry,
+                config_dir,
+                master_config,
+                args.folds,
+                args.dry_run,
+            )
 
-        if success:
-            entry["status"] = "completed" if not args.dry_run else "dry_run_ok"
-            successful += 1
-        else:
-            entry["status"] = "failed"
-            failed += 1
+            if success:
+                entry["status"] = "completed" if not args.dry_run else "dry_run_ok"
+                successful += 1
+            else:
+                entry["status"] = "failed"
+                failed += 1
 
-        # Update planification CSV with status
+            # Update planification CSV with status
+            save_planification(planification, output_dir)
+    else:
+        # Parallel execution: group experiments by GPU and run GPU queues in parallel
+        logger.info(f"\nRunning experiments in PARALLEL across {len(devices)} GPUs")
+
+        # Group experiments by GPU
+        gpu_queues: Dict[str, List[dict]] = defaultdict(list)
+        for entry in planification:
+            gpu_queues[entry["device"]].append(entry)
+
+        # Log queue distribution
+        for gpu_id, queue in gpu_queues.items():
+            logger.info(f"  GPU {gpu_id}: {len(queue)} experiments")
+
+        # Run GPU queues in parallel using ProcessPoolExecutor
+        # Each GPU gets its own process that runs experiments sequentially
+        with ProcessPoolExecutor(max_workers=len(devices)) as executor:
+            futures = {}
+            for gpu_id, queue in gpu_queues.items():
+                future = executor.submit(
+                    execute_gpu_queue,
+                    gpu_id,
+                    queue,
+                    config_dir,
+                    master_config,
+                    args.folds,
+                    args.dry_run,
+                )
+                futures[future] = gpu_id
+
+            # Collect results as they complete
+            for future in as_completed(futures):
+                gpu_id = futures[future]
+                try:
+                    results = future.result()
+                    for entry, success in results:
+                        if success:
+                            entry["status"] = "completed" if not args.dry_run else "dry_run_ok"
+                            successful += 1
+                        else:
+                            entry["status"] = "failed"
+                            failed += 1
+                    logger.info(f"GPU {gpu_id} completed all experiments")
+                except Exception as e:
+                    logger.error(f"GPU {gpu_id} queue failed with error: {e}")
+                    # Mark all experiments for this GPU as failed
+                    for entry in gpu_queues[gpu_id]:
+                        entry["status"] = "failed"
+                        failed += 1
+
+        # Save final planification
         save_planification(planification, output_dir)
 
     # Final summary

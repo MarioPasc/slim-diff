@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytorch_lightning as pl
+import wandb
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
@@ -133,7 +134,12 @@ class KFoldSegmentationRunner:
         trainer.fit(model, train_loader, val_loader)
 
         # Extract best metrics
-        best_dice = trainer.checkpoint_callback.best_model_score.item()
+        best_score = trainer.checkpoint_callback.best_model_score
+        if best_score is not None:
+            best_dice = best_score.item()
+        else:
+            logger.warning(f"Fold {fold_idx}: No best model score found (likely all NaN)")
+            best_dice = float("nan")
         best_model_path = trainer.checkpoint_callback.best_model_path
 
         fold_result = {
@@ -145,6 +151,10 @@ class KFoldSegmentationRunner:
         logger.info(
             f"Fold {fold_idx} complete. Best Dice: {best_dice:.4f}"
         )
+
+        # Finish wandb run to avoid run reuse in next fold
+        if wandb_logger is not None:
+            wandb.finish()
 
         return fold_result
 
@@ -295,6 +305,9 @@ class KFoldSegmentationRunner:
                     monitor=cfg.training.early_stopping.monitor,
                     patience=cfg.training.early_stopping.patience,
                     mode=cfg.training.early_stopping.mode,
+                    min_delta=0.0001,  # Minimum change to qualify as improvement
+                    check_finite=False,  # Don't stop on NaN, let training continue
+                    verbose=True,
                 )
             )
 

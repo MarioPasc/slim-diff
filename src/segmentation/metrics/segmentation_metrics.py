@@ -20,7 +20,8 @@ class DiceMetric:
         self.metric = MONAIDice(
             include_background=cfg.metrics.dice.include_background,
             reduction=cfg.metrics.dice.reduction,
-            get_not_nans=cfg.metrics.dice.get_not_nans,
+            get_not_nans=True,  # Always filter NaN values in aggregation
+            ignore_empty=True,  # Handle empty ground truth gracefully
         )
 
     def __call__(
@@ -36,7 +37,17 @@ class DiceMetric:
             Dice score (scalar tensor)
         """
         dice = self.metric(preds, targets)
-        return dice.mean()
+
+        # Handle empty results or NaN values
+        if dice.numel() == 0:
+            return torch.tensor(float("nan"), device=preds.device)
+
+        # Filter NaN values before computing mean
+        valid_dice = dice[~torch.isnan(dice)]
+        if len(valid_dice) == 0:
+            return torch.tensor(float("nan"), device=preds.device)
+
+        return valid_dice.mean()
 
     def reset(self):
         """Reset metric state."""

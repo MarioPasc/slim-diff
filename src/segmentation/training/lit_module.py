@@ -126,9 +126,22 @@ class SegmentationLitModule(pl.LightningModule):
         # Log
         B = images.shape[0]
         self.log("val/loss", loss, sync_dist=True, batch_size=B)
-        self.log("val/dice", dice, sync_dist=True, batch_size=B)
 
-        if not torch.isnan(hd95):
+        # Handle NaN dice values - log 0.0 instead of NaN to avoid early stopping issues
+        # This happens when ground truth has no positive pixels
+        if torch.isnan(dice) or torch.isinf(dice):
+            # If no lesions in ground truth, set dice based on prediction
+            # If pred is also empty, dice should be 1.0; if pred has false positives, dice should be 0.0
+            has_pred_positive = preds_binary.sum() > 0
+            has_gt_positive = masks.sum() > 0
+            if not has_gt_positive and not has_pred_positive:
+                dice = torch.tensor(1.0, device=dice.device)  # Both empty = perfect match
+            else:
+                dice = torch.tensor(0.0, device=dice.device)  # Mismatch
+
+        self.log("val/dice", dice, sync_dist=True, batch_size=B, prog_bar=True)
+
+        if not torch.isnan(hd95) and not torch.isinf(hd95):
             self.log("val/hd95", hd95, sync_dist=True, batch_size=B)
 
         return {"loss": loss, "dice": dice, "hd95": hd95}
