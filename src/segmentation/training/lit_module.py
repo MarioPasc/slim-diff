@@ -64,7 +64,11 @@ class SegmentationLitModule(pl.LightningModule):
         Returns:
             Predictions (B, 1, H, W) logits
         """
-        return self.model(x)
+        output = self.model(x)
+        # Handle models that return list (e.g., UNet++, DynUNet with deep supervision)
+        if isinstance(output, list):
+            output = output[0]
+        return output
 
     def training_step(self, batch, batch_idx):
         """Training step.

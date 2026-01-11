@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from monai.transforms import (
     Compose,
+    MapTransform,
     RandAdjustContrastd,
     RandFlipd,
     RandGaussianNoised,
@@ -12,6 +13,46 @@ from monai.transforms import (
     RandZoomd,
 )
 from omegaconf import DictConfig
+
+
+class RandAdjustContrastdNeg1To1(MapTransform):
+    """Random gamma contrast adjustment for data in [-1, 1] range.
+
+    MONAI's RandAdjustContrastd expects [0, 1] range. This wrapper:
+    1. Converts [-1, 1] to [0, 1]
+    2. Applies gamma adjustment
+    3. Converts back to [-1, 1]
+    """
+
+    def __init__(self, keys, prob: float = 0.1, gamma: tuple = (0.5, 4.5)):
+        """Initialize transform.
+
+        Args:
+            keys: Keys to apply transform to
+            prob: Probability of applying transform
+            gamma: Gamma range (min, max)
+        """
+        super().__init__(keys)
+        self.inner_transform = RandAdjustContrastd(
+            keys=keys, prob=prob, gamma=gamma
+        )
+
+    def __call__(self, data):
+        """Apply transform with range conversion."""
+        d = dict(data)
+
+        # Convert from [-1, 1] to [0, 1]
+        for key in self.keys:
+            d[key] = (d[key] + 1.0) / 2.0
+
+        # Apply gamma
+        d = self.inner_transform(d)
+
+        # Convert back from [0, 1] to [-1, 1]
+        for key in self.keys:
+            d[key] = d[key] * 2.0 - 1.0
+
+        return d
 
 
 class SegmentationTransforms:
@@ -88,11 +129,12 @@ class SegmentationTransforms:
             )
 
         if aug_cfg.random_gamma.enabled:
+            # Use custom transform that handles [-1, 1] data range
             transforms.append(
-                RandAdjustContrastd(
+                RandAdjustContrastdNeg1To1(
                     keys=["image"],
                     prob=aug_cfg.random_gamma.prob,
-                    gamma=aug_cfg.random_gamma.gamma_range,
+                    gamma=tuple(aug_cfg.random_gamma.gamma_range),
                 )
             )
 

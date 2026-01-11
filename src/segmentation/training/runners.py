@@ -14,8 +14,8 @@ from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from src.segmentation.callbacks.logging_callbacks import CSVLoggingCallback
-from src.segmentation.data.dataset import SegmentationSliceDataset
-from src.segmentation.data.splits import SubjectKFoldSplitter
+from src.segmentation.data.dataset import PlannedFoldDataset
+from src.segmentation.data.kfold_planner import KFoldPlanner
 from src.segmentation.data.transforms import SegmentationTransforms
 from src.segmentation.training.lit_module import SegmentationLitModule
 from src.segmentation.utils.seeding import seed_everything
@@ -36,14 +36,8 @@ class KFoldSegmentationRunner:
         self.output_dir = Path(cfg.experiment.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create k-fold splitter
-        self.splitter = SubjectKFoldSplitter(
-            cache_dir=cfg.data.real.cache_dir,
-            n_folds=cfg.k_fold.n_folds,
-            exclude_test=cfg.k_fold.exclude_test,
-            stratify_by=cfg.k_fold.stratify_by,
-            seed=cfg.k_fold.seed,
-        )
+        # Create k-fold planner (handles real + synthetic data mixing)
+        self.planner = KFoldPlanner(cfg)
 
         # Determine which folds to run
         self.folds_to_run = cfg.k_fold.folds_to_run or list(
@@ -65,7 +59,7 @@ class KFoldSegmentationRunner:
             logger.info(f"{'='*80}\n")
 
             # Print fold statistics
-            self.splitter.print_fold_statistics(fold_idx)
+            self.planner.print_fold_statistics(fold_idx)
 
             # Train fold
             fold_result = self.train_fold(fold_idx)
@@ -163,10 +157,8 @@ class KFoldSegmentationRunner:
         Returns:
             (train_loader, val_loader) tuple
         """
-        # Get subject-level splits
-        train_samples, val_samples = self.splitter.get_fold_sample_lists(
-            fold_idx
-        )
+        # Get samples from planner (handles real + synthetic mixing)
+        train_samples, val_samples = self.planner.get_fold(fold_idx)
 
         # Build transforms
         train_transforms = SegmentationTransforms.build_train_transforms(
@@ -176,31 +168,23 @@ class KFoldSegmentationRunner:
             self.cfg
         )
 
-        # Create datasets
-        train_dataset = SegmentationSliceDataset(
+        # Create datasets using PlannedFoldDataset (works with NPZ replicas)
+        train_dataset = PlannedFoldDataset(
+            samples=train_samples,
             real_cache_dir=Path(self.cfg.data.real.cache_dir),
-            real_csv=train_samples,  # Pass sample list directly
             synthetic_dir=(
                 Path(self.cfg.data.synthetic.samples_dir)
                 if self.cfg.data.synthetic.enabled
                 else None
             ),
-            synthetic_csv=(
-                self.cfg.data.synthetic.index_csv
-                if self.cfg.data.synthetic.enabled
-                else None
-            ),
-            synthetic_ratio=self.cfg.data.synthetic.ratio,
             transform=train_transforms,
             mask_threshold=self.cfg.data.mask.binarize_threshold,
         )
 
-        val_dataset = SegmentationSliceDataset(
+        val_dataset = PlannedFoldDataset(
+            samples=val_samples,
             real_cache_dir=Path(self.cfg.data.real.cache_dir),
-            real_csv=val_samples,
-            synthetic_dir=None,
-            synthetic_csv=None,
-            synthetic_ratio=0.0,
+            synthetic_dir=None,  # Validation uses only real data
             transform=val_transforms,
             mask_threshold=self.cfg.data.mask.binarize_threshold,
         )
@@ -248,7 +232,7 @@ class KFoldSegmentationRunner:
         """Create weighted sampler for class balancing.
 
         Args:
-            dataset: Training dataset
+            dataset: Training dataset (PlannedFoldDataset)
 
         Returns:
             WeightedRandomSampler
@@ -259,7 +243,8 @@ class KFoldSegmentationRunner:
         lesion_weight = self.cfg.training.class_balancing.lesion_weight
 
         for sample in dataset.samples:
-            if sample["has_lesion"]:
+            # SampleRecord uses .has_lesion attribute
+            if sample.has_lesion:
                 weights.append(lesion_weight)
             else:
                 weights.append(1.0)

@@ -52,12 +52,14 @@ class HausdorffDistance95:
         Args:
             cfg: Configuration with metrics.hd95 section
         """
+        self.percentile = cfg.metrics.hd95.percentile
+        self.spacing = cfg.metrics.hd95.spacing
+        # Create metric with spacing for physical distance computation
         self.metric = HausdorffDistanceMetric(
             include_background=False,
-            percentile=cfg.metrics.hd95.percentile,
+            percentile=self.percentile,
             reduction="mean_batch",
         )
-        self.spacing = cfg.metrics.hd95.spacing
 
     def __call__(
         self, preds: torch.Tensor, targets: torch.Tensor
@@ -69,7 +71,7 @@ class HausdorffDistance95:
             targets: Binary ground truth (B, 1, H, W)
 
         Returns:
-            HD95 distance (scalar). Returns NaN if no valid samples.
+            HD95 distance in physical units (scalar). Returns NaN if no valid samples.
         """
         try:
             # Check if both pred and target have foreground
@@ -80,8 +82,9 @@ class HausdorffDistance95:
             if not valid_mask.any():
                 return torch.tensor(float("nan"), device=preds.device)
 
-            # Compute HD95 only on valid samples
-            hd95 = self.metric(preds, targets)
+            # Compute HD95 with physical spacing
+            # MONAI HausdorffDistanceMetric accepts spacing in __call__
+            hd95 = self.metric(preds, targets, spacing=self.spacing)
 
             # Flatten if necessary (B, 1) -> (B,)
             if hd95.dim() > 1:
