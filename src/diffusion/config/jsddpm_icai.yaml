@@ -1,0 +1,310 @@
+# JS-DDPM Configuration
+# Joint-Synthesis DDPM for paired FLAIR/lesion mask generation
+
+# =============================================================================
+# Experiment Metadata
+# =============================================================================
+experiment:
+  name: "jsddpm_sinus_kendall_weighted_anatomicalprior"
+  output_dir: "./outputs/jsddpm_sinus_kendall_weighted_anatomicalprior"
+  seed: 42
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  root_dir: "/media/hddb/mario/data/epilepsy/real"
+  cache_dir: "${data.root_dir}/slice_cache"
+
+  epilepsy:
+    name: "Dataset210_MRIe_none"
+    modality_index: 0  # 0=FLAIR, 1=T1N
+
+  control:
+    name: "Dataset310_MRIcontrol_none"
+    modality_index: 0  # 0=FLAIR, 1=T1N
+
+  splits:
+    use_predefined_test: true  # Use imagesTs/labelsTs as test set
+    val_fraction: 0.1          # Fraction of train subjects for validation
+    control_test_fraction: 0.15  # Fraction of control subjects for test
+    seed: 42
+
+  transforms:
+    target_spacing: [1.875, 1.875, 1.875]  # mm - yields ~128^3 from ~188x232x196
+    roi_size: [128, 128, 128]
+    intensity_norm:
+      type: "percentile"  # Options: "percentile", "minmax"
+      lower: 0.5
+      upper: 99.5
+      b_min: -1.0
+      b_max: 1.0
+      clip: true
+
+  slice_sampling:
+    z_range: [24, 93]  # Valid z indices after resampling [min_z, max_z] (inclusive)
+                       # IMPORTANT: Only slices in this range will be cached and used for training/generation
+                       # Example: [40, 100] will only use slices 40-100, ignoring top/bottom slices
+    filter_empty_brain: true
+    brain_threshold: -0.9  # Threshold for considering pixel as brain in [-1,1] space
+    brain_min_fraction: 0.05  # Minimum fraction of brain pixels to keep slice
+
+  lesion_oversampling:
+    enabled: true
+    weight: 5.0  # Weight multiplier for slices with lesions
+
+# =============================================================================
+# Conditioning Configuration
+# =============================================================================
+conditioning:
+  z_bins: 30  # Number of bins for z-position quantization
+  # Token mapping: token = z_bin + class * z_bins
+  # class=0: no lesion (control or empty epilepsy slice)
+  # class=1: lesion present
+  # Total classes: 2 * z_bins = 100
+
+  # Z-position encoding options
+  use_sinusoidal: true  # Use sinusoidal position encoding for z-position (default: false)
+  max_z: 128  # Maximum z-index for sinusoidal encoding
+
+  # Classifier-free guidance (CFG)
+  cfg:
+    enabled: false  # Enable/disable CFG
+    null_token: 60  # Special token for unconditional generation (2*z_bins = 2*30 = 60)
+    dropout_prob: 0.1  # Probability of dropping condition during training
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+model:
+  type: "DiffusionModelUNet"
+  spatial_dims: 2
+  in_channels: 2   # [image, mask] - factory.py auto-increases to 3 when anatomical_conditioning=true
+  out_channels: 2  # [image, mask]
+  anatomical_conditioning: true  # Uses z-bin priors as input channel for spatial guidance
+                                 # factory.py automatically handles in_channels += 1
+                                 # Requires postprocessing.zbin_priors.enabled = true
+  # UNet architecture
+  channels: [64, 128, 256, 256]
+  attention_levels: [false, false, true, true]
+  num_res_blocks: 2
+  num_head_channels: 32
+
+  # Normalization
+  norm_name: "GROUP"
+  norm_num_groups: 32
+
+  # Conditioning via class embeddings
+  # num_class_embeds = 2 * z_bins (+ 1 if CFG enabled)
+  use_class_embedding: true
+
+  # Dropout for regularization
+  dropout: 0.0
+
+  # Resblock updown
+  resblock_updown: false
+
+  # Cross-attention (not used for class conditioning)
+  with_conditioning: false
+
+# =============================================================================
+# Diffusion Scheduler Configuration
+# =============================================================================
+scheduler:
+  type: "DDPM"
+  num_train_timesteps: 1000
+
+  # Beta schedule
+  schedule: "cosine"  # Options: "linear_beta", "scaled_linear_beta", "sigmoid_beta", "cosine"
+
+  # Used for linear and scaled_linear schedules
+  beta_start: 0.0015
+  beta_end: 0.0195
+  # Used for sigmoid schedule
+  sig_range: 6.0
+
+  # Prediction type
+  prediction_type: "epsilon"  # Options: "epsilon", "sample", "v_prediction"
+
+  # Clip sample during sampling
+  clip_sample: true
+  clip_sample_range: 1.0
+
+# =============================================================================
+# Sampler Configuration (for generation/visualization)
+# =============================================================================
+sampler:
+  type: "DDIM"
+  num_inference_steps: 200  # Increased from 100 for smoother denoising
+  eta: 0.0  # 0.0 = deterministic DDIM, 1.0 = DDPM
+
+  # Classifier-free guidance scale
+  guidance_scale: 1.0  # 1.0 = no guidance, >1.0 = stronger conditioning
+
+# =============================================================================
+# Training Configuration
+# =============================================================================
+training:
+  # Batch size and workers
+  batch_size: 32
+  num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues (was 4)
+                   # Can increase to 1-2 if using spawn method, but 0 is safest
+  pin_memory: true
+
+  # Optimizer
+  optimizer:
+    type: "AdamW"
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+
+  # Learning rate scheduler
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: null  # Set to max_epochs if null
+    eta_min: 1.0e-6
+
+    # Example for ReduceLROnPlateau:
+    # type: "ReduceLROnPlateau"
+    # factor: 0.5  # Factor by which the learning rate will be reduced
+    # patience: 10 # Number of epochs with no improvement after which learning rate will be reduced
+
+  # Training duration
+  max_epochs: 500
+  max_steps: null  # Override epochs if set
+
+  # Precision and gradient handling
+  precision: "16-mixed"  # Options: "32", "16-mixed", "bf16-mixed"
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: "norm"
+  accumulate_grad_batches: 1
+
+  # Validation frequency
+  val_check_interval: 1.0  # Check validation every epoch
+  check_val_every_n_epoch: 1
+
+  # Early stopping (optional)
+  early_stopping:
+    enabled: false
+    monitor: "val/loss"
+    patience: 20
+    mode: "min"
+
+  # Exponential Moving Average (EMA)
+  ema:
+    enabled: true
+    decay: 0.999  # CORRECTED: Was 0.9999, which was too slow. 0.999 is a common, effective value.
+    update_every: 10
+    update_start_step: 0      # Start EMA updates from the beginning.
+    store_on_cpu: true        # Saves GPU memory.
+    use_buffers: true         # Track buffers like BatchNorm stats.
+    use_for_validation: true
+    export_to_checkpoint: false # Optionally save EMA weights in checkpoints.
+
+# =============================================================================
+# Loss Configuration
+# =============================================================================
+loss:
+  # Uncertainty weighting (Kendall et al.)
+  uncertainty_weighting:
+    enabled: true  # ENABLED: Essential for multi-task learning balance
+    initial_log_vars: [0.0, 0.0]  # [image, mask]
+    learnable: true
+    clamp_range: [-5.0, 5.0] # Min/max for clamping log_vars to prevent instability
+
+  # Optional lesion-weighted mask loss
+  lesion_weighted_mask:
+    enabled: true  # ENABLED: Improves lesion detection by upweighting lesion pixels
+    lesion_weight: 1.5  # Extra weight for lesion pixels
+    background_weight: 1.0  
+
+# =============================================================================
+# Postprocessing Configuration
+# =============================================================================
+postprocessing:
+  zbin_priors:
+    enabled: true  # Toggle to enable/disable z-bin prior postprocessing
+    priors_filename: "zbin_priors_brain_roi.npz"  # Filename in cache_dir
+    prob_threshold: 0.20  # Probability threshold for ROI mask from occupancy
+    dilate_radius_px: 3  # Dilation radius (pixels) for ROI tolerance
+    gaussian_sigma_px: 0.7  # Gaussian smoothing sigma for thresholding
+    min_component_px: 500  # Minimum connected component size (pixels)
+    n_first_bins: 5  # Number of low z-bins for multi-component handling (near neck/brainstem)
+    max_components_for_first_bins: 3  # Keep top N largest components for first bins
+    relaxed_threshold_factor: 0.1 # Factor for relaxed threshold on smaller components
+    fallback: "prior"  # Options: "prior" (use ROI as mask), "empty" (zero out)
+    apply_to: ["validation", "visualization", "generation"]  # Where to apply
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  log_every_n_steps: 50
+
+  # Logger type - USE WANDB FOR SLURM
+  logger:
+    type: "wandb"  # Better for remote/cluster computing
+    wandb:
+      project: "jsddpm-epilepsy"
+      entity: "mario-pg02-icai-org"  # Set to your wandb username/team
+      # Optional settings:
+      name: jsddpm_epilepsy_flair  # Run name (auto-generated if null)
+      tags: ["epilepsy", "diffusion", "jsddpm"]
+      notes: "Training JS-DDPM on cluster"
+      offline: true  # Set true to sync later (REQUIRED for cluster nodes without internet)
+
+  # Checkpointing
+  checkpointing:
+    save_top_k: 3
+    monitor: "val/loss"
+    mode: "min"
+    save_last: true
+    every_n_epochs: 1
+    filename: "jsddpm-{epoch:04d}-{val_loss:.4f}"
+
+# =============================================================================
+# Visualization Configuration
+# =============================================================================
+visualization:
+  enabled: true
+  every_n_epochs: 1
+
+  # Z-bins for visualization (automatically validated against z_range)
+  # - Bins outside the training range (z_range) will be filtered out with a warning
+  # - If all bins are invalid or null/empty, will auto-select 5 evenly-spaced bins
+  # - Set to null for automatic selection based on your z_range
+  z_bins_to_show: null  # Auto-select bins matching z_range
+  # z_bins_to_show: [0, 12, 25, 37, 49]  # Manual selection (full volume)
+
+  # Number of samples per condition (for statistics; visualization uses 1)
+  n_samples_per_condition: 1
+
+  # Overlay settings for lesion mask
+  overlay:
+    enabled: true
+    alpha: 0.5
+    color: [255, 0, 0]  # RGB for lesion overlay
+    threshold: 0.0  # Threshold for binarizing mask in [-1,1] space
+
+  # Output format
+  save_png: true
+  save_npz: false
+
+# =============================================================================
+# Generation Configuration (for runners/generate.py)
+# =============================================================================
+generation:
+  # Default settings for synthetic dataset generation
+  n_per_condition: 100  # Samples per (z_bin, class) combination
+
+  # Z-bins to generate (null = all)
+  z_bins: null
+
+  # Classes to generate
+  classes: [0, 1]  # 0=control/empty, 1=lesion
+
+  # Output format
+  output_format: "npz"  # Options: "npz", "nifti"
+  save_individual: true
+  create_index_csv: true
