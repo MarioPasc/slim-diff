@@ -7,11 +7,11 @@ and executes training runs in a structured manner.
 
 Usage:
     # Dry run: create planification and folder structure only
-    python -m src.segmentation.cli.experiment_orchestrator \\
-        --experiments real_only,real_synthetic_balance \\
-        --models unet,dynunet \\
-        --output-dir ./outputs/experiments \\
-        --device 0,1 \\
+    python -m src.segmentation.cli.experiment_orchestrator \
+        --experiments real_only,real_synthetic_balance,real_synthetic_concat,synthetic_only \
+        --models unet,dynunet,swinunetr,unetplusplus \
+        --output-dir /media/hddb/mario/results/epilepsy/segmentation \
+        --device 0,1 \
         --dry-run
 
     # Full execution

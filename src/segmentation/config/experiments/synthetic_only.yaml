@@ -19,7 +19,7 @@ data:
   # Real data
   real:
     enabled: false
-    cache_dir: "/media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache"
+    cache_dir: "/media/hddb/mario/data/epilepsy/real/slice_cache"
     train_csv: "train.csv"
     val_csv: "val.csv"
     test_csv: "test.csv"  # Excluded from k-fold, used for final per-fold evaluation
@@ -27,11 +27,11 @@ data:
   # Synthetic data
   synthetic:
     enabled: true
-    samples_dir: "/media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas"  # e.g., "./outputs/diffusion/generated_samples"
+    samples_dir: "/media/hddb/mario/data/epilepsy/synth/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas"  # e.g., "./outputs/diffusion/generated_samples"
     # Replicas to use
     replicas: 
-      - "replica_019.npz"  # Each replica has 30 zbins * 2 conditions (lesion/no lesion) * 150 samples = 9000 samples
-      - "replica_018.npz"  # Add more replicas as needed
+      - "replica_009.npz"  # Each replica has 30 zbins * 2 conditions (lesion/no lesion) * 150 samples = 9000 samples
+      - "replica_008.npz"  # Add more replicas as needed
     
     merging_strategy: "concat" # Options: "concat", "balance"
 
