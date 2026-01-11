@@ -10,8 +10,10 @@ from pathlib import Path
 import numpy as np
 import pytorch_lightning as pl
 import torch
+import wandb
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from src.segmentation.callbacks.logging_callbacks import CSVLoggingCallback
@@ -114,10 +116,13 @@ class KFoldSegmentationRunner:
         # Create model
         model = SegmentationLitModule(fold_cfg)
 
-        # Create callbacks
-        callbacks = self._build_callbacks(fold_cfg, fold_idx)
+        # Create logger (optional, based on config)
+        wandb_logger = self._build_logger(fold_cfg, fold_idx)
 
-        # Create trainer (no wandb logger)
+        # Create callbacks (LearningRateMonitor only if we have a logger)
+        callbacks = self._build_callbacks(fold_cfg, fold_idx, has_logger=wandb_logger is not None)
+
+        # Create trainer
         trainer = pl.Trainer(
             default_root_dir=fold_dir,
             max_epochs=fold_cfg.training.max_epochs,
@@ -130,7 +135,7 @@ class KFoldSegmentationRunner:
             check_val_every_n_epoch=fold_cfg.training.check_val_every_n_epoch,
             log_every_n_steps=fold_cfg.logging.log_every_n_steps,
             callbacks=callbacks,
-            logger=False,  # Disable default logger, using CSV only
+            logger=wandb_logger,  # Can be None
             enable_progress_bar=True,
             accelerator="auto",
             devices="auto",
@@ -165,6 +170,10 @@ class KFoldSegmentationRunner:
             "best_model_path": best_model_path,
             "test_results": test_results,
         }
+
+        # Finish wandb run if enabled
+        if wandb_logger is not None:
+            wandb.finish()
 
         return fold_result
 
@@ -389,12 +398,13 @@ class KFoldSegmentationRunner:
             replacement=True,
         )
 
-    def _build_callbacks(self, cfg: DictConfig, fold_idx: int):
+    def _build_callbacks(self, cfg: DictConfig, fold_idx: int, has_logger: bool = True):
         """Build callbacks for training.
 
         Args:
             cfg: Configuration
             fold_idx: Fold index
+            has_logger: Whether a logger is configured (required for LearningRateMonitor)
 
         Returns:
             List of callbacks
@@ -413,8 +423,9 @@ class KFoldSegmentationRunner:
         )
         callbacks.append(checkpoint_callback)
 
-        # Learning rate monitor
-        callbacks.append(LearningRateMonitor(logging_interval="epoch"))
+        # Learning rate monitor (only if we have a logger)
+        if has_logger:
+            callbacks.append(LearningRateMonitor(logging_interval="epoch"))
 
         # CSV logging
         if cfg.logging.csv.enabled:
@@ -434,6 +445,30 @@ class KFoldSegmentationRunner:
             )
 
         return callbacks
+
+    def _build_logger(self, cfg: DictConfig, fold_idx: int):
+        """Build W&B logger (optional, based on config).
+
+        Args:
+            cfg: Configuration
+            fold_idx: Fold index
+
+        Returns:
+            WandbLogger or None
+        """
+        if not cfg.logging.wandb.enabled:
+            return None
+
+        return WandbLogger(
+            project=cfg.logging.wandb.project,
+            entity=cfg.logging.wandb.entity,
+            name=cfg.experiment.name,
+            save_dir=Path(cfg.experiment.output_dir) / "logs",
+            offline=cfg.logging.wandb.offline,
+            tags=list(cfg.logging.wandb.tags) + [f"fold_{fold_idx}"],
+            group=cfg.model.name,
+            job_type=f"fold_{fold_idx}",
+        )
 
     def _aggregate_results(self, fold_results: list):
         """Aggregate results across folds.
