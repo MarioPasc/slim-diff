@@ -38,6 +38,15 @@ warnings.filterwarnings("ignore", message=".*prediction of class 0 is all 0.*")
 torch.set_float32_matmul_precision('medium')
 
 
+def _worker_init_fn(worker_id: int) -> None:
+    """Initialize DataLoader worker with unique seed.
+
+    Must be defined at module level for pickling with spawn context.
+    """
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+
+
 class KFoldSegmentationRunner:
     """Runner for k-fold cross-validation segmentation."""
 
@@ -240,17 +249,11 @@ class KFoldSegmentationRunner:
         num_workers = self.cfg.training.num_workers
         use_persistent = num_workers > 0
 
-        # Worker init function for proper multiprocessing
-        def worker_init_fn(worker_id):
-            # Set unique seed per worker to avoid duplicate data
-            worker_seed = torch.initial_seed() % 2**32
-            np.random.seed(worker_seed)
-
-        # Common DataLoader kwargs
+        # Common DataLoader kwargs (uses module-level _worker_init_fn for pickle compatibility)
         loader_kwargs = {
             "num_workers": num_workers,
             "pin_memory": self.cfg.training.pin_memory if num_workers > 0 else False,
-            "worker_init_fn": worker_init_fn if num_workers > 0 else None,
+            "worker_init_fn": _worker_init_fn if num_workers > 0 else None,
             "prefetch_factor": 2 if num_workers > 0 else None,
             "persistent_workers": use_persistent,
             "multiprocessing_context": "spawn" if num_workers > 0 else None,
@@ -383,10 +386,6 @@ class KFoldSegmentationRunner:
         num_workers = self.cfg.training.num_workers
         use_persistent = num_workers > 0
 
-        def worker_init_fn(worker_id):
-            worker_seed = torch.initial_seed() % 2**32
-            np.random.seed(worker_seed)
-
         test_loader = DataLoader(
             test_dataset,
             batch_size=self.cfg.training.batch_size,
@@ -394,7 +393,7 @@ class KFoldSegmentationRunner:
             num_workers=num_workers,
             pin_memory=self.cfg.training.pin_memory if num_workers > 0 else False,
             drop_last=False,
-            worker_init_fn=worker_init_fn if num_workers > 0 else None,
+            worker_init_fn=_worker_init_fn if num_workers > 0 else None,
             prefetch_factor=2 if num_workers > 0 else None,
             persistent_workers=use_persistent,
             multiprocessing_context="spawn" if num_workers > 0 else None,
