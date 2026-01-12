@@ -6,13 +6,18 @@ and data configurations. It creates a planification CSV, assigns experiments to 
 and executes training runs in a structured manner.
 
 Usage:
-    # Dry run: create planification and folder structure only
+    # --dry-run: create planification and folder structure only
     python -m src.segmentation.cli.experiment_orchestrator \
-        --experiments real_only,real_synthetic_balance,real_synthetic_concat,synthetic_only \
+        --experiments real_only,real_synthetic_balance \
         --models unet,dynunet,swinunetr \
         --output-dir /media/hddb/mario/results/epilepsy/segmentation \
-        --device 0,1 \
-        --dry-run
+        --device 0 
+
+    python -m src.segmentation.cli.experiment_orchestrator \
+        --experiments real_synthetic_concat,synthetic_only \
+        --models unet,dynunet,swinunetr \
+        --output-dir /media/hddb/mario/results/epilepsy/segmentation \
+        --device 1 
 
     # Full execution
     python -m src.segmentation.cli.experiment_orchestrator \\

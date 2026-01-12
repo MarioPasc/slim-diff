@@ -41,14 +41,14 @@ Usage (multi-split, for uniform replicas):
         --train-dist-csv /home/mariopascual/projects/diffusion/js-ddpm-epilepsy/docs/train_analysis/train_zbin_distribution.csv \
         --val-slices-csv /media/hddb/mario/data/epilepsy/real/slice_cache/val.csv \
         --val-dist-csv /home/mariopascual/projects/diffusion/js-ddpm-epilepsy/docs/val_analysis/val_zbin_distribution.csv \
-        --output-dir /media/hddb/mario/data/epilepsy/synth/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality \
-        --subset-size 1000 \
-        --num-subsets 100 \
-        --merge-replicas 1
-        
-        --test-slices-csv /media/hddb/mario/data/epilepsy/real/slice_cache/slice_cache/test.csv \
+        --test-slices-csv /media/hddb/mario/data/epilepsy/real/slice_cache/test.csv \
         --test-dist-csv /home/mariopascual/projects/diffusion/js-ddpm-epilepsy/docs/test_analysis/test_zbin_distribution.csv \
-
+        --output-dir /media/hddb/mario/data/epilepsy/synth/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality \
+        --subset-size 250 \
+        --num-subsets 100 \
+        --merge-replicas 2
+        
+        
     The real image set will be the union of all provided splits.
 """
 

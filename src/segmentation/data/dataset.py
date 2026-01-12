@@ -72,10 +72,15 @@ class PlannedFoldDataset(Dataset):
 
         Returns:
             Loaded NPZ file
+
+        Note:
+            Uses mmap_mode='r' for safe multiprocessing with num_workers > 0.
+            Memory-maps the file in read-only mode instead of loading into RAM.
         """
         if replica_name not in self._replica_cache:
             replica_path = self.synthetic_dir / replica_name
-            self._replica_cache[replica_name] = np.load(replica_path)
+            # Use mmap_mode='r' for safe multiprocessing with num_workers > 0
+            self._replica_cache[replica_name] = np.load(replica_path, mmap_mode='r')
         return self._replica_cache[replica_name]
 
     def __len__(self) -> int:
