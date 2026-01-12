@@ -10,7 +10,16 @@ from pathlib import Path
 import numpy as np
 import pytorch_lightning as pl
 import torch
+import torch.multiprocessing as mp
 import wandb
+
+# Set multiprocessing start method to 'spawn' for CUDA compatibility
+# This must be done before any CUDA operations
+try:
+    mp.set_start_method('spawn', force=True)
+except RuntimeError:
+    pass  # Already set
+
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
@@ -231,23 +240,30 @@ class KFoldSegmentationRunner:
                 shuffle = False
 
         # Create dataloaders
+        num_workers = self.cfg.training.num_workers
+        use_persistent = num_workers > 0
+
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.cfg.training.batch_size,
             shuffle=shuffle,
             sampler=sampler,
-            num_workers=self.cfg.training.num_workers,
+            num_workers=num_workers,
             pin_memory=self.cfg.training.pin_memory,
             drop_last=True,
+            prefetch_factor=2 if num_workers > 0 else None,
+            persistent_workers=use_persistent,
         )
 
         val_loader = DataLoader(
             val_dataset,
             batch_size=self.cfg.training.batch_size,
             shuffle=False,
-            num_workers=self.cfg.training.num_workers,
+            num_workers=num_workers,
             pin_memory=self.cfg.training.pin_memory,
             drop_last=False,
+            prefetch_factor=2 if num_workers > 0 else None,
+            persistent_workers=use_persistent,
         )
 
         logger.info(
@@ -356,13 +372,16 @@ class KFoldSegmentationRunner:
         )
 
         # Create dataloader
+        num_workers = self.cfg.training.num_workers
         test_loader = DataLoader(
             test_dataset,
             batch_size=self.cfg.training.batch_size,
             shuffle=False,
-            num_workers=self.cfg.training.num_workers,
+            num_workers=num_workers,
             pin_memory=self.cfg.training.pin_memory,
             drop_last=False,
+            prefetch_factor=2 if num_workers > 0 else None,
+            persistent_workers=num_workers > 0,
         )
 
         logger.info(f"Created test dataloader: {len(test_dataset)} samples")
