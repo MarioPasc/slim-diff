@@ -79,27 +79,85 @@ class PlannedFoldDataset(Dataset):
         if n_synth > 0 and not self.synthetic_dir.exists():
             raise ValueError(f"Synthetic directory does not exist: {self.synthetic_dir}")
 
+        # Cache for replica arrays loaded into RAM
+        # Key: replica_name, Value: {"images": ndarray, "masks": ndarray}
+        # Preloading entire replicas into RAM avoids slow random access on external drives
+        self._replica_cache = {}
+
+        # Preload all unique replicas into RAM for fast access
+        if n_synth > 0:
+            self._preload_replicas()
+
         # Log dataset info
         logger.info(f"PlannedFoldDataset: {len(samples)} samples ({n_real} real, {n_synth} synthetic)")
 
-    def _load_replica(self, replica_name: str) -> np.lib.npyio.NpzFile:
-        """Load replica NPZ file without caching.
+    def _preload_replicas(self):
+        """Preload all unique replica files into RAM for fast access.
+
+        Loads entire image and mask arrays from replica NPZ files into memory.
+        This avoids slow random access on external drives during training.
+
+        Memory usage: ~1.2GB per replica (9000 images × 128×128 × 2 arrays × 4 bytes)
+        Supports up to 10 replicas (~12GB RAM total).
+        """
+        # Find all unique replica names
+        unique_replicas = set()
+        for sample in self.samples:
+            if sample.source == "synthetic":
+                replica_name = sample.filepath.split(":")[0]
+                unique_replicas.add(replica_name)
+
+        if not unique_replicas:
+            return
+
+        logger.info(f"Preloading {len(unique_replicas)} replica file(s) into RAM...")
+
+        for replica_name in sorted(unique_replicas):
+            replica_path = self.synthetic_dir / replica_name
+
+            # Check file size
+            file_size_mb = replica_path.stat().st_size / (1024 * 1024)
+            logger.info(f"  Loading {replica_name} ({file_size_mb:.1f} MB)...")
+
+            # Load entire arrays into RAM
+            with np.load(replica_path, mmap_mode=None) as data:
+                # Copy to memory immediately (no memory mapping)
+                images = np.array(data["images"], dtype=np.float32)
+                masks = np.array(data["masks"], dtype=np.float32)
+
+            self._replica_cache[replica_name] = {
+                "images": images,
+                "masks": masks,
+            }
+
+            logger.info(f"    Loaded {len(images)} samples into RAM")
+
+        total_samples = sum(len(data["images"]) for data in self._replica_cache.values())
+        ram_usage_gb = sum(
+            data["images"].nbytes + data["masks"].nbytes
+            for data in self._replica_cache.values()
+        ) / (1024**3)
+
+        logger.info(
+            f"Preloading complete: {total_samples} total samples, "
+            f"{ram_usage_gb:.2f} GB RAM used"
+        )
+
+    def _get_replica_data(self, replica_name: str) -> dict:
+        """Get cached replica data arrays.
 
         Args:
             replica_name: Name of the replica file
 
         Returns:
-            Loaded NPZ file
-
-        Note:
-            Uses mmap_mode='r' for efficient read-only memory mapping.
-            No caching is needed as OS-level page cache handles this efficiently,
-            and avoiding cache prevents multiprocessing pickle issues with num_workers > 0.
+            Dict with "images" and "masks" arrays
         """
-        replica_path = self.synthetic_dir / replica_name
-        # Use mmap_mode='r' for efficient memory-mapped access
-        # OS page cache will handle repeated access efficiently
-        return np.load(replica_path, mmap_mode='r')
+        if replica_name not in self._replica_cache:
+            raise RuntimeError(
+                f"Replica {replica_name} not in cache. This should not happen - "
+                "replicas should be preloaded in __init__."
+            )
+        return self._replica_cache[replica_name]
 
     def __len__(self) -> int:
         """Get dataset length."""
@@ -132,13 +190,11 @@ class PlannedFoldDataset(Dataset):
                 replica_name, idx_str = sample.filepath.split(":")
                 sample_idx = int(idx_str)
 
-                replica_data = self._load_replica(replica_name)
-                # Extract data and convert to arrays immediately
-                # This allows numpy to close the mmap file descriptor
-                image = np.array(replica_data["images"][sample_idx], dtype=np.float32)
-                mask = np.array(replica_data["masks"][sample_idx], dtype=np.float32)
-                # Close the NPZ file to free resources
-                replica_data.close()
+                # Get cached replica data (preloaded in RAM)
+                replica_data = self._get_replica_data(replica_name)
+                # Direct array access - no I/O, data is already in RAM
+                image = replica_data["images"][sample_idx]
+                mask = replica_data["masks"][sample_idx]
 
             # Convert mask: {-1, +1} -> {0, 1}
             mask_binary = (mask > self.mask_threshold).astype(np.float32)

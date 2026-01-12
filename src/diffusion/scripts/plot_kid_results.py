@@ -111,6 +111,8 @@ def plot_kid_results(
     image_zoom: float = 0.15,
     image_y_offset: float = 0.1,
     image_x_offset: float = 0.0,
+    hide_significance: bool = False,
+    brain_frac_csv: Path | None = None,
 ) -> None:
     """Create KID visualization plots.
 
@@ -118,7 +120,7 @@ def plot_kid_results(
         df_global: DataFrame from kid_replica_global.csv
         df_zbin: DataFrame from kid_replica_zbin.csv
         output_dir: Output directory for plots
-        title: Plot title
+        title: Plot title (not displayed if empty string)
         figsize: Figure size (width, height)
         show_delta: Whether to show delta_kid subplot
         formats: List of output formats (png, pdf, svg)
@@ -128,6 +130,8 @@ def plot_kid_results(
         image_zoom: Zoom level for images
         image_y_offset: Vertical offset fraction for images
         image_x_offset: Horizontal offset in data coordinates
+        hide_significance: Whether to hide significance markers (*)
+        brain_frac_csv: Path to CSV with mean_brain_frac per zbin (optional)
     """
     # Compute global KID statistics
     global_mean = df_global["kid_global"].mean()
@@ -174,25 +178,12 @@ def plot_kid_results(
     )
 
     # Plot per-zbin KID with error bars
-    colors = []
-    for code in signif_codes:
-        if pd.isna(code):
-            colors.append("steelblue")
-        elif code == "***":
-            colors.append("red")
-        elif code == "**":
-            colors.append("orange")
-        elif code == "*":
-            colors.append("gold")
-        else:
-            colors.append("steelblue")
-
     ax1.errorbar(
         zbins,
         kid_zbin_mean,
         yerr=kid_zbin_std,
         fmt="o",
-        markersize=6,
+        markersize=8,
         capsize=4,
         capthick=1.5,
         elinewidth=1.5,
@@ -200,48 +191,46 @@ def plot_kid_results(
         zorder=2,
         color="steelblue",
         ecolor="steelblue",
-        alpha=0.7,
+        markeredgecolor="black",
+        markeredgewidth=1,
+        alpha=0.8,
     )
-
-    # Color-code points by significance
-    for i, (zb, kid, code, color) in enumerate(zip(zbins, kid_zbin_mean, signif_codes, colors)):
-        ax1.scatter(zb, kid, s=80, c=color, edgecolors="black", linewidths=1, zorder=3)
 
     # Calculate Y-axis range for positioning
     y_min, y_max = ax1.get_ylim()
     data_range = y_max - y_min
     
-    # Add significance markers above points
-    # Logic: Only add if code is not NaN
-    y_offset = data_range * 0.05
-    
     # Track the maximum Y value reached by data + markers
     current_max_y = y_max
 
-    for zb, kid, std, code in zip(zbins, kid_zbin_mean, kid_zbin_std, signif_codes):
-        if code and not pd.isna(code):
-            text_y = kid + std + y_offset
-            ax1.text(
-                zb,
-                text_y,
-                code,
-                ha="center",
-                va="bottom",
-                fontsize=10,
-                fontweight="bold",
-                color="red" if code == "***" else "orange" if code == "**" else "gold",
-            )
-            current_max_y = max(current_max_y, text_y)
+    # Add significance markers above points (if not hidden)
+    if not hide_significance:
+        y_offset = data_range * 0.05
+        for zb, kid, std, code in zip(zbins, kid_zbin_mean, kid_zbin_std, signif_codes):
+            if code and not pd.isna(code):
+                text_y = kid + std + y_offset
+                ax1.text(
+                    zb,
+                    text_y,
+                    code,
+                    ha="center",
+                    va="bottom",
+                    fontsize=10,
+                    fontweight="bold",
+                    color="black",
+                )
+                current_max_y = max(current_max_y, text_y)
 
-    # ========== Representative Images ==========
+    # ========== Representative Images (outside plot, on top) ==========
     if include_images and test_csv:
         # Determine sampling z-bins
         sample_zbins = zbins[::image_step]
         images_map = load_representative_images(test_csv, sample_zbins)
 
         if images_map:
-            # Determine placement Y position (above highest data/marker)
-            image_y_pos = current_max_y + (data_range * image_y_offset)
+            # Calculate x positions in axes fraction coordinates
+            x_min, x_max = zbins[0] - 1, zbins[-1] + 1
+            x_range = x_max - x_min
             
             for zb in sample_zbins:
                 if zb in images_map:
@@ -254,29 +243,57 @@ def plot_kid_results(
                     # Create OffsetImage
                     im = OffsetImage(img_disp, zoom=image_zoom, cmap="gray")
                     
-                    # Add AnnotationBbox
-                    # xy is the position in data coordinates
+                    # Calculate x position in axes fraction (0 to 1)
+                    x_frac = (zb + image_x_offset - x_min) / x_range
+                    
+                    # Place image above the plot using axes fraction coordinates
+                    # y > 1.0 means above the axes
                     ab = AnnotationBbox(
                         im, 
-                        (zb + image_x_offset, image_y_pos),
-                        xybox=(0, 0),
-                        xycoords="data",
-                        boxcoords="offset points",
+                        (x_frac, 1.0 + image_y_offset),
+                        xycoords="axes fraction",
+                        boxcoords="axes fraction",
                         frameon=False,
-                        pad=0
+                        pad=0,
+                        box_alignment=(0.5, 0),  # Center horizontally, align bottom
                     )
                     ax1.add_artist(ab)
-            
-            # Extend Y-limit to accommodate images
-            # We estimate image height in data coords roughly, or just add buffer
-            # With data coords, the image size depends on zoom and dpi. 
-            # A simpler way is to just extend Y max significantly.
-            # Let's add 20% of range + the offset used
-            ax1.set_ylim(y_min, image_y_pos + (data_range * 0.2))
+
+    # ========== Secondary Y-axis: Mean Brain Fraction ==========
+    ax1_twin = None
+    if brain_frac_csv is not None and brain_frac_csv.exists():
+        df_brain = pd.read_csv(brain_frac_csv)
+        # Aggregate mean_brain_frac per zbin (across all rows: lesion_present, domain)
+        brain_stats = df_brain.groupby("zbin").agg(
+            total_slices=("n_slices", "sum"),
+            weighted_brain_frac=("mean_brain_frac", lambda x: np.average(x, weights=df_brain.loc[x.index, "n_slices"]))
+        ).reset_index()
+        
+        # Match zbins from KID data
+        brain_zbins = brain_stats["zbin"].values
+        brain_frac = brain_stats["weighted_brain_frac"].values
+        
+        # Create secondary y-axis
+        ax1_twin = ax1.twinx()
+        ax1_twin.plot(
+            brain_zbins,
+            brain_frac,
+            color="forestgreen",
+            linestyle="-",
+            linewidth=2,
+            marker="s",
+            markersize=5,
+            label="Mean Brain Fraction",
+            alpha=0.7,
+            zorder=1,
+        )
+        ax1_twin.set_ylabel("Mean Brain Fraction", fontsize=12, fontweight="bold", color="forestgreen")
+        ax1_twin.tick_params(axis="y", labelcolor="forestgreen")
+        ax1_twin.spines["right"].set_color("forestgreen")
 
     ax1.set_ylabel("KID", fontsize=12, fontweight="bold")
-    ax1.set_title(title, fontsize=14, fontweight="bold", pad=15)
-    ax1.legend(loc="upper right", fontsize=10, framealpha=0.9)
+    if title:  # Only set title if not empty
+        ax1.set_title(title, fontsize=14, fontweight="bold", pad=15)
     ax1.grid(True, alpha=0.3, linestyle=":", linewidth=0.8)
     # Ensure x-lim covers all bins
     ax1.set_xlim(zbins[0] - 1, zbins[-1] + 1)
@@ -305,9 +322,8 @@ def plot_kid_results(
             zorder=2,
         )
 
-        # Color-code points by significance
-        for i, (zb, delta, code, color) in enumerate(zip(zbins, delta_mean, signif_codes, colors)):
-            ax2.scatter(zb, delta, s=80, c=color, edgecolors="black", linewidths=1, zorder=3)
+        # Plot points (uniform color)
+        ax2.scatter(zbins, delta_mean, s=80, c="purple", edgecolors="black", linewidths=1, zorder=3)
 
         ax2.set_xlabel("Z-bin", fontsize=12, fontweight="bold")
         ax2.set_ylabel("Δ KID (bin - rest)", fontsize=11, fontweight="bold")
@@ -330,35 +346,28 @@ def plot_kid_results(
             alpha=0.05,
         )
 
-    # Add custom legend for significance codes
-    from matplotlib.patches import Patch
-
-    sig_legend_elements = [
-        Patch(facecolor="red", edgecolor="black", label="*** (q < 0.001)"),
-        Patch(facecolor="orange", edgecolor="black", label="** (q < 0.01)"),
-        Patch(facecolor="gold", edgecolor="black", label="* (q < 0.05)"),
-        Patch(facecolor="steelblue", edgecolor="black", label="n.s. (q ≥ 0.05)"),
-    ]
-
-    # Add second legend for significance in lower bottom if any significance present
-    any_significance = any(code and not pd.isna(code) for code in signif_codes)
-
-    if any_significance:
-        # Use figure legend to place it at the very bottom
-        fig.legend(
-            handles=sig_legend_elements,
-            loc="lower center",
-            ncol=4,
-            fontsize=9,
-            title="Significance",
-            framealpha=0.9,
-            bbox_to_anchor=(0.5, -0.02),
-        )
-        # Adjust layout to make room for legend at bottom
-        # Use rect to reserve space at the bottom (left, bottom, right, top)
-        plt.tight_layout(rect=[0, 0.05, 1, 1])
-    else:
-        plt.tight_layout()
+    # Collect legend handles from main axis
+    handles, labels = ax1.get_legend_handles_labels()
+    
+    # Add twin axis legend if present
+    if ax1_twin is not None:
+        handles_twin, labels_twin = ax1_twin.get_legend_handles_labels()
+        handles.extend(handles_twin)
+        labels.extend(labels_twin)
+    
+    # Place combined legend at the bottom, outside the plot
+    fig.legend(
+        handles=handles,
+        labels=labels,
+        loc="lower center",
+        ncol=len(handles),
+        fontsize=10,
+        framealpha=0.9,
+        bbox_to_anchor=(0.5, -0.02),
+    )
+    
+    # Adjust layout to make room for legend at bottom
+    plt.tight_layout(rect=[0, 0.06, 1, 1])
 
     # Save figure in requested formats
     for fmt in formats:
@@ -514,7 +523,7 @@ def print_summary_statistics(df_global: pd.DataFrame, df_zbin: pd.DataFrame) -> 
 
     # Top 5 bins with largest |delta_kid|
     delta_stats = df_zbin.groupby("zbin").agg({"delta_kid": "mean", "signif_code": "first"})
-    top_deltas = delta_stats.abs().sort_values("delta_kid", ascending=False).head(5)
+    top_deltas = delta_stats.reindex(delta_stats["delta_kid"].abs().sort_values(ascending=False).index).head(5)
 
     print("\nTop 5 bins with largest |Δ KID| (bin - rest):")
     for i, (zbin, row) in enumerate(top_deltas.iterrows()):
@@ -560,6 +569,9 @@ def main(args):
     # Generate plots
     print("\nGenerating plots...")
 
+    # Load brain frac CSV if provided
+    brain_frac_csv = Path(args.plot_mean_brain_frac) if args.plot_mean_brain_frac else None
+
     # Main KID plot
     plot_kid_results(
         df_global,
@@ -575,6 +587,8 @@ def main(args):
         image_zoom=args.image_zoom,
         image_y_offset=args.image_y_offset,
         image_x_offset=args.image_x_offset,
+        hide_significance=args.hide_significance,
+        brain_frac_csv=brain_frac_csv,
     )
 
     # Bin vs rest comparison plot
@@ -597,13 +611,7 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example usage:
-  python -m src.diffusion.scripts.plot_kid_results \\
-      --global-csv /path/to/kid_replica_global.csv \\
-      --zbin-csv /path/to/kid_replica_zbin.csv \\
-      --output-dir /path/to/output \\
-      --show-delta \\
-      --show-comparison \\
-      --format png,pdf
+    python -m src.diffusion.scripts.plot_kid_results --global-csv /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality/kid_replica_global.csv --zbin-csv /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality/kid_replica_zbin_merged2.csv --output-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality --format png --test-csv /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache/test.csv --include-image-samples --image-zoom 0.45 --image-x-offset 1 --plot-mean-brain-frac /home/mpascual/research/code/js-ddpm-epilepsy/docs/train_analysis/train_zbin_distribution.csv --hide-significance --image-y-offset 0.01
         """,
     )
     parser.add_argument(
@@ -627,8 +635,18 @@ Example usage:
     parser.add_argument(
         "--title",
         type=str,
-        default="KID Evaluation: Synthetic vs Test",
-        help="Plot title (default: 'KID Evaluation: Synthetic vs Test')",
+        default="",
+        help="Plot title (default: empty, no title displayed)",
+    )
+    parser.add_argument(
+        "--hide-significance",
+        action="store_true",
+        help="Hide significance markers (*) on the plot",
+    )
+    parser.add_argument(
+        "--plot-mean-brain-frac",
+        type=str,
+        help="Path to CSV with zbin distribution (e.g., train_zbin_distribution.csv) to plot mean brain fraction on secondary y-axis",
     )
     parser.add_argument(
         "--figsize",
