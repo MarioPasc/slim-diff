@@ -49,16 +49,37 @@ class PlannedFoldDataset(Dataset):
             synthetic_dir: Path to synthetic replicas directory
             transform: MONAI transforms to apply
             mask_threshold: Threshold for binarizing mask in {-1,+1} space
+
+        Raises:
+            ValueError: If samples is empty or directories don't exist
         """
+        # Validate inputs
+        if not samples:
+            raise ValueError("Cannot create dataset with empty samples list")
+
         self.samples = samples
         self.real_cache_dir = Path(real_cache_dir)
         self.synthetic_dir = Path(synthetic_dir) if synthetic_dir else None
         self.transform = transform
         self.mask_threshold = mask_threshold
 
-        # Log dataset info
+        # Validate directories exist
         n_real = sum(1 for s in samples if s.source == "real")
         n_synth = sum(1 for s in samples if s.source == "synthetic")
+
+        if n_real > 0 and not self.real_cache_dir.exists():
+            raise ValueError(f"Real cache directory does not exist: {self.real_cache_dir}")
+
+        if n_synth > 0 and self.synthetic_dir is None:
+            raise ValueError(
+                f"Dataset contains {n_synth} synthetic samples but synthetic_dir is None. "
+                "This usually happens in synthetic_only mode - make sure to pass synthetic_dir."
+            )
+
+        if n_synth > 0 and not self.synthetic_dir.exists():
+            raise ValueError(f"Synthetic directory does not exist: {self.synthetic_dir}")
+
+        # Log dataset info
         logger.info(f"PlannedFoldDataset: {len(samples)} samples ({n_real} real, {n_synth} synthetic)")
 
     def _load_replica(self, replica_name: str) -> np.lib.npyio.NpzFile:

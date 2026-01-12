@@ -225,10 +225,16 @@ class KFoldSegmentationRunner:
             mask_threshold=self.cfg.data.mask.binarize_threshold,
         )
 
+        # Validation needs synthetic_dir for synthetic_only mode
+        # In real+synthetic modes, planner only puts real samples in validation
         val_dataset = PlannedFoldDataset(
             samples=val_samples,
             real_cache_dir=Path(self.cfg.data.real.cache_dir),
-            synthetic_dir=None,  # Validation uses only real data
+            synthetic_dir=(
+                Path(self.cfg.data.synthetic.samples_dir)
+                if self.cfg.data.synthetic.enabled
+                else None
+            ),
             transform=val_transforms,
             mask_threshold=self.cfg.data.mask.binarize_threshold,
         )
@@ -249,6 +255,22 @@ class KFoldSegmentationRunner:
         num_workers = self.cfg.training.num_workers
         use_persistent = num_workers > 0
 
+        # Adjust batch size if dataset is too small
+        train_batch_size = min(self.cfg.training.batch_size, len(train_dataset))
+        val_batch_size = min(self.cfg.training.batch_size, len(val_dataset))
+
+        if train_batch_size < self.cfg.training.batch_size:
+            logger.warning(
+                f"Train dataset ({len(train_dataset)} samples) is smaller than batch_size "
+                f"({self.cfg.training.batch_size}). Reducing train batch_size to {train_batch_size}"
+            )
+
+        if val_batch_size < self.cfg.training.batch_size:
+            logger.warning(
+                f"Val dataset ({len(val_dataset)} samples) is smaller than batch_size "
+                f"({self.cfg.training.batch_size}). Reducing val batch_size to {val_batch_size}"
+            )
+
         # Common DataLoader kwargs (uses module-level _worker_init_fn for pickle compatibility)
         loader_kwargs = {
             "num_workers": num_workers,
@@ -262,16 +284,16 @@ class KFoldSegmentationRunner:
 
         train_loader = DataLoader(
             train_dataset,
-            batch_size=self.cfg.training.batch_size,
+            batch_size=train_batch_size,
             shuffle=shuffle,
             sampler=sampler,
-            drop_last=True,
+            drop_last=True if train_batch_size == self.cfg.training.batch_size else False,
             **loader_kwargs,
         )
 
         val_loader = DataLoader(
             val_dataset,
-            batch_size=self.cfg.training.batch_size,
+            batch_size=val_batch_size,
             shuffle=False,
             drop_last=False,
             **loader_kwargs,
@@ -321,10 +343,15 @@ class KFoldSegmentationRunner:
 
         # Load best checkpoint if available
         if best_model_path and Path(best_model_path).exists():
-            logger.info(f"Loading best checkpoint: {best_model_path}")
-            # Load checkpoint - weights_only=False is safe for checkpoints we created ourselves
-            checkpoint = torch.load(best_model_path, weights_only=False)
-            model.load_state_dict(checkpoint["state_dict"])
+            try:
+                logger.info(f"Loading best checkpoint: {best_model_path}")
+                # Load checkpoint - weights_only=False is safe for checkpoints we created ourselves
+                checkpoint = torch.load(best_model_path, weights_only=False, map_location="cpu")
+                model.load_state_dict(checkpoint["state_dict"])
+                logger.info("Successfully loaded checkpoint")
+            except Exception as e:
+                logger.error(f"Failed to load checkpoint: {e}")
+                logger.warning("Using current model weights instead")
         else:
             logger.warning("No checkpoint found, using current model weights")
 
@@ -386,9 +413,17 @@ class KFoldSegmentationRunner:
         num_workers = self.cfg.training.num_workers
         use_persistent = num_workers > 0
 
+        # Adjust batch size if needed
+        test_batch_size = min(self.cfg.training.batch_size, len(test_dataset))
+        if test_batch_size < self.cfg.training.batch_size:
+            logger.warning(
+                f"Test dataset ({len(test_dataset)} samples) is smaller than batch_size "
+                f"({self.cfg.training.batch_size}). Reducing test batch_size to {test_batch_size}"
+            )
+
         test_loader = DataLoader(
             test_dataset,
-            batch_size=self.cfg.training.batch_size,
+            batch_size=test_batch_size,
             shuffle=False,
             num_workers=num_workers,
             pin_memory=self.cfg.training.pin_memory if num_workers > 0 else False,
