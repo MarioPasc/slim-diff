@@ -15,22 +15,26 @@ def load_npz_sample(npz_path: Path | str) -> dict:
 
     Returns:
         Dictionary with 'image', 'mask', and metadata
+
+    Note:
+        Uses context manager to properly close file handles and prevent
+        file descriptor exhaustion with multiprocessing DataLoader workers.
     """
-    data = np.load(npz_path, allow_pickle=True)
+    with np.load(npz_path, allow_pickle=True) as data:
+        # Copy arrays to memory immediately to allow file closure
+        result = {
+            "image": np.array(data["image"]),  # (128, 128) float32 in [-1, 1]
+            "mask": np.array(data["mask"]),    # (128, 128) float32 in {-1, +1}
+        }
 
-    result = {
-        "image": data["image"],  # (128, 128) float32 in [-1, 1]
-        "mask": data["mask"],    # (128, 128) float32 in {-1, +1}
-    }
-
-    # Load metadata (stored as scalar arrays)
-    for key in data.files:
-        if key not in ("image", "mask"):
-            value = data[key]
-            # Convert scalar arrays to Python types
-            if hasattr(value, "ndim") and value.ndim == 0:
-                result[key] = value.item()
-            else:
-                result[key] = value
+        # Load metadata (stored as scalar arrays)
+        for key in data.files:
+            if key not in ("image", "mask"):
+                value = data[key]
+                # Convert scalar arrays to Python types
+                if hasattr(value, "ndim") and value.ndim == 0:
+                    result[key] = value.item()
+                else:
+                    result[key] = np.array(value)
 
     return result

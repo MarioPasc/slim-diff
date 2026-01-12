@@ -84,7 +84,7 @@ k_fold:
 training:
   # Batch size and workers
   batch_size: 128
-  num_workers: 0  # Using spawn method for CUDA compatibility
+  num_workers: 4  # Uses spawn context + timeout for CUDA compatibility
   pin_memory: true
 
   # Class balancing

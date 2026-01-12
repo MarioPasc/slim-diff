@@ -96,53 +96,59 @@ class PlannedFoldDataset(Dataset):
                 - mask: (1, H, W) float32 tensor in {0, 1}
                 - subject_id, has_lesion, source, z_bin
         """
-        sample = self.samples[idx]
+        try:
+            sample = self.samples[idx]
 
-        if sample.source == "real":
-            # Load from slice_cache NPZ
-            npz_path = self.real_cache_dir / sample.filepath
-            data = load_npz_sample(npz_path)
-            image = data["image"]  # (128, 128) in [-1, 1]
-            mask = data["mask"]    # (128, 128) in {-1, +1}
-        else:
-            # Load from replica NPZ
-            # filepath format: "replica_name.npz:index"
-            replica_name, idx_str = sample.filepath.split(":")
-            sample_idx = int(idx_str)
+            if sample.source == "real":
+                # Load from slice_cache NPZ
+                npz_path = self.real_cache_dir / sample.filepath
+                data = load_npz_sample(npz_path)
+                image = data["image"]  # (128, 128) in [-1, 1]
+                mask = data["mask"]    # (128, 128) in {-1, +1}
+            else:
+                # Load from replica NPZ
+                # filepath format: "replica_name.npz:index"
+                replica_name, idx_str = sample.filepath.split(":")
+                sample_idx = int(idx_str)
 
-            replica_data = self._load_replica(replica_name)
-            # Extract data and convert to arrays immediately
-            # This allows numpy to close the mmap file descriptor
-            image = np.array(replica_data["images"][sample_idx], dtype=np.float32)
-            mask = np.array(replica_data["masks"][sample_idx], dtype=np.float32)
-            # Close the NPZ file to free resources
-            replica_data.close()
+                replica_data = self._load_replica(replica_name)
+                # Extract data and convert to arrays immediately
+                # This allows numpy to close the mmap file descriptor
+                image = np.array(replica_data["images"][sample_idx], dtype=np.float32)
+                mask = np.array(replica_data["masks"][sample_idx], dtype=np.float32)
+                # Close the NPZ file to free resources
+                replica_data.close()
 
-        # Convert mask: {-1, +1} -> {0, 1}
-        mask_binary = (mask > self.mask_threshold).astype(np.float32)
+            # Convert mask: {-1, +1} -> {0, 1}
+            mask_binary = (mask > self.mask_threshold).astype(np.float32)
 
-        # Add channel dimension
-        image = image[np.newaxis, ...].astype(np.float32)  # (1, 128, 128)
-        mask_binary = mask_binary[np.newaxis, ...].astype(np.float32)  # (1, 128, 128)
+            # Add channel dimension
+            image = image[np.newaxis, ...].astype(np.float32)  # (1, 128, 128)
+            mask_binary = mask_binary[np.newaxis, ...].astype(np.float32)  # (1, 128, 128)
 
-        # Convert to torch
-        image = torch.from_numpy(image)
-        mask_binary = torch.from_numpy(mask_binary)
+            # Convert to torch
+            image = torch.from_numpy(image)
+            mask_binary = torch.from_numpy(mask_binary)
 
-        result = {
-            "image": image,
-            "mask": mask_binary,
-            "subject_id": sample.subject_id,
-            "has_lesion": sample.has_lesion,
-            "source": sample.source,
-            "z_bin": sample.z_bin,
-        }
+            result = {
+                "image": image,
+                "mask": mask_binary,
+                "subject_id": sample.subject_id,
+                "has_lesion": sample.has_lesion,
+                "source": sample.source,
+                "z_bin": sample.z_bin,
+            }
 
-        # Apply transforms
-        if self.transform is not None:
-            result = self.transform(result)
+            # Apply transforms
+            if self.transform is not None:
+                result = self.transform(result)
 
-        return result
+            return result
+
+        except Exception as e:
+            logger.error(f"Error loading sample {idx}: {e}")
+            logger.error(f"  Sample info: {self.samples[idx]}")
+            raise RuntimeError(f"Failed to load sample {idx}: {e}") from e
 
 
 class SegmentationSliceDataset(Dataset):

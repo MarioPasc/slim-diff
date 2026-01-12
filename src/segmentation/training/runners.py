@@ -4,22 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import warnings
 from pathlib import Path
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
-import torch.multiprocessing as mp
 import wandb
-
-# Set multiprocessing start method to 'spawn' for CUDA compatibility
-# This must be done before any CUDA operations
-try:
-    mp.set_start_method('spawn', force=True)
-except RuntimeError:
-    pass  # Already set
-
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
@@ -149,10 +141,15 @@ class KFoldSegmentationRunner:
             accelerator="auto",
             devices="auto",
             strategy="auto",
+            # Reduce sanity check to prevent hanging on validation
+            num_sanity_val_steps=2,
         )
 
         # Train
         logger.info(f"Training fold {fold_idx}...")
+        logger.info(f"  Train samples: {len(train_loader.dataset)}, Val samples: {len(val_loader.dataset)}")
+        logger.info(f"  Batch size: {fold_cfg.training.batch_size}, Num workers: {fold_cfg.training.num_workers}")
+        logger.info(f"  Starting trainer.fit()...")
         trainer.fit(model, train_loader, val_loader)
 
         # Extract best validation metrics
@@ -243,27 +240,38 @@ class KFoldSegmentationRunner:
         num_workers = self.cfg.training.num_workers
         use_persistent = num_workers > 0
 
+        # Worker init function for proper multiprocessing
+        def worker_init_fn(worker_id):
+            # Set unique seed per worker to avoid duplicate data
+            worker_seed = torch.initial_seed() % 2**32
+            np.random.seed(worker_seed)
+
+        # Common DataLoader kwargs
+        loader_kwargs = {
+            "num_workers": num_workers,
+            "pin_memory": self.cfg.training.pin_memory if num_workers > 0 else False,
+            "worker_init_fn": worker_init_fn if num_workers > 0 else None,
+            "prefetch_factor": 2 if num_workers > 0 else None,
+            "persistent_workers": use_persistent,
+            "multiprocessing_context": "spawn" if num_workers > 0 else None,
+            "timeout": 120 if num_workers > 0 else 0,  # 2 min timeout per batch
+        }
+
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.cfg.training.batch_size,
             shuffle=shuffle,
             sampler=sampler,
-            num_workers=num_workers,
-            pin_memory=self.cfg.training.pin_memory,
             drop_last=True,
-            prefetch_factor=2 if num_workers > 0 else None,
-            persistent_workers=use_persistent,
+            **loader_kwargs,
         )
 
         val_loader = DataLoader(
             val_dataset,
             batch_size=self.cfg.training.batch_size,
             shuffle=False,
-            num_workers=num_workers,
-            pin_memory=self.cfg.training.pin_memory,
             drop_last=False,
-            prefetch_factor=2 if num_workers > 0 else None,
-            persistent_workers=use_persistent,
+            **loader_kwargs,
         )
 
         logger.info(
@@ -371,17 +379,26 @@ class KFoldSegmentationRunner:
             mask_threshold=self.cfg.data.mask.binarize_threshold,
         )
 
-        # Create dataloader
+        # Create dataloader with same config as train/val
         num_workers = self.cfg.training.num_workers
+        use_persistent = num_workers > 0
+
+        def worker_init_fn(worker_id):
+            worker_seed = torch.initial_seed() % 2**32
+            np.random.seed(worker_seed)
+
         test_loader = DataLoader(
             test_dataset,
             batch_size=self.cfg.training.batch_size,
             shuffle=False,
             num_workers=num_workers,
-            pin_memory=self.cfg.training.pin_memory,
+            pin_memory=self.cfg.training.pin_memory if num_workers > 0 else False,
             drop_last=False,
+            worker_init_fn=worker_init_fn if num_workers > 0 else None,
             prefetch_factor=2 if num_workers > 0 else None,
-            persistent_workers=num_workers > 0,
+            persistent_workers=use_persistent,
+            multiprocessing_context="spawn" if num_workers > 0 else None,
+            timeout=120 if num_workers > 0 else 0,  # 2 min timeout per batch
         )
 
         logger.info(f"Created test dataloader: {len(test_dataset)} samples")
