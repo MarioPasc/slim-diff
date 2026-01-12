@@ -1,10 +1,11 @@
 """K-fold planner for segmentation with real + synthetic data support.
 
-Handles four scenarios:
+Handles five scenarios:
 1. Real data only (synthetic.enabled: false)
 2. Real + Synthetic with concat strategy
 3. Real + Synthetic with balance strategy
 4. Synthetic data only (real.enabled: false)
+5. Synthetic for training, real for val/test (synthetic.training_only: true)
 
 The planner generates a unified CSV with columns:
 - fold, split, subject_id, image_path, mask_path, has_lesion_slice, has_lesion_subject,
@@ -100,8 +101,11 @@ class KFoldPlanner:
         self.real_enabled = cfg.data.real.enabled
         self.synthetic_enabled = cfg.data.synthetic.enabled
 
+        # Check for training_only mode: synthetic for training, real for val/test
+        self.synthetic_training_only = cfg.data.synthetic.get("training_only", False) if self.synthetic_enabled else False
+
         # Paths
-        self.real_cache_dir = Path(cfg.data.real.cache_dir) if self.real_enabled else None
+        self.real_cache_dir = Path(cfg.data.real.cache_dir) if self.real_enabled or self.synthetic_training_only else None
         self.synthetic_dir = Path(cfg.data.synthetic.samples_dir) if self.synthetic_enabled else None
 
         # Synthetic configuration
@@ -127,15 +131,16 @@ class KFoldPlanner:
         # Load data
         self._load_data()
 
-        # Create folds if real data is available
-        if self.real_enabled and self.real_subjects:
+        # Create folds if real data is available (for validation)
+        if (self.real_enabled or self.synthetic_training_only) and self.real_subjects:
             self._create_folds()
 
         self._log_summary()
 
     def _load_data(self):
         """Load both real and synthetic data."""
-        if self.real_enabled:
+        # Load real data if enabled OR if using synthetic_training_only mode
+        if self.real_enabled or self.synthetic_training_only:
             self._load_real_data()
 
         if self.synthetic_enabled and self.replicas:
@@ -323,12 +328,16 @@ class KFoldPlanner:
         logger.info(f"  - real_enabled: {self.real_enabled}")
         logger.info(f"  - synthetic_enabled: {self.synthetic_enabled}")
         if self.synthetic_enabled:
+            logger.info(f"  - synthetic_training_only: {self.synthetic_training_only}")
             logger.info(f"  - replicas: {self.replicas}")
-            logger.info(f"  - merging_strategy: {self.merging_strategy}")
+            if not self.synthetic_training_only:
+                logger.info(f"  - merging_strategy: {self.merging_strategy}")
 
     def _get_mode(self) -> str:
         """Get the current mode string."""
-        if self.real_enabled and not self.synthetic_enabled:
+        if self.synthetic_training_only:
+            return "synthetic_training_only"
+        elif self.real_enabled and not self.synthetic_enabled:
             return "real_only"
         elif not self.real_enabled and self.synthetic_enabled:
             return "synthetic_only"
@@ -358,6 +367,11 @@ class KFoldPlanner:
         if not self.synthetic_enabled:
             # Mode 1: Real only
             return train_real, val_real
+
+        if self.synthetic_training_only:
+            # Mode 5: Synthetic for training, real for validation
+            train_synthetic = self.synthetic_samples.copy()
+            return train_synthetic, val_real
 
         if not self.real_enabled:
             # Mode 4: Synthetic only

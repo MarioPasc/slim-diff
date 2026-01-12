@@ -1,31 +1,48 @@
 #!/usr/bin/env python3
-"""Experiment Orchestrator for K-fold Segmentation Training.
+"""Dataset Expansion Experiment Orchestrator.
 
-This script orchestrates multiple segmentation experiments across different models
-and data configurations. It creates a planification CSV, assigns experiments to GPUs,
-and executes training runs in a structured manner.
+This script orchestrates experiments to measure the effect of synthetic data expansion
+on segmentation performance (DICE score). It trains models with synthetic-only data
+at different expansion levels (x1 to x10 replicas) and evaluates on real test data.
+
+Each replica contains ~9000 images (balanced classes), approximately matching the
+real training dataset size (~9119 images). This allows us to study how increasing
+synthetic data quantity affects generalization to real data.
+
+Experiment structure:
+    - 10 expansion levels (x1, x2, ..., x10)
+    - 3 models (dynunet, unet, swinunetr)
+    - Total: 30 experiments
+
+Output organization:
+    output_dir/
+    └── dataset_expansion_experiment/
+        ├── experiment_planification.csv  (with expansion, model, status columns)
+        ├── x1/
+        │   ├── synth_x1_dynunet/
+        │   ├── synth_x1_unet/
+        │   └── synth_x1_swinunetr/
+        ├── x2/
+        │   └── ...
+        └── x10/
+            └── ...
 
 Usage:
-    # --dry-run: create planification and folder structure only
-    python -m src.segmentation.cli.experiment_orchestrator \
-        --experiments real_only,real_synthetic_balance \
-        --models unet,dynunet,swinunetr \
-        --output-dir /media/hddb/mario/results/epilepsy/segmentation \
-        --device 0 
+    # Dry run - create planification only
+    python -m src.segmentation.cli.replicas_experiment_orchestrator \\
+        --expansions x1,x2,x3 \\
+        --models dynunet,unet,swinunetr \\
+        --output-dir /media/hddb/mario/results/epilepsy/segmentation \\
+        --device 0 \\
+        --dry-run
 
-    python -m src.segmentation.cli.experiment_orchestrator \
-        --experiments real_synthetic_concat,synthetic_only \
-        --models unet,dynunet,swinunetr \
-        --output-dir /media/hddb/mario/results/epilepsy/segmentation \
-        --device 1 
-
-    # Full execution
-    python -m src.segmentation.cli.experiment_orchestrator \\
-        --experiments real_only,real_synthetic_balance,real_synthetic_concat,synthetic_only \\
-        --models dynunet,swinunetr,unet,unetplusplus \\
+    # Full execution across 2 GPUs
+    python -m src.segmentation.cli.replicas_experiment_orchestrator \\
+        --expansions x1,x2,x3,x4,x5,x6,x7,x8,x9,x10 \\
+        --models dynunet,unet,swinunetr \\
         --folds 5 \\
-        --output-dir ./outputs/experiments \\
-        --device 0,1,2,3
+        --output-dir /media/hddb/mario/results/epilepsy/segmentation \\
+        --device 0,1
 """
 
 from __future__ import annotations
@@ -54,15 +71,13 @@ logger = logging.getLogger("orchestrator")
 
 
 # Default values
-DEFAULT_MODELS = ["dynunet", "swinunetr", "unet", "unetplusplus"]
-DEFAULT_EXPERIMENTS = [
-    "real_only",
-    "real_synthetic_balance",
-    "real_synthetic_concat",
-    "synthetic_only",
-]
+DEFAULT_MODELS = ["dynunet", "unet", "swinunetr"]
+DEFAULT_EXPANSIONS = [f"x{i}" for i in range(1, 11)]  # x1, x2, ..., x10
 DEFAULT_DEVICE = "0"
 DEFAULT_FOLDS = 5
+
+# Experiment subfolder name
+EXPERIMENT_SUBFOLDER = "dataset_expansion_experiment"
 
 
 
@@ -73,29 +88,29 @@ def parse_args() -> argparse.Namespace:
         Parsed arguments namespace
     """
     parser = argparse.ArgumentParser(
-        description="Orchestrate multiple k-fold segmentation experiments",
+        description="Orchestrate dataset expansion experiments (synth train -> real test)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Dry run - create planification only
-python -m src.segmentation.cli.experiment_orchestrator \
---experiments real_only,real_synthetic_balance \
---models unet,dynunet \
---output-dir ./outputs/experiments \
---device 0,1 \
---dry-run
+  python -m src.segmentation.cli.replicas_experiment_orchestrator \\
+      --expansions x1,x2,x3 \\
+      --models dynunet,unet,swinunetr \\
+      --output-dir ./outputs/experiments \\
+      --device 0 \\
+      --dry-run
 
-  # Full execution across 4 GPUs
-  python -m src.segmentation.cli.experiment_orchestrator \\
-      --experiments real_only,real_synthetic_balance,real_synthetic_concat,synthetic_only \\
-      --models dynunet,swinunetr,unet,unetplusplus \\
+  # Full execution across 2 GPUs
+  python -m src.segmentation.cli.replicas_experiment_orchestrator \\
+      --expansions x1,x2,x3,x4,x5,x6,x7,x8,x9,x10 \\
+      --models dynunet,unet,swinunetr \\
       --folds 5 \\
       --output-dir ./outputs/experiments \\
-      --device 0,1,2,3
+      --device 0,1
 
-  # Single experiment with specific folds
-  python -m src.segmentation.cli.experiment_orchestrator \\
-      --experiments real_only \\
+  # Single expansion with specific folds
+  python -m src.segmentation.cli.replicas_experiment_orchestrator \\
+      --expansions x5 \\
       --models unet \\
       --folds 0,1,2 \\
       --output-dir ./outputs/test \\
@@ -103,13 +118,13 @@ python -m src.segmentation.cli.experiment_orchestrator \
         """,
     )
 
-    # Experiment selection
+    # Expansion selection (replaces --experiments)
     parser.add_argument(
-        "--experiments",
+        "--expansions",
         type=str,
-        default=",".join(DEFAULT_EXPERIMENTS),
-        help=f"Comma-separated list of experiments to run (default: %(default)s). "
-        f"Must match YAML files in src/segmentation/config/experiments/",
+        default=",".join(DEFAULT_EXPANSIONS),
+        help=f"Comma-separated list of expansion levels to run (default: %(default)s). "
+        f"Must match YAML files in src/segmentation/config/replicas/ (e.g., x1.yaml, x2.yaml)",
     )
 
     parser.add_argument(
@@ -180,14 +195,14 @@ python -m src.segmentation.cli.experiment_orchestrator \
 
 
 def validate_configs(
-    experiments: List[str],
+    expansions: List[str],
     models: List[str],
     config_dir: Path,
 ) -> Tuple[bool, List[str]]:
-    """Validate that all experiment and model configs exist.
+    """Validate that all expansion and model configs exist.
 
     Args:
-        experiments: List of experiment names
+        expansions: List of expansion levels (x1, x2, ..., x10)
         models: List of model names
         config_dir: Base configuration directory
 
@@ -196,12 +211,12 @@ def validate_configs(
     """
     errors = []
 
-    # Check experiments
-    exp_dir = config_dir / "experiments"
-    for exp in experiments:
-        exp_file = exp_dir / f"{exp}.yaml"
+    # Check expansion configs (in config/replicas/)
+    replicas_dir = config_dir / "replicas"
+    for exp in expansions:
+        exp_file = replicas_dir / f"{exp}.yaml"
         if not exp_file.exists():
-            errors.append(f"Experiment config not found: {exp_file}")
+            errors.append(f"Expansion config not found: {exp_file}")
 
     # Check models
     model_dir = config_dir / "models"
@@ -219,17 +234,17 @@ def validate_configs(
 
 
 def create_planification(
-    experiments: List[str],
+    expansions: List[str],
     models: List[str],
     output_dir: Path,
     devices: List[str],
 ) -> List[dict]:
-    """Create experiment planification.
+    """Create experiment planification for dataset expansion experiment.
 
     Args:
-        experiments: List of experiment names
+        expansions: List of expansion levels (x1, x2, ..., x10)
         models: List of model names
-        output_dir: Base output directory
+        output_dir: Base output directory (will contain dataset_expansion_experiment/)
         devices: List of GPU device indices
 
     Returns:
@@ -238,17 +253,24 @@ def create_planification(
     planification = []
     device_idx = 0
 
-    for exp in experiments:
+    # Base experiment directory
+    experiment_base = output_dir / EXPERIMENT_SUBFOLDER
+
+    for expansion in expansions:
         for model in models:
-            # Create output folder for this experiment-model combination
-            exp_folder = output_dir / f"{exp}_{model}"
+            # Output structure: output_dir/dataset_expansion_experiment/x{N}/synth_x{N}_{model}
+            exp_folder = experiment_base / expansion / f"synth_{expansion}_{model}"
 
             # Assign device in round-robin fashion
             assigned_device = devices[device_idx % len(devices)]
             device_idx += 1
 
+            # Extract numeric expansion level for easier analysis
+            expansion_num = int(expansion.replace("x", ""))
+
             entry = {
-                "experiment": exp,
+                "expansion": expansion,
+                "expansion_num": expansion_num,
                 "model": model,
                 "output_folder": str(exp_folder),
                 "device": assigned_device,
@@ -268,14 +290,14 @@ def save_planification(
 
     Args:
         planification: List of planification entries
-        output_dir: Output directory
+        output_dir: Output directory (should be dataset_expansion_experiment/)
 
     Returns:
         Path to saved CSV
     """
     csv_path = output_dir / "experiment_planification.csv"
 
-    fieldnames = ["experiment", "model", "output_folder", "device", "status"]
+    fieldnames = ["expansion", "expansion_num", "model", "output_folder", "device", "status"]
 
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -341,7 +363,7 @@ def execute_gpu_queue(
     results = []
     for i, entry in enumerate(experiments, 1):
         logger.info(f"[GPU {gpu_id}] Running experiment {i}/{len(experiments)}: "
-                    f"{entry['experiment']} + {entry['model']}")
+                    f"{entry['expansion']} + {entry['model']}")
         success = execute_experiment(entry, config_dir, master_config, folds_arg, dry_run)
         results.append((entry, success))
     return results
@@ -354,7 +376,11 @@ def execute_experiment(
     folds_arg: str | None,
     dry_run: bool,
 ) -> bool:
-    """Execute a single experiment-model combination.
+    """Execute a single expansion-model combination.
+
+    All expansion configs (x1-x10) use synthetic training only mode:
+    - Training: synthetic data only
+    - Validation/Test: real data only
 
     Args:
         entry: Planification entry dict
@@ -366,42 +392,42 @@ def execute_experiment(
     Returns:
         True if successful, False otherwise
     """
-    exp = entry["experiment"]
+    expansion = entry["expansion"]
     model = entry["model"]
     output_folder = entry["output_folder"]
     device = entry["device"]
 
     logger.info(f"{'='*80}")
-    logger.info(f"Executing: {exp} + {model} on GPU {device}")
+    logger.info(f"Executing: {expansion} + {model} on GPU {device}")
     logger.info(f"Output: {output_folder}")
     logger.info(f"{'='*80}")
 
-    # Special handling for synthetic_only: enable real data for validation/test
-    experiment_config_path = config_dir / "experiments" / f"{exp}.yaml"
+    # All expansion configs are synthetic training only - modify config to enable
+    # real data for validation/test while training with synthetic only
+    experiment_config_path = config_dir / "replicas" / f"{expansion}.yaml"
     temp_config_file = None
 
-    if exp == "synthetic_only":
-        logger.info("Detected synthetic_only experiment - enabling real data for validation and test")
+    logger.info(f"Synthetic training only mode - enabling real data for validation and test")
 
-        # Load the experiment config
-        exp_cfg = OmegaConf.load(experiment_config_path)
+    # Load the expansion config
+    exp_cfg = OmegaConf.load(experiment_config_path)
 
-        # Override to enable real data and set synthetic training_only mode
-        exp_cfg.data.real.enabled = True
-        exp_cfg.data.synthetic.training_only = True
+    # Override to enable real data and set synthetic training_only mode
+    exp_cfg.data.real.enabled = True
+    exp_cfg.data.synthetic.training_only = True
 
-        # Create a temporary config file with the overrides
-        temp_config_file = tempfile.NamedTemporaryFile(
-            mode='w',
-            suffix='.yaml',
-            delete=False,
-            prefix=f'synthetic_only_modified_{model}_'
-        )
-        OmegaConf.save(exp_cfg, temp_config_file.name)
-        temp_config_file.close()
-        experiment_config_path = Path(temp_config_file.name)
+    # Create a temporary config file with the overrides
+    temp_config_file = tempfile.NamedTemporaryFile(
+        mode='w',
+        suffix='.yaml',
+        delete=False,
+        prefix=f'{expansion}_modified_{model}_'
+    )
+    OmegaConf.save(exp_cfg, temp_config_file.name)
+    temp_config_file.close()
+    experiment_config_path = Path(temp_config_file.name)
 
-        logger.info(f"Using modified config: {experiment_config_path}")
+    logger.info(f"Using modified config: {experiment_config_path}")
 
     # Build command
     cmd = [
@@ -445,14 +471,14 @@ def execute_experiment(
             check=True,
             capture_output=False,
         )
-        logger.info(f"✓ Completed: {exp} + {model}")
+        logger.info(f"✓ Completed: {expansion} + {model}")
         success = True
     except subprocess.CalledProcessError as e:
-        logger.error(f"✗ Failed: {exp} + {model}")
+        logger.error(f"✗ Failed: {expansion} + {model}")
         logger.error(f"Error: {e}")
         success = False
     finally:
-        # Clean up temporary config file if created
+        # Clean up temporary config file
         if temp_config_file is not None:
             try:
                 os.unlink(temp_config_file.name)
@@ -464,7 +490,7 @@ def execute_experiment(
 
 
 def main():
-    """Main entry point for experiment orchestrator."""
+    """Main entry point for dataset expansion experiment orchestrator."""
     args = parse_args()
 
     # Set logging level
@@ -473,25 +499,26 @@ def main():
 
     # Banner
     logger.info("=" * 80)
-    logger.info("EXPERIMENT ORCHESTRATOR - K-FOLD SEGMENTATION")
+    logger.info("DATASET EXPANSION EXPERIMENT ORCHESTRATOR")
+    logger.info("Synthetic Train -> Real Val/Test")
     logger.info("=" * 80)
 
     # Parse lists
-    experiments = [e.strip() for e in args.experiments.split(",")]
+    expansions = [e.strip() for e in args.expansions.split(",")]
     models = [m.strip() for m in args.models.split(",")]
     devices = [d.strip() for d in args.device.split(",")]
 
-    logger.info(f"Experiments: {experiments}")
+    logger.info(f"Expansions: {expansions}")
     logger.info(f"Models: {models}")
     logger.info(f"Devices: {devices}")
     logger.info(f"Folds: {args.folds or 'use experiment config'}")
-    logger.info(f"Output dir: {args.output_dir}")
+    logger.info(f"Output dir: {args.output_dir}/{EXPERIMENT_SUBFOLDER}/")
     logger.info(f"Mode: {'DRY RUN' if args.dry_run else 'EXECUTION'}")
     logger.info(f"Execution: {'SEQUENTIAL' if args.sequential else 'PARALLEL (per device)'}")
 
     # Validate configurations
     config_dir = Path(args.config_dir)
-    is_valid, errors = validate_configs(experiments, models, config_dir)
+    is_valid, errors = validate_configs(expansions, models, config_dir)
 
     if not is_valid:
         logger.error("Configuration validation failed:")
@@ -501,28 +528,29 @@ def main():
 
     logger.info("✓ All configurations validated")
 
-    # Create output directory
+    # Create output directory (includes dataset_expansion_experiment subfolder)
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    experiment_dir = output_dir / EXPERIMENT_SUBFOLDER
+    experiment_dir.mkdir(parents=True, exist_ok=True)
 
     # Create planification
     logger.info("\nCreating experiment planification...")
-    planification = create_planification(experiments, models, output_dir, devices)
+    planification = create_planification(expansions, models, output_dir, devices)
 
-    # Save planification
-    csv_path = save_planification(planification, output_dir)
+    # Save planification to experiment_dir
+    csv_path = save_planification(planification, experiment_dir)
 
     # Print planification table
     logger.info("\nExperiment Planification:")
-    logger.info("-" * 80)
-    logger.info(f"{'Experiment':<30} {'Model':<15} {'Device':<10} {'Output Folder'}")
-    logger.info("-" * 80)
+    logger.info("-" * 100)
+    logger.info(f"{'Expansion':<12} {'Model':<15} {'Device':<10} {'Output Folder'}")
+    logger.info("-" * 100)
     for entry in planification:
         logger.info(
-            f"{entry['experiment']:<30} {entry['model']:<15} "
+            f"{entry['expansion']:<12} {entry['model']:<15} "
             f"GPU {entry['device']:<7} {entry['output_folder']}"
         )
-    logger.info("-" * 80)
+    logger.info("-" * 100)
     logger.info(f"Total experiments: {len(planification)}")
 
     # Execute experiments
@@ -534,7 +562,7 @@ def main():
         # Sequential execution (original behavior)
         logger.info("\nRunning experiments SEQUENTIALLY")
         for i, entry in enumerate(planification, 1):
-            logger.info(f"\n[{i}/{len(planification)}] Processing: {entry['experiment']} + {entry['model']}")
+            logger.info(f"\n[{i}/{len(planification)}] Processing: {entry['expansion']} + {entry['model']}")
 
             success = execute_experiment(
                 entry,
@@ -552,7 +580,7 @@ def main():
                 failed += 1
 
             # Update planification CSV with status
-            save_planification(planification, output_dir)
+            save_planification(planification, experiment_dir)
     else:
         # Parallel execution: group experiments by GPU and run GPU queues in parallel
         logger.info(f"\nRunning experiments in PARALLEL across {len(devices)} GPUs")
@@ -603,7 +631,7 @@ def main():
                         failed += 1
 
         # Save final planification
-        save_planification(planification, output_dir)
+        save_planification(planification, experiment_dir)
 
     # Final summary
     logger.info("\n" + "=" * 80)
@@ -618,7 +646,7 @@ def main():
         logger.info("\nDry run complete. Review the planification and folder structure.")
         logger.info("Run without --dry-run to execute training.")
     else:
-        logger.info(f"\nResults saved to: {output_dir}")
+        logger.info(f"\nResults saved to: {experiment_dir}")
 
     if failed > 0:
         logger.warning(f"\n{failed} experiment(s) failed. Check logs for details.")
