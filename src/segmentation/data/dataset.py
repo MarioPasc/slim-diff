@@ -56,16 +56,13 @@ class PlannedFoldDataset(Dataset):
         self.transform = transform
         self.mask_threshold = mask_threshold
 
-        # Cache for loaded replica data
-        self._replica_cache: dict[str, np.lib.npyio.NpzFile] = {}
-
         # Log dataset info
         n_real = sum(1 for s in samples if s.source == "real")
         n_synth = sum(1 for s in samples if s.source == "synthetic")
         logger.info(f"PlannedFoldDataset: {len(samples)} samples ({n_real} real, {n_synth} synthetic)")
 
     def _load_replica(self, replica_name: str) -> np.lib.npyio.NpzFile:
-        """Load and cache a replica NPZ file.
+        """Load replica NPZ file without caching.
 
         Args:
             replica_name: Name of the replica file
@@ -74,14 +71,14 @@ class PlannedFoldDataset(Dataset):
             Loaded NPZ file
 
         Note:
-            Uses mmap_mode='r' for safe multiprocessing with num_workers > 0.
-            Memory-maps the file in read-only mode instead of loading into RAM.
+            Uses mmap_mode='r' for efficient read-only memory mapping.
+            No caching is needed as OS-level page cache handles this efficiently,
+            and avoiding cache prevents multiprocessing pickle issues with num_workers > 0.
         """
-        if replica_name not in self._replica_cache:
-            replica_path = self.synthetic_dir / replica_name
-            # Use mmap_mode='r' for safe multiprocessing with num_workers > 0
-            self._replica_cache[replica_name] = np.load(replica_path, mmap_mode='r')
-        return self._replica_cache[replica_name]
+        replica_path = self.synthetic_dir / replica_name
+        # Use mmap_mode='r' for efficient memory-mapped access
+        # OS page cache will handle repeated access efficiently
+        return np.load(replica_path, mmap_mode='r')
 
     def __len__(self) -> int:
         """Get dataset length."""
@@ -114,8 +111,12 @@ class PlannedFoldDataset(Dataset):
             sample_idx = int(idx_str)
 
             replica_data = self._load_replica(replica_name)
-            image = replica_data["images"][sample_idx].astype(np.float32)
-            mask = replica_data["masks"][sample_idx].astype(np.float32)
+            # Extract data and convert to arrays immediately
+            # This allows numpy to close the mmap file descriptor
+            image = np.array(replica_data["images"][sample_idx], dtype=np.float32)
+            mask = np.array(replica_data["masks"][sample_idx], dtype=np.float32)
+            # Close the NPZ file to free resources
+            replica_data.close()
 
         # Convert mask: {-1, +1} -> {0, 1}
         mask_binary = (mask > self.mask_threshold).astype(np.float32)
