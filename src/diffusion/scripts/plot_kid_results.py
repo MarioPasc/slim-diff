@@ -25,6 +25,65 @@ import pandas as pd
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 
 
+PLOT_SETTINGS = {
+    "font_family": "serif",
+    "font_serif": ["Times New Roman", "DejaVu Serif"],
+    "font_size": 9,
+    "axes_labelsize": 8,
+    "axes_titlesize": 9,
+    "axes_spine_width": 0.8,
+    "axes_spine_color": "0.2",
+    "tick_labelsize": 12,
+    "tick_major_width": 0.6,
+    "tick_minor_width": 0.4,
+    "tick_direction": "in",
+    "tick_length_major": 3.5,
+    "tick_length_minor": 2.0,
+    "legend_fontsize": 10,
+    "legend_framealpha": 0.9,
+    "legend_frameon": False,
+    "legend_edgecolor": "0.8",
+    "grid_linestyle": ":",
+    "grid_alpha": 0.7,
+    "grid_linewidth": 0.6,
+    "line_width": 2.0,
+    "axis_labelsize": 14,
+    "xtick_fontsize": 12,
+    "ytick_fontsize": 12,
+    "xlabel_fontsize": 14,
+    "ylabel_fontsize": 14,
+    "title_fontsize": 16,
+}
+
+def apply_plot_settings():
+    """Apply global matplotlib settings for consistent styling."""
+    plt.rcParams.update({
+        "font.family": PLOT_SETTINGS["font_family"],
+        "font.serif": PLOT_SETTINGS["font_serif"],
+        "font.size": PLOT_SETTINGS["font_size"],
+        "axes.labelsize": PLOT_SETTINGS["axes_labelsize"],
+        "axes.titlesize": PLOT_SETTINGS["axes_titlesize"],
+        "xtick.labelsize": PLOT_SETTINGS["tick_labelsize"],
+        "ytick.labelsize": PLOT_SETTINGS["tick_labelsize"],
+        "xtick.major.width": PLOT_SETTINGS["tick_major_width"],
+        "xtick.minor.width": PLOT_SETTINGS["tick_minor_width"],
+        "ytick.major.width": PLOT_SETTINGS["tick_major_width"],
+        "ytick.minor.width": PLOT_SETTINGS["tick_minor_width"],
+        "xtick.direction": PLOT_SETTINGS["tick_direction"],
+        "ytick.direction": PLOT_SETTINGS["tick_direction"],
+        "legend.fontsize": PLOT_SETTINGS["legend_fontsize"],
+        "legend.framealpha": PLOT_SETTINGS["legend_framealpha"],
+        "legend.frameon": PLOT_SETTINGS["legend_frameon"],
+        "legend.edgecolor": PLOT_SETTINGS["legend_edgecolor"],
+        "grid.linestyle": PLOT_SETTINGS["grid_linestyle"],
+        "grid.alpha": PLOT_SETTINGS["grid_alpha"],
+        "grid.linewidth": PLOT_SETTINGS["grid_linewidth"],
+        "axes.grid": True,
+    })
+
+apply_plot_settings()
+
+
 def load_representative_images(
     test_csv: Path, zbins: list[int]
 ) -> dict[int, np.ndarray]:
@@ -166,7 +225,7 @@ def plot_kid_results(
 
     # ========== Main Plot: KID vs zbin ==========
     # Plot global KID with confidence interval
-    ax1.axhline(global_mean, color="gray", linestyle="--", linewidth=2, label=f"Global KID: {global_mean:.5f}", zorder=1)
+    ax1.axhline(global_mean, color="gray", linestyle="--", linewidth=PLOT_SETTINGS["line_width"], label=f"Global KID: {global_mean:.5f}", zorder=1)
     ax1.fill_between(
         [zbins[0] - 0.5, zbins[-1] + 0.5],
         global_mean - global_std,
@@ -215,7 +274,7 @@ def plot_kid_results(
                     code,
                     ha="center",
                     va="bottom",
-                    fontsize=10,
+                    fontsize=PLOT_SETTINGS["legend_fontsize"],
                     fontweight="bold",
                     color="black",
                 )
@@ -287,19 +346,19 @@ def plot_kid_results(
             alpha=0.7,
             zorder=1,
         )
-        ax1_twin.set_ylabel("Mean Brain Fraction", fontsize=12, fontweight="bold", color="forestgreen")
+        ax1_twin.set_ylabel("Mean Brain Fraction", fontsize=PLOT_SETTINGS["ylabel_fontsize"], fontweight="bold", color="forestgreen")
         ax1_twin.tick_params(axis="y", labelcolor="forestgreen")
         ax1_twin.spines["right"].set_color("forestgreen")
 
-    ax1.set_ylabel("KID", fontsize=12, fontweight="bold")
+    ax1.set_ylabel("Kernel Inception Distance (KID)", fontsize=PLOT_SETTINGS["ylabel_fontsize"], fontweight="bold")
     if title:  # Only set title if not empty
-        ax1.set_title(title, fontsize=14, fontweight="bold", pad=15)
-    ax1.grid(True, alpha=0.3, linestyle=":", linewidth=0.8)
+        ax1.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"], fontweight="bold", pad=15)
+    ax1.grid(True, alpha=PLOT_SETTINGS["grid_alpha"], linestyle=PLOT_SETTINGS["grid_linestyle"], linewidth=PLOT_SETTINGS["grid_linewidth"])
     # Ensure x-lim covers all bins
     ax1.set_xlim(zbins[0] - 1, zbins[-1] + 1)
 
     if not show_delta:
-        ax1.set_xlabel("Z-bin", fontsize=12, fontweight="bold")
+        ax1.set_xlabel("Z-bin", fontsize=PLOT_SETTINGS["xlabel_fontsize"], fontweight="bold")
 
     # ========== Delta Plot: delta_kid vs zbin ==========
     if show_delta:
@@ -325,9 +384,9 @@ def plot_kid_results(
         # Plot points (uniform color)
         ax2.scatter(zbins, delta_mean, s=80, c="purple", edgecolors="black", linewidths=1, zorder=3)
 
-        ax2.set_xlabel("Z-bin", fontsize=12, fontweight="bold")
-        ax2.set_ylabel("Δ KID (bin - rest)", fontsize=11, fontweight="bold")
-        ax2.grid(True, alpha=0.3, linestyle=":", linewidth=0.8)
+        ax2.set_xlabel("Z-bin", fontsize=PLOT_SETTINGS["xlabel_fontsize"], fontweight="bold")
+        ax2.set_ylabel("Δ KID (bin - rest)", fontsize=PLOT_SETTINGS["ylabel_fontsize"], fontweight="bold")
+        ax2.grid(True, alpha=PLOT_SETTINGS["grid_alpha"], linestyle=PLOT_SETTINGS["grid_linestyle"], linewidth=PLOT_SETTINGS["grid_linewidth"])
         ax2.set_xlim(zbins[0] - 0.5, zbins[-1] + 0.5)
 
         # Add shaded region for positive/negative delta
@@ -361,8 +420,8 @@ def plot_kid_results(
         labels=labels,
         loc="lower center",
         ncol=len(handles),
-        fontsize=10,
-        framealpha=0.9,
+        fontsize=PLOT_SETTINGS["legend_fontsize"],
+        framealpha=PLOT_SETTINGS["legend_framealpha"],
         bbox_to_anchor=(0.5, -0.02),
     )
     
@@ -422,7 +481,7 @@ def plot_kid_comparison(
     fig, ax = plt.subplots(1, 1, figsize=figsize)
 
     # Plot global KID reference
-    ax.axhline(global_mean, color="gray", linestyle="--", linewidth=2, label=f"Global KID: {global_mean:.5f}", zorder=1)
+    ax.axhline(global_mean, color="gray", linestyle="--", linewidth=PLOT_SETTINGS["line_width"], label=f"Global KID: {global_mean:.5f}", zorder=1)
     ax.fill_between(
         [zbins[0] - 0.5, zbins[-1] + 0.5],
         global_mean - global_std,
@@ -466,11 +525,11 @@ def plot_kid_comparison(
             color = "red" if code == "***" else "orange" if code == "**" else "gold"
             ax.scatter(zb - 0.15, kid, s=100, c=color, marker="*", edgecolors="black", linewidths=1, zorder=3)
 
-    ax.set_xlabel("Z-bin", fontsize=12, fontweight="bold")
-    ax.set_ylabel("KID", fontsize=12, fontweight="bold")
-    ax.set_title(title, fontsize=14, fontweight="bold", pad=15)
-    ax.legend(loc="upper right", fontsize=10, framealpha=0.9)
-    ax.grid(True, alpha=0.3, linestyle=":", linewidth=0.8)
+    ax.set_xlabel("Z-bin", fontsize=PLOT_SETTINGS["xlabel_fontsize"], fontweight="bold")
+    ax.set_ylabel("KID", fontsize=PLOT_SETTINGS["ylabel_fontsize"], fontweight="bold")
+    ax.set_title(title, fontsize=PLOT_SETTINGS["title_fontsize"], fontweight="bold", pad=15)
+    ax.legend(loc="upper right", fontsize=PLOT_SETTINGS["legend_fontsize"], framealpha=PLOT_SETTINGS["legend_framealpha"])
+    ax.grid(True, alpha=PLOT_SETTINGS["grid_alpha"], linestyle=PLOT_SETTINGS["grid_linestyle"], linewidth=PLOT_SETTINGS["grid_linewidth"])
     ax.set_xlim(zbins[0] - 0.5, zbins[-1] + 0.5)
 
     plt.tight_layout()
