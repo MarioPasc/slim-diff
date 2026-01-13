@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytorch_lightning as pl
 import torch
 from monai.losses import DiceFocalLoss
@@ -12,6 +14,8 @@ from src.segmentation.metrics.segmentation_metrics import (
     HausdorffDistance95,
 )
 from src.segmentation.models.factory import build_model
+
+logger = logging.getLogger(__name__)
 
 
 class SegmentationLitModule(pl.LightningModule):
@@ -107,7 +111,7 @@ class SegmentationLitModule(pl.LightningModule):
         preds = self(images)  # (B, 1, H, W) or (B, num_outputs, 1, H, W) for deep supervision
 
         # Compute loss
-        if self.use_deep_supervision:
+        if self.use_deep_supervision and preds.dim() == 5:
             # Deep supervision: compute weighted loss for each output
             # preds shape: (B, num_outputs, 1, H, W)
             # Unbind to get list of tensors: [(B, 1, H, W), (B, 1, H, W), ...]
@@ -126,7 +130,16 @@ class SegmentationLitModule(pl.LightningModule):
             # Total weighted loss
             loss = sum(losses)
         else:
-            # Standard single output
+            # Standard single output (or deep supervision not returning expected format)
+            if self.use_deep_supervision and preds.dim() != 5:
+                # Log warning once
+                if not hasattr(self, '_deep_super_warning_logged'):
+                    logger.warning(
+                        f"DynUNet deep supervision enabled but output is {preds.dim()}D, expected 5D. "
+                        f"Shape: {preds.shape}. Falling back to standard loss computation. "
+                        f"Check MONAI version or DynUNet configuration."
+                    )
+                    self._deep_super_warning_logged = True
             loss = self.criterion(preds, masks)
 
         # Log total loss
@@ -148,25 +161,14 @@ class SegmentationLitModule(pl.LightningModule):
         masks = batch["mask"]
 
         # Forward
-        preds = self(images)  # (B, 1, H, W) or (B, num_outputs, 1, H, W)
+        # Note: DynUNet deep supervision only activates during training mode
+        # (self.training=True). During validation, model is in eval mode,
+        # so it always returns standard output shape (B, C, H, W, D)
+        preds = self(images)  # (B, 1, H, W, D)
 
-        # Extract final output for metrics when using deep supervision
-        if self.use_deep_supervision:
-            # For validation, only use the final output (last element)
-            # preds shape: (B, num_outputs, 1, H, W)
-            preds_for_metrics = preds[:, -1, :, :, :]  # (B, 1, H, W)
-
-            # Compute loss using all outputs (same as training)
-            outputs = torch.unbind(preds, dim=1)
-            losses = []
-            for i, output in enumerate(outputs):
-                loss_i = self.criterion(output, masks)
-                weighted_loss_i = self.deep_supr_weights[i] * loss_i
-                losses.append(weighted_loss_i)
-            loss = sum(losses)
-        else:
-            preds_for_metrics = preds
-            loss = self.criterion(preds, masks)
+        # Standard loss computation (no deep supervision during validation)
+        preds_for_metrics = preds
+        loss = self.criterion(preds, masks)
 
         # Apply sigmoid to get probabilities
         preds_prob = torch.sigmoid(preds_for_metrics)
@@ -218,7 +220,7 @@ class SegmentationLitModule(pl.LightningModule):
         preds = self(images)  # (B, 1, H, W) or (B, num_outputs, 1, H, W)
 
         # Extract final output for metrics when using deep supervision
-        if self.use_deep_supervision:
+        if self.use_deep_supervision and preds.dim() == 5:
             # For testing, only use the final output (last element)
             # preds shape: (B, num_outputs, 1, H, W)
             preds_for_metrics = preds[:, -1, :, :, :]  # (B, 1, H, W)
@@ -232,6 +234,7 @@ class SegmentationLitModule(pl.LightningModule):
                 losses.append(weighted_loss_i)
             loss = sum(losses)
         else:
+            # Standard single output or deep supervision not working as expected
             preds_for_metrics = preds
             loss = self.criterion(preds, masks)
 

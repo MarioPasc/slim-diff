@@ -81,8 +81,8 @@ def parse_args() -> argparse.Namespace:
 Examples:
   # Dry run - create planification only
     python -m src.segmentation.cli.experiment_orchestrator \
-    --experiments real_only,real_synthetic_balance \
-    --models unet,dynunet,swinunetr \
+    --experiments real_synthetic_balance,real_only \
+    --models dynunet,unet,swinunetr \
     --output-dir /media/hddb/mario/results/epilepsy/segmentation/experiments \
     --device 0 
     
