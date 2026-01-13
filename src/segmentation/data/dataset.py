@@ -6,7 +6,7 @@ import csv
 import logging
 import random
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import torch
@@ -18,6 +18,41 @@ if TYPE_CHECKING:
     from src.segmentation.data.kfold_planner import SampleRecord
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Global Normalization Configuration
+# =============================================================================
+# Options: "percentile" (keep [-1, 1] from preprocessing) or "zscore" (mean=0, std=1)
+IM_NORMALIZATION_APPROACH: Literal["percentile", "zscore"] = "percentile"
+
+
+def normalize_image(image: np.ndarray) -> np.ndarray:
+    """Normalize image according to global IM_NORMALIZATION_APPROACH setting.
+
+    Args:
+        image: Input image array (H, W) or (C, H, W) in [-1, 1] range.
+
+    Returns:
+        Normalized image:
+        - "percentile": unchanged (already in [-1, 1])
+        - "zscore": per-image z-score normalization (mean=0, std=1)
+    """
+    if IM_NORMALIZATION_APPROACH == "percentile":
+        # Images are already in [-1, 1] from preprocessing
+        return image
+    elif IM_NORMALIZATION_APPROACH == "zscore":
+        # Per-image z-score normalization
+        mean = image.mean()
+        std = image.std()
+        if std < 1e-8:
+            # Avoid division by zero for constant images
+            return image - mean
+        return (image - mean) / std
+    else:
+        raise ValueError(
+            f"Unknown normalization approach: {IM_NORMALIZATION_APPROACH}. "
+            "Expected 'percentile' or 'zscore'."
+        )
 
 
 class PlannedFoldDataset(Dataset):
@@ -195,6 +230,9 @@ class PlannedFoldDataset(Dataset):
                 # Direct array access - no I/O, data is already in RAM
                 image = replica_data["images"][sample_idx]
                 mask = replica_data["masks"][sample_idx]
+
+            # Apply image normalization (zscore or percentile)
+            image = normalize_image(image)
 
             # Convert mask: {-1, +1} -> {0, 1}
             mask_binary = (mask > self.mask_threshold).astype(np.float32)
@@ -408,6 +446,9 @@ class SegmentationSliceDataset(Dataset):
         data = load_npz_sample(sample_meta["filepath"])
         image = data["image"]  # (128, 128) in [-1, 1]
         mask = data["mask"]    # (128, 128) in {-1, +1}
+
+        # Apply image normalization (zscore or percentile)
+        image = normalize_image(image)
 
         # Convert mask: {-1, +1} -> {0, 1}
         mask_binary = (mask > self.mask_threshold).astype(np.float32)

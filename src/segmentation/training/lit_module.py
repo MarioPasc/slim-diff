@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytorch_lightning as pl
 import torch
-from monai.losses import DiceCELoss
+from monai.losses import DiceFocalLoss
 from omegaconf import DictConfig
 
 from src.segmentation.metrics.segmentation_metrics import (
@@ -19,7 +19,7 @@ class SegmentationLitModule(pl.LightningModule):
 
     Handles:
     - Model forward pass
-    - Loss computation (DiceCE)
+    - Loss computation (DiceFocal)
     - Metrics (Dice, HD95)
     - Optimizer configuration
     """
@@ -37,8 +37,24 @@ class SegmentationLitModule(pl.LightningModule):
         # Build model
         self.model = build_model(cfg)
 
+        # Check if using DynUNet with deep supervision
+        self.use_deep_supervision = (
+            cfg.model.name == "DynUNet" and
+            cfg.model.get("deep_supervision", False)
+        )
+        if self.use_deep_supervision:
+            self.deep_supr_num = cfg.model.get("deep_supr_num", 1)
+            # Weights for deep supervision losses (final output gets higher weight)
+            # With deep_supr_num=1, we have 2 outputs total (1 intermediate + 1 final)
+            num_outputs = self.deep_supr_num + 1
+            # Exponentially increasing weights: [0.5^n, 0.5^(n-1), ..., 0.5^1, 1.0]
+            self.deep_supr_weights = [0.5 ** (num_outputs - i) for i in range(num_outputs)]
+            # Normalize weights to sum to 1
+            weight_sum = sum(self.deep_supr_weights)
+            self.deep_supr_weights = [w / weight_sum for w in self.deep_supr_weights]
+
         # Build loss
-        self.criterion = DiceCELoss(
+        self.criterion = DiceFocalLoss(
             include_background=cfg.loss.include_background,
             to_onehot_y=cfg.loss.to_onehot_y,
             sigmoid=cfg.loss.sigmoid,
@@ -46,8 +62,9 @@ class SegmentationLitModule(pl.LightningModule):
             squared_pred=cfg.loss.squared_pred,
             jaccard=cfg.loss.jaccard,
             reduction=cfg.loss.reduction,
+            gamma=cfg.loss.gamma,
             lambda_dice=cfg.loss.lambda_dice,
-            lambda_ce=cfg.loss.lambda_ce,
+            lambda_focal=cfg.loss.lambda_focal,
         )
 
         # Build metrics
@@ -62,10 +79,13 @@ class SegmentationLitModule(pl.LightningModule):
             x: Input images (B, 1, H, W)
 
         Returns:
-            Predictions (B, 1, H, W) logits
+            Predictions:
+            - If deep supervision: (B, num_outputs, 1, H, W) tensor with stacked outputs
+            - Otherwise: (B, 1, H, W) logits
         """
         output = self.model(x)
-        # Handle models that return list (e.g., UNet++, DynUNet with deep supervision)
+        # Handle models that return list (e.g., UNet++)
+        # Note: DynUNet with deep supervision returns a tensor, not a list
         if isinstance(output, list):
             output = output[0]
         return output
@@ -84,12 +104,32 @@ class SegmentationLitModule(pl.LightningModule):
         masks = batch["mask"]    # (B, 1, H, W) in {0, 1}
 
         # Forward
-        preds = self(images)  # (B, 1, H, W) logits
+        preds = self(images)  # (B, 1, H, W) or (B, num_outputs, 1, H, W) for deep supervision
 
         # Compute loss
-        loss = self.criterion(preds, masks)
+        if self.use_deep_supervision:
+            # Deep supervision: compute weighted loss for each output
+            # preds shape: (B, num_outputs, 1, H, W)
+            # Unbind to get list of tensors: [(B, 1, H, W), (B, 1, H, W), ...]
+            outputs = torch.unbind(preds, dim=1)
 
-        # Log
+            # Compute loss for each output and weight them
+            losses = []
+            for i, output in enumerate(outputs):
+                loss_i = self.criterion(output, masks)
+                weighted_loss_i = self.deep_supr_weights[i] * loss_i
+                losses.append(weighted_loss_i)
+
+                # Log individual losses for debugging
+                self.log(f"train/loss_output_{i}", loss_i, sync_dist=True, batch_size=images.shape[0])
+
+            # Total weighted loss
+            loss = sum(losses)
+        else:
+            # Standard single output
+            loss = self.criterion(preds, masks)
+
+        # Log total loss
         self.log("train/loss", loss, sync_dist=True, batch_size=images.shape[0])
 
         return loss
@@ -108,13 +148,28 @@ class SegmentationLitModule(pl.LightningModule):
         masks = batch["mask"]
 
         # Forward
-        preds = self(images)
+        preds = self(images)  # (B, 1, H, W) or (B, num_outputs, 1, H, W)
 
-        # Compute loss
-        loss = self.criterion(preds, masks)
+        # Extract final output for metrics when using deep supervision
+        if self.use_deep_supervision:
+            # For validation, only use the final output (last element)
+            # preds shape: (B, num_outputs, 1, H, W)
+            preds_for_metrics = preds[:, -1, :, :, :]  # (B, 1, H, W)
+
+            # Compute loss using all outputs (same as training)
+            outputs = torch.unbind(preds, dim=1)
+            losses = []
+            for i, output in enumerate(outputs):
+                loss_i = self.criterion(output, masks)
+                weighted_loss_i = self.deep_supr_weights[i] * loss_i
+                losses.append(weighted_loss_i)
+            loss = sum(losses)
+        else:
+            preds_for_metrics = preds
+            loss = self.criterion(preds, masks)
 
         # Apply sigmoid to get probabilities
-        preds_prob = torch.sigmoid(preds)
+        preds_prob = torch.sigmoid(preds_for_metrics)
 
         # Binarize predictions
         preds_binary = (preds_prob > 0.5).float()
@@ -160,13 +215,28 @@ class SegmentationLitModule(pl.LightningModule):
         masks = batch["mask"]
 
         # Forward
-        preds = self(images)
+        preds = self(images)  # (B, 1, H, W) or (B, num_outputs, 1, H, W)
 
-        # Compute loss
-        loss = self.criterion(preds, masks)
+        # Extract final output for metrics when using deep supervision
+        if self.use_deep_supervision:
+            # For testing, only use the final output (last element)
+            # preds shape: (B, num_outputs, 1, H, W)
+            preds_for_metrics = preds[:, -1, :, :, :]  # (B, 1, H, W)
+
+            # Compute loss using all outputs (same as training)
+            outputs = torch.unbind(preds, dim=1)
+            losses = []
+            for i, output in enumerate(outputs):
+                loss_i = self.criterion(output, masks)
+                weighted_loss_i = self.deep_supr_weights[i] * loss_i
+                losses.append(weighted_loss_i)
+            loss = sum(losses)
+        else:
+            preds_for_metrics = preds
+            loss = self.criterion(preds, masks)
 
         # Apply sigmoid to get probabilities
-        preds_prob = torch.sigmoid(preds)
+        preds_prob = torch.sigmoid(preds_for_metrics)
 
         # Binarize predictions
         preds_binary = (preds_prob > 0.5).float()

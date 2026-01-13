@@ -5,8 +5,14 @@ model:
   in_channels: 1
   out_channels: 1
   img_size: [128, 128]         # required for 2D
-  feature_size: 48
+  feature_size: 24
   depths: [2, 2, 2, 2]         # transformer blocks per stage
   num_heads: [3, 6, 12, 24]    # multi-head attention
   window_size: [7, 7]
   use_checkpoint: false
+
+# SwinUNETR-specific training overrides
+# Lower learning rate for transformer-based architecture
+training:
+  optimizer:
+    lr: 5.0e-5

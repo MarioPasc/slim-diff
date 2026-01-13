@@ -58,6 +58,8 @@ DEFAULT_MODELS = ["dynunet", "swinunetr", "unet", "unetplusplus"]
 DEFAULT_EXPERIMENTS = [
     "real_only",
     "real_synthetic_balance",
+    "real_traditional_augmentation",
+    "real_synthetic_traditional_augmentation",
     "real_synthetic_concat",
     "synthetic_only",
 ]
@@ -78,29 +80,18 @@ def parse_args() -> argparse.Namespace:
         epilog="""
 Examples:
   # Dry run - create planification only
-python -m src.segmentation.cli.experiment_orchestrator \
---experiments real_only,real_synthetic_balance \
---models unet,dynunet \
---output-dir ./outputs/experiments \
---device 0,1 \
---dry-run
-
-  # Full execution across 4 GPUs
-  python -m src.segmentation.cli.experiment_orchestrator \\
-      --experiments real_only,real_synthetic_balance,real_synthetic_concat,synthetic_only \\
-      --models dynunet,swinunetr,unet,unetplusplus \\
-      --folds 5 \\
-      --output-dir ./outputs/experiments \\
-      --device 0,1,2,3
-
-  # Single experiment with specific folds
-  python -m src.segmentation.cli.experiment_orchestrator \\
-      --experiments real_only \\
-      --models unet \\
-      --folds 0,1,2 \\
-      --output-dir ./outputs/test \\
-      --device 0
-        """,
+    python -m src.segmentation.cli.experiment_orchestrator \
+    --experiments real_only,real_synthetic_balance \
+    --models unet,dynunet,swinunetr \
+    --output-dir /media/hddb/mario/results/epilepsy/segmentation/experiments \
+    --device 0 
+    
+    python -m src.segmentation.cli.experiment_orchestrator \
+    --experiments real_traditional_augmentation,real_synthetic_traditional_augmentation \
+    --models unet,dynunet,swinunetr \
+    --output-dir /media/hddb/mario/results/epilepsy/segmentation/experiments \
+    --device 1 
+    """,
     )
 
     # Experiment selection

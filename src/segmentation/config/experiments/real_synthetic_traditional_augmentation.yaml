@@ -18,7 +18,7 @@ experiment:
 data:
   # Real data
   real:
-    enabled: false
+    enabled: true
     cache_dir: "/media/hddb/mario/data/epilepsy/real/slice_cache"
     train_csv: "train.csv"
     val_csv: "val.csv"
@@ -30,18 +30,10 @@ data:
     samples_dir: "/media/hddb/mario/data/epilepsy/synth/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas"  # e.g., "./outputs/diffusion/generated_samples"
     # Replicas to use
     replicas: 
-      - "replica_001.npz"  
-      - "replica_002.npz"
-      - "replica_003.npz"
-      - "replica_004.npz"
-      - "replica_005.npz"
-      - "replica_006.npz" 
-      - "replica_007.npz"
-      - "replica_008.npz"
-      - "replica_009.npz"
-      - "replica_010.npz"
+      - "replica_009.npz"  # Each replica has 30 zbins * 2 conditions (lesion/no lesion) * 150 samples = 9000 samples
+      - "replica_008.npz"  # Add more replicas as needed
     
-    merging_strategy: "concat" # Options: "concat", "balance"
+    merging_strategy: "balance" # Options: "concat", "balance"
 
   # Guidelines:
   # You can train with the following modes:
@@ -179,7 +171,7 @@ metrics:
 # Data Augmentation
 # =============================================================================
 augmentation:
-  enabled: false
+  enabled: true
 
   # Spatial transforms (apply to both image and mask)
   random_flip:

@@ -137,9 +137,9 @@ training:
 # Loss Configuration
 # =============================================================================
 loss:
-  type: "DiceCELoss"  # MONAI DiceCELoss
+  type: "DiceFocalLoss"  # MONAI DiceFocalLoss
 
-  # DiceCELoss parameters
+  # DiceFocalLoss parameters
   include_background: false
   to_onehot_y: false
   sigmoid: true
@@ -147,10 +147,11 @@ loss:
   squared_pred: false
   jaccard: false
   reduction: "mean"
+  gamma: 2.0  # Focal loss gamma parameter
 
   # Loss weighting
   lambda_dice: 1.0
-  lambda_ce: 1.0
+  lambda_focal: 1.0
 
 # =============================================================================
 # Metrics Configuration

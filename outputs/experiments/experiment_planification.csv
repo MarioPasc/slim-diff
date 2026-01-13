@@ -1,5 +1,0 @@
-experiment,model,output_folder,device,status
-real_only,unet,outputs/experiments/real_only_unet,0,dry_run_ok
-real_only,dynunet,outputs/experiments/real_only_dynunet,1,dry_run_ok
-real_synthetic_balance,unet,outputs/experiments/real_synthetic_balance_unet,0,dry_run_ok
-real_synthetic_balance,dynunet,outputs/experiments/real_synthetic_balance_dynunet,1,dry_run_ok
