@@ -17,7 +17,10 @@ from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, Mode
 from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-from src.segmentation.callbacks.logging_callbacks import CSVLoggingCallback
+from src.segmentation.callbacks.logging_callbacks import (
+    AugmentationTrackingCallback,
+    CSVLoggingCallback,
+)
 from src.segmentation.data.dataset import PlannedFoldDataset
 from src.segmentation.data.kfold_planner import KFoldPlanner
 from src.segmentation.data.transforms import SegmentationTransforms
@@ -500,6 +503,10 @@ class KFoldSegmentationRunner:
         # CSV logging
         if cfg.logging.csv.enabled:
             callbacks.append(CSVLoggingCallback(cfg, fold_idx))
+
+        # Augmentation tracking (if augmentation enabled)
+        if cfg.augmentation.enabled:
+            callbacks.append(AugmentationTrackingCallback(cfg, fold_idx))
 
         # Early stopping
         if cfg.training.early_stopping.enabled:

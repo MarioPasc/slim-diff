@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from typing import Dict, List
+
 from monai.transforms import (
     Compose,
     MapTransform,
@@ -11,6 +14,7 @@ from monai.transforms import (
     RandGaussianSmoothd,
     RandRotated,
     RandZoomd,
+    Randomizable,
 )
 from omegaconf import DictConfig
 
@@ -53,6 +57,75 @@ class RandAdjustContrastdNeg1To1(MapTransform):
             d[key] = d[key] * 2.0 - 1.0
 
         return d
+
+
+class TrackableCompose(Compose):
+    """Compose wrapper that tracks which transforms are applied.
+
+    Tracks augmentation statistics for logging and analysis.
+    Statistics can be accessed via get_stats() and reset via reset_stats().
+    """
+
+    def __init__(self, transforms: List):
+        """Initialize trackable compose.
+
+        Args:
+            transforms: List of MONAI transforms
+        """
+        super().__init__(transforms)
+        self.stats = defaultdict(int)  # Count of times each transform was applied
+        self.total_calls = 0
+
+        # Store transform names for tracking
+        self.transform_names = []
+        for t in self.transforms:
+            # Get a readable name for the transform
+            name = t.__class__.__name__
+            # Remove 'd' suffix for dictionary transforms
+            if name.endswith('d'):
+                name = name[:-1]
+            self.transform_names.append(name)
+
+    def __call__(self, data):
+        """Apply transforms and track which ones are applied."""
+        self.total_calls += 1
+        d = dict(data)
+
+        for i, (transform, name) in enumerate(zip(self.transforms, self.transform_names)):
+            # Apply the transform
+            d = transform(d)
+
+            # Check if this is a randomizable transform and if it was applied
+            if isinstance(transform, Randomizable):
+                # MONAI's randomizable transforms have _do_transform attribute
+                if hasattr(transform, '_do_transform') and transform._do_transform:
+                    self.stats[name] += 1
+            # For non-randomizable transforms (always applied), count every call
+            else:
+                self.stats[name] += 1
+
+        return d
+
+    def get_stats(self) -> Dict[str, int]:
+        """Get augmentation statistics.
+
+        Returns:
+            Dict mapping transform name to application count
+        """
+        return dict(self.stats)
+
+    def get_total_calls(self) -> int:
+        """Get total number of times compose was called.
+
+        Returns:
+            Total call count
+        """
+        return self.total_calls
+
+    def reset_stats(self):
+        """Reset statistics counters."""
+        self.stats.clear()
+        self.total_calls = 0
 
 
 class SegmentationTransforms:
@@ -141,7 +214,7 @@ class SegmentationTransforms:
         if len(transforms) == 0:
             return None
 
-        return Compose(transforms)
+        return TrackableCompose(transforms)
 
     @staticmethod
     def build_val_transforms(cfg: DictConfig):

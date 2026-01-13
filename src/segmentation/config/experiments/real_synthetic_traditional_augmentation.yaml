@@ -176,16 +176,16 @@ augmentation:
   # Spatial transforms (apply to both image and mask)
   random_flip:
     enabled: true
-    prob: 0.5
+    prob: 0.3
     spatial_axis: [0, 1]
 
   random_rotate:
     enabled: true
-    prob: 0.5
+    prob: 0.3
     range_x: 0.26  # ~15 degrees
     range_y: 0.26
     mode: "bilinear"
-    padding_mode: "zeros"
+    padding_mode: "border"
 
   random_scale:
     enabled: true
@@ -205,13 +205,13 @@ augmentation:
 
   random_gaussian_noise:
     enabled: true
-    prob: 0.2
+    prob: 0.15
     mean: 0.0
-    std: 0.05
+    std: 0.025
 
   random_gaussian_smooth:
     enabled: true
-    prob: 0.2
+    prob: 0.15
     sigma_range: [0.5, 1.0]
 
 # =============================================================================
