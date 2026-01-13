@@ -32,6 +32,7 @@ data:
     replicas: 
       - "replica_009.npz"  # Each replica has 30 zbins * 2 conditions (lesion/no lesion) * 150 samples = 9000 samples
       - "replica_008.npz"  # Add more replicas as needed
+      - "replica_001.npz"
     
     merging_strategy: "balance" # Options: "concat", "balance"
 
@@ -238,12 +239,13 @@ logging:
 
   # Checkpointing
   checkpointing:
-    save_top_k: 3
+    save_top_k: 1
     monitor: "val/dice"
     mode: "max"
-    save_last: true
+    save_last: false
     every_n_epochs: 1
     filename: "seg-{epoch:04d}-{val_dice:.4f}"
+
 
 # =============================================================================
 # Visualization Configuration

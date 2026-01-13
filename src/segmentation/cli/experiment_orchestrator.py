@@ -81,15 +81,15 @@ def parse_args() -> argparse.Namespace:
 Examples:
   # Dry run - create planification only
     python -m src.segmentation.cli.experiment_orchestrator \
-    --experiments real_synthetic_balance,real_only \
+    --experiments real_traditional_augmentation,real_synthetic_balance \
     --models dynunet,unet,swinunetr \
-    --output-dir /media/hddb/mario/results/epilepsy/segmentation/experiments \
+    --output-dir /media/hddb/mario/results/epilepsy/segmentation/experiments/device0 \
     --device 0 
     
     python -m src.segmentation.cli.experiment_orchestrator \
-    --experiments real_traditional_augmentation,real_synthetic_traditional_augmentation \
-    --models unet,dynunet,swinunetr \
-    --output-dir /media/hddb/mario/results/epilepsy/segmentation/experiments \
+    --experiments real_synthetic_traditional_augmentation,real_only \
+    --models swinunetr,unet,dynunet \
+    --output-dir /media/hddb/mario/results/epilepsy/segmentation/experiments/device1 \
     --device 1 
     """,
     )
