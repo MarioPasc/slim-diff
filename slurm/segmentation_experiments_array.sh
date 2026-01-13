@@ -101,26 +101,34 @@ mkdir -p "${OUTPUT_DIR}"
 mkdir -p "${REPO_ROOT}/logs/seg_experiments"
 
 # Modify config for cluster paths
+# Create a job-specific config directory to avoid conflicts between array tasks
 CONFIG_DIR="${REPO_ROOT}/src/segmentation/config"
 MASTER_CONFIG="${CONFIG_DIR}/master.yaml"
-MODIFIED_CONFIG="${OUTPUT_DIR}/master_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${SLURM_ARRAY_TASK_ID}.yaml"
+JOB_CONFIG_DIR="${OUTPUT_DIR}/config_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${SLURM_ARRAY_TASK_ID}"
 
 echo "=========================================================================="
 echo "Config Modification"
 echo "=========================================================================="
-echo "Original config: ${MASTER_CONFIG}"
-echo "Modified config: ${MODIFIED_CONFIG}"
+echo "Original config dir: ${CONFIG_DIR}"
+echo "Job-specific config dir: ${JOB_CONFIG_DIR}"
 
-# Copy and modify config using sed
-cp "${MASTER_CONFIG}" "${MODIFIED_CONFIG}"
+# Remove any existing job config directory (from failed previous runs)
+rm -rf "${JOB_CONFIG_DIR}"
 
-# Update paths in the YAML config
+# Copy entire config directory structure for this job
+mkdir -p "${JOB_CONFIG_DIR}"
+cp -r "${CONFIG_DIR}/experiments" "${JOB_CONFIG_DIR}/" 2>/dev/null || true
+cp -r "${CONFIG_DIR}/models" "${JOB_CONFIG_DIR}/" 2>/dev/null || true
+cp -r "${CONFIG_DIR}/replicas" "${JOB_CONFIG_DIR}/" 2>/dev/null || true
+cp "${MASTER_CONFIG}" "${JOB_CONFIG_DIR}/master.yaml"
+
+# Update paths in ALL yaml files in the job config directory
 # Note: Using sed with careful patterns to match YAML structure
-sed -i "s|output_dir:.*|output_dir: \"${OUTPUT_DIR}\"|g" "${MODIFIED_CONFIG}"
-sed -i "s|cache_dir:.*slice_cache.*|cache_dir: \"${CACHE_DIR}\"|g" "${MODIFIED_CONFIG}"
-sed -i "s|samples_dir:.*replicas.*|samples_dir: \"${SAMPLES_DIR}\"|g" "${MODIFIED_CONFIG}"
+find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|output_dir:.*|output_dir: \"${OUTPUT_DIR}\"|g" {} \;
+find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|cache_dir:.*slice_cache.*|cache_dir: \"${CACHE_DIR}\"|g" {} \;
+find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|samples_dir:.*replicas.*|samples_dir: \"${SAMPLES_DIR}\"|g" {} \;
 
-echo "Modified paths:"
+echo "Modified paths in all configs:"
 echo "  output_dir: ${OUTPUT_DIR}"
 echo "  cache_dir: ${CACHE_DIR}"
 echo "  samples_dir: ${SAMPLES_DIR}"
@@ -177,7 +185,7 @@ echo "==========================================================================
 echo "Experiment: ${EXPERIMENT}"
 echo "Model: ${MODEL}"
 echo "Output directory: ${OUTPUT_DIR}"
-echo "Config: ${MODIFIED_CONFIG}"
+echo "Config dir: ${JOB_CONFIG_DIR}"
 if [ -n "${FOLDS}" ]; then
     echo "Folds: ${FOLDS}"
 else
@@ -188,12 +196,12 @@ echo "==========================================================================
 echo "Starting Experiment"
 echo "=========================================================================="
 
-# Build command
+# Build command - use job-specific config directory
 CMD="python -m src.segmentation.cli.experiment_orchestrator \
     --experiments ${EXPERIMENT} \
     --models ${MODEL} \
     --output-dir ${OUTPUT_DIR} \
-    --config-dir ${CONFIG_DIR} \
+    --config-dir ${JOB_CONFIG_DIR} \
     --device 0 \
     --sequential"
 
@@ -205,8 +213,8 @@ fi
 echo "Command: ${CMD}"
 eval "${CMD}"
 
-# Clean up modified config
-rm -f "${MODIFIED_CONFIG}"
+# Clean up job-specific config directory
+rm -rf "${JOB_CONFIG_DIR}"
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

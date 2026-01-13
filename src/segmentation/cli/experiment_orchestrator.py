@@ -82,13 +82,13 @@ Examples:
   # Dry run - create planification only
     python -m src.segmentation.cli.experiment_orchestrator \
     --experiments real_traditional_augmentation,real_synthetic_balance \
-    --models dynunet,unet,swinunetr \
+    --models dynunet,unet \
     --output-dir /media/hddb/mario/results/epilepsy/segmentation/experiments/device0 \
     --device 0 
     
     python -m src.segmentation.cli.experiment_orchestrator \
     --experiments real_synthetic_traditional_augmentation,real_only \
-    --models swinunetr,unet,dynunet \
+    --models unet,dynunet \
     --output-dir /media/hddb/mario/results/epilepsy/segmentation/experiments/device1 \
     --device 1 
     """,
