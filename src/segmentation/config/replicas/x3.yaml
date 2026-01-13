@@ -30,9 +30,9 @@ data:
     samples_dir: "/media/hddb/mario/data/epilepsy/synth/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas"  # e.g., "./outputs/diffusion/generated_samples"
     # Replicas to use
     replicas: 
-      - "replica_001.npz"  
+      - "replica_000.npz"  
+      - "replica_001.npz"
       - "replica_002.npz"
-      - "replica_003.npz"
     
     merging_strategy: "concat" # Options: "concat", "balance"
 

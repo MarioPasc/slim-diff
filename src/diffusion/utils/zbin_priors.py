@@ -585,6 +585,7 @@ def apply_zbin_prior_postprocess(
     n_first_bins: int = 0,
     max_components_for_first_bins: int = 1,
     relaxed_threshold_factor: float = 0.1,
+    background_value: float = 0.0,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Apply z-bin prior post-processing to a generated sample.
 
@@ -609,6 +610,7 @@ def apply_zbin_prior_postprocess(
         n_first_bins: Number of low z-bins for multi-component handling (default: 0).
         max_components_for_first_bins: Keep top N components for first bins (default: 1).
         relaxed_threshold_factor: Factor for relaxed threshold on smaller components.
+        background_value: Value to use for out-of-brain regions (default: 0.0).
 
     Returns:
         Tuple of (cleaned_img, cleaned_lesion).
@@ -718,8 +720,8 @@ def apply_zbin_prior_postprocess(
                 brain_mask = binary_fill_holes(brain_mask)
 
     # Apply mask to both image and lesion
-    img_out = img_2d * brain_mask.astype(img_2d.dtype)
-    lesion_out = lesion_2d * brain_mask.astype(lesion_2d.dtype)
+    img_out = np.where(brain_mask, img_2d, background_value).astype(img_2d.dtype)
+    lesion_out = np.where(brain_mask, lesion_2d, background_value).astype(lesion_2d.dtype)
 
     # Restore original shape if needed
     if img.ndim == 3:
@@ -774,6 +776,7 @@ def apply_postprocess_batch(
             pp_cfg.get("n_first_bins", 0),
             pp_cfg.get("max_components_for_first_bins", 1),
             pp_cfg.get("relaxed_threshold_factor", 0.1),
+            pp_cfg.get("background_value", 0.0),
         )
 
         cleaned_images.append(torch.from_numpy(img_clean))
