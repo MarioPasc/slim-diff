@@ -38,7 +38,7 @@ from src.segmentation.utils.seeding import seed_everything
 
 
 # Available models (must match files in config/models/)
-AVAILABLE_MODELS = ["unet", "dynunet", "unetplusplus", "swinunetr"]
+AVAILABLE_MODELS = ["unet", "dynunet", "unetplusplus", "swinunetr", "segresnet", "unetr", "attentionunet"]
 
 
 def parse_args() -> argparse.Namespace:
