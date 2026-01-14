@@ -62,11 +62,15 @@ CONDA_ENV_NAME="jsddpm"
 # K-fold configuration (optional, leave empty to use experiment config)
 FOLDS=""  # e.g., "5" for 5-fold, or "0,1,2" for specific folds
 
+# Negative case filtering
+USE_NEGATIVE_CASES=false  # Whether to include negative cases (no lesion slices)
+
 # Define expansion levels and models
 EXPANSIONS=(
     "x1"
     "x2"
     "x3"
+    "x5"
     "x4"
     "x6"
     "x7"
@@ -111,39 +115,51 @@ mkdir -p "${OUTPUT_DIR}"
 mkdir -p "${REPO_ROOT}/logs/replicas_experiments"
 
 # Modify config for cluster paths
+# Create a job-specific config directory to avoid conflicts between array tasks
 CONFIG_DIR="${REPO_ROOT}/src/segmentation/config"
 MASTER_CONFIG="${CONFIG_DIR}/master.yaml"
-MODIFIED_CONFIG="${OUTPUT_DIR}/master_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${SLURM_ARRAY_TASK_ID}.yaml"
+JOB_CONFIG_DIR="${OUTPUT_DIR}/config_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_${SLURM_ARRAY_TASK_ID}"
 
 echo "=========================================================================="
 echo "Config Modification"
 echo "=========================================================================="
-echo "Original config: ${MASTER_CONFIG}"
-echo "Modified config: ${MODIFIED_CONFIG}"
+echo "Original config dir: ${CONFIG_DIR}"
+echo "Job-specific config dir: ${JOB_CONFIG_DIR}"
 
-# Copy and modify config using sed
-cp "${MASTER_CONFIG}" "${MODIFIED_CONFIG}"
+# Remove any existing job config directory (from failed previous runs)
+rm -rf "${JOB_CONFIG_DIR}"
 
-# Update paths in the YAML config
+# Copy entire config directory structure for this job
+mkdir -p "${JOB_CONFIG_DIR}"
+cp -r "${CONFIG_DIR}/experiments" "${JOB_CONFIG_DIR}/" 2>/dev/null || true
+cp -r "${CONFIG_DIR}/models" "${JOB_CONFIG_DIR}/" 2>/dev/null || true
+cp -r "${CONFIG_DIR}/replicas" "${JOB_CONFIG_DIR}/" 2>/dev/null || true
+cp "${MASTER_CONFIG}" "${JOB_CONFIG_DIR}/master.yaml"
+
+# Update paths in ALL yaml files in the job config directory
 # Note: Using sed with careful patterns to match YAML structure
-sed -i "s|output_dir:.*|output_dir: \"${OUTPUT_DIR}\"|g" "${MODIFIED_CONFIG}"
-sed -i "s|cache_dir:.*slice_cache.*|cache_dir: \"${CACHE_DIR}\"|g" "${MODIFIED_CONFIG}"
-sed -i "s|samples_dir:.*replicas.*|samples_dir: \"${SAMPLES_DIR}\"|g" "${MODIFIED_CONFIG}"
+find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|output_dir:.*|output_dir: \"${OUTPUT_DIR}\"|g" {} \;
+find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|cache_dir:.*slice_cache.*|cache_dir: \"${CACHE_DIR}\"|g" {} \;
+find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|samples_dir:.*replicas.*|samples_dir: \"${SAMPLES_DIR}\"|g" {} \;
 
-echo "Modified paths:"
+# Ensure use_negative_cases is set to any (lesion-only mode for fair comparison)
+# This filters at SLICE level - only slices with actual lesion masks are used
+find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|use_negative_cases:.*|use_negative_cases: ${USE_NEGATIVE_CASES}|g" {} \;
+
+echo "Modified paths in all configs:"
 echo "  output_dir: ${OUTPUT_DIR}"
 echo "  cache_dir: ${CACHE_DIR}"
 echo "  samples_dir: ${SAMPLES_DIR}"
+echo "  use_negative_cases: ${USE_NEGATIVE_CASES} (lesion-only mode)"
 
-# Dynamic GPU assignment
-export CUDA_VISIBLE_DEVICES=0
-for i in {0..7}; do
-    if [[ -z $(nvidia-smi -i $i --query-compute-apps=pid --format=csv,noheader 2>/dev/null) ]] && nvidia-smi -i $i &>/dev/null; then
-        export CUDA_VISIBLE_DEVICES=$i
-        echo "Auto-assigned to available GPU: $i"
-        break
-    fi
-done
+echo "=========================================================================="
+echo "GPU Allocation"
+echo "=========================================================================="
+# SLURM automatically sets this variable.
+# If SLURM uses cgroups (common), you might only see one GPU (device 0) available inside the job anyway.
+echo "SLURM_JOB_GPUS: ${SLURM_JOB_GPUS:-N/A}"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-Not Set (will default to all)}"
+nvidia-smi
 
 # Load conda module and activate environment
 module_loaded=0
@@ -187,7 +203,7 @@ echo "==========================================================================
 echo "Expansion: ${EXPANSION}"
 echo "Model: ${MODEL}"
 echo "Output directory: ${OUTPUT_DIR}"
-echo "Config: ${MODIFIED_CONFIG}"
+echo "Config dir: ${JOB_CONFIG_DIR}"
 if [ -n "${FOLDS}" ]; then
     echo "Folds: ${FOLDS}"
 else
@@ -198,12 +214,12 @@ echo "==========================================================================
 echo "Starting Experiment"
 echo "=========================================================================="
 
-# Build command
+# Build command - use job-specific config directory
 CMD="python -m src.segmentation.cli.replicas_experiment_orchestrator \
     --expansions ${EXPANSION} \
     --models ${MODEL} \
     --output-dir ${OUTPUT_DIR} \
-    --config-dir ${CONFIG_DIR} \
+    --config-dir ${JOB_CONFIG_DIR} \
     --device 0 \
     --sequential"
 
@@ -215,8 +231,8 @@ fi
 echo "Command: ${CMD}"
 eval "${CMD}"
 
-# Clean up modified config
-rm -f "${MODIFIED_CONFIG}"
+# Clean up job-specific config directory
+rm -rf "${JOB_CONFIG_DIR}"
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

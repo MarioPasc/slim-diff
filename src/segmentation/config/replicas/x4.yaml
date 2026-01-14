@@ -62,6 +62,10 @@ data:
   image:
     check_range: true  # Verify images are in [-1,1]
 
+  # Negative case filtering
+  # If false, only use slices with lesion content (has_lesion=true)
+  use_negative_cases: false
+
 # =============================================================================
 # K-Fold Cross-Validation
 # =============================================================================
