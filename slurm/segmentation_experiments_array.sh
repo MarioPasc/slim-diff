@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH -J seg_experiments
-#SBATCH --array=0-23             # 6 experiments x 4 models = 24 jobs (indices 0-23)
+#SBATCH --array=0-11             # 4 experiments x 3 models = 12 jobs (indices 0-11)
 #SBATCH --time=2-00:00:00        # 2 days per experiment (conservative)
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -66,9 +66,9 @@ EXPERIMENTS=(
 )
 
 MODELS=(
-    "unet"
-    "dynunet"
-    "swinunetr"
+    "segresnet"
+    "attentionunet"
+    "unetr"
 )
 
 NUM_EXPERIMENTS=${#EXPERIMENTS[@]}
@@ -133,15 +133,14 @@ echo "  output_dir: ${OUTPUT_DIR}"
 echo "  cache_dir: ${CACHE_DIR}"
 echo "  samples_dir: ${SAMPLES_DIR}"
 
-# Dynamic GPU assignment
-export CUDA_VISIBLE_DEVICES=0
-for i in {0..7}; do
-    if [[ -z $(nvidia-smi -i $i --query-compute-apps=pid --format=csv,noheader 2>/dev/null) ]] && nvidia-smi -i $i &>/dev/null; then
-        export CUDA_VISIBLE_DEVICES=$i
-        echo "Auto-assigned to available GPU: $i"
-        break
-    fi
-done
+echo "=========================================================================="
+echo "GPU Allocation"
+echo "=========================================================================="
+# SLURM automatically sets this variable.
+# If SLURM uses cgroups (common), you might only see one GPU (device 0) available inside the job anyway.
+echo "SLURM_JOB_GPUS: ${SLURM_JOB_GPUS:-N/A}"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-Not Set (will default to all)}"
+nvidia-smi
 
 # Load conda module and activate environment
 module_loaded=0

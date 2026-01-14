@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 
 from omegaconf import DictConfig
+from torch import nn
 
 logger = logging.getLogger(__name__)
 
 
-def build_model(cfg: DictConfig):
+def build_model(cfg: DictConfig) -> nn.Module:
     """Build segmentation model from config.
 
     Args:
@@ -25,6 +26,8 @@ def build_model(cfg: DictConfig):
     model_cfg = cfg.model
 
     logger.info(f"Building model: {model_name}")
+
+    model: nn.Module
 
     if model_name == "unet":
         from monai.networks.nets.unet import UNet
@@ -95,7 +98,47 @@ def build_model(cfg: DictConfig):
             downsample=model_cfg.get("downsample", "merging"),
             use_v2=model_cfg.get("use_v2", False),
         )
+    elif model_name == "segresnet":
+        from monai.networks.nets.segresnet import SegResNet
+        model = SegResNet(
+            spatial_dims=model_cfg.spatial_dims,
+            in_channels=model_cfg.in_channels,
+            out_channels=model_cfg.out_channels,
+            init_filters=model_cfg.get("init_filters", 8),
+            dropout_prob=model_cfg.get("dropout_prob", None),
+            blocks_down=tuple(model_cfg.get("blocks_down", [1, 2, 2, 4])),
+            blocks_up=tuple(model_cfg.get("blocks_up", [1, 1, 1])),
+        )
 
+    elif model_name == "attentionunet":
+        from monai.networks.nets.attentionunet import AttentionUnet
+        model = AttentionUnet(
+            spatial_dims=model_cfg.spatial_dims,
+            in_channels=model_cfg.in_channels,
+            out_channels=model_cfg.out_channels,
+            channels=tuple(model_cfg.channels),
+            strides=tuple(model_cfg.strides),
+            kernel_size=model_cfg.get("kernel_size", 3),
+            up_kernel_size=model_cfg.get("up_kernel_size", 3),
+            dropout=model_cfg.get("dropout", 0.0),
+        )
+
+    elif model_name == "unetr":
+        from monai.networks.nets.unetr import UNETR
+        model = UNETR(
+            in_channels=model_cfg.in_channels,
+            out_channels=model_cfg.out_channels,
+            img_size=tuple(model_cfg.img_size),
+            feature_size=model_cfg.get("feature_size", 16),
+            hidden_size=model_cfg.get("hidden_size", 768),
+            mlp_dim=model_cfg.get("mlp_dim", 3072),
+            num_heads=model_cfg.get("num_heads", 12),
+            proj_type=model_cfg.get("proj_type", "perceptron"),
+            norm_name=model_cfg.get("norm_name", "instance"),
+            res_block=model_cfg.get("res_block", True),
+            dropout_rate=model_cfg.get("dropout_rate", 0.0),
+            spatial_dims=model_cfg.spatial_dims,
+        )
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 

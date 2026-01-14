@@ -262,19 +262,43 @@ class KFoldPlanner:
         Args:
             replica_path: Path to the replica NPZ file
             replica_name: Name of the replica file
+            
+        Note:
+            We determine has_lesion from actual mask content, NOT from the 
+            conditioning label (lesion_present). The conditioning label indicates
+            what was requested during generation, but ~20% of "lesion" samples
+            have empty masks (DDPM generation failure). Using actual mask content
+            ensures correct balancing and prevents teaching the model incorrect
+            image-mask pairs.
         """
         data = np.load(replica_path, allow_pickle=True)
 
         n_samples = data["images"].shape[0]
         zbins = data["zbin"]
-        lesion_present = data["lesion_present"]
+        masks = data["masks"]
+        lesion_labels = data["lesion_present"]  # Keep for logging/debugging
 
         # Extract replica base name without extension
         replica_base = replica_name.replace(".npz", "")
+        
+        # Track label vs actual mismatch for logging
+        n_false_positives = 0  # label=lesion, mask=empty
+        n_false_negatives = 0  # label=no-lesion, mask=has-content
 
         for idx in range(n_samples):
             zbin = int(zbins[idx])
-            has_lesion = bool(lesion_present[idx])
+            
+            # Determine has_lesion from ACTUAL mask content, not conditioning label
+            # Threshold: at least 10 pixels above 0.0 to count as lesion
+            mask = masks[idx]
+            has_lesion_actual = bool((mask > 0.0).sum() > 10)
+            has_lesion_label = bool(lesion_labels[idx])
+            
+            # Track mismatches
+            if has_lesion_label and not has_lesion_actual:
+                n_false_positives += 1
+            elif not has_lesion_label and has_lesion_actual:
+                n_false_negatives += 1
 
             # Create synthetic subject ID: synth_<replica>_<index>
             subject_id = f"synth_{replica_base}_{idx:05d}"
@@ -288,13 +312,22 @@ class KFoldPlanner:
                 filepath=filepath,
                 z_index=zbin,  # Use zbin as z_index for synthetic
                 z_bin=zbin,
-                has_lesion=has_lesion,
+                has_lesion=has_lesion_actual,  # Use ACTUAL mask content
                 source="synthetic",
-                has_lesion_subject=has_lesion,  # Each synthetic sample is its own "subject"
+                has_lesion_subject=has_lesion_actual,  # Each synthetic sample is its own "subject"
                 replica_name=replica_name,
             )
 
             self.synthetic_samples.append(sample)
+        
+        # Log mismatch statistics
+        if n_false_positives > 0 or n_false_negatives > 0:
+            logger.warning(
+                f"Replica {replica_name}: Label-mask mismatch detected. "
+                f"False positives (label=lesion, mask=empty): {n_false_positives}, "
+                f"False negatives (label=no-lesion, mask=has-content): {n_false_negatives}. "
+                f"Using actual mask content for has_lesion flag."
+            )
 
     def _create_folds(self):
         """Create stratified k-fold splits at subject level."""
