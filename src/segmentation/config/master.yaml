@@ -60,6 +60,11 @@ data:
   image:
     check_range: true  # Verify images are in [-1,1]
 
+  # Negative case filtering
+  # If false, only use slices with lesion content (has_lesion=true)
+  # This filters at slice level, not subject level (epilepsy patients are double-filtered)
+  use_negative_cases: true
+
 # =============================================================================
 # K-Fold Cross-Validation
 # =============================================================================

@@ -51,6 +51,11 @@ data:
   # Columns: fold, split, subject_id, image_path, mask_path, has_lesion_slice, has_lesion_subject, source (real/synthetic), zbin
   # For subject_id, synthetic samples will be named as "synth_<replica>_<index>"
 
+  # Negative case filtering
+  # If false, only use slices with lesion content (has_lesion=true)
+  # This filters at SLICE level - epilepsy patients with mixed slices will only contribute lesion slices
+  use_negative_cases: false
+
   # Mask preprocessing
   mask:
     convert_range: true  # Convert {-1,+1} to {0,1}

@@ -85,18 +85,30 @@ def apply_plot_settings() -> None:
 # Constants
 # ==============================================================================
 
-MODELS = ["unet", "dynunet", "swinunetr"]
+MODELS = [
+    #"unet", 
+    #"dynunet", 
+    #"swinunetr", 
+    "unetr", 
+    "segresnet", 
+    "attentionunet"]
 MODEL_DISPLAY_NAMES = {
-    "unet": "UNet",
-    "dynunet": "DynUNet",
-    "swinunetr": "SwinUNetR",
+    #"unet": "UNet",
+    #"dynunet": "DynUNet",
+    #"swinunetr": "SwinUNetR",
+    "unetr": "UNetR",
+    "segresnet": "SegResNet",
+    "attentionunet": "AttentionUNet",
 }
 
 EXPERIMENTS = {
     r"$M_0$": "real_only",
-    r"$M_1$": "real_synthetic_concat",
+    #r"$M_1$": "real_synthetic_concat",
     r"$M_2$": "real_synthetic_balance",
-    r"$M_3$": "synthetic_only",
+    #r"$M_3$": "synthetic_only",
+    r"$M_4$": "real_traditional_augmentation",
+    r"$M_5$": "real_synthetic_traditional_augmentation",
+    
 }
 
 METRIC_COLUMNS = {
@@ -109,7 +121,7 @@ METRIC_LABELS = {
     "hd95": "HD95 (mm)",
 }
 
-BOXPLOT_COLORS = ["#4682b4", "#4682b4", "#4682b4", "#d62728"]
+BOXPLOT_COLORS = ['#77AADD', '#EE8866', '#EEDD88', '#FFAABB', '#99DDFF', '#44BB99', '#BBCC33', '#AAAA00']
 
 
 # ==============================================================================

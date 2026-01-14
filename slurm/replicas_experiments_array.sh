@@ -68,7 +68,6 @@ EXPANSIONS=(
     "x2"
     "x3"
     "x4"
-    "x5"
     "x6"
     "x7"
     "x8"
@@ -77,9 +76,9 @@ EXPANSIONS=(
 )
 
 MODELS=(
-    "dynunet"
-    "unet"
-    "swinunetr"
+    "segresnet"
+    "attentionunet"
+    "unetr"
 )
 
 NUM_EXPANSIONS=${#EXPANSIONS[@]}

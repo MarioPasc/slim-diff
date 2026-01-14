@@ -51,6 +51,8 @@ OUTPUT_DIR="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/segmentation_e
 CACHE_DIR="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy/slice_cache"
 SAMPLES_DIR="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy/replicas"
 
+USE_NEGATIVE_CASES=false  # Whether to include negative cases (no lesion slices)
+
 # Conda environment
 CONDA_ENV_NAME="jsddpm"
 
@@ -128,10 +130,15 @@ find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|output_dir:.*|output_dir
 find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|cache_dir:.*slice_cache.*|cache_dir: \"${CACHE_DIR}\"|g" {} \;
 find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|samples_dir:.*replicas.*|samples_dir: \"${SAMPLES_DIR}\"|g" {} \;
 
+# Ensure use_negative_cases is set to any (lesion-only mode for fair comparison)
+# This filters at SLICE level - only slices with actual lesion masks are used
+find "${JOB_CONFIG_DIR}" -name "*.yaml" -exec sed -i "s|use_negative_cases:.*|use_negative_cases: ${USE_NEGATIVE_CASES}|g" {} \;
+
 echo "Modified paths in all configs:"
 echo "  output_dir: ${OUTPUT_DIR}"
 echo "  cache_dir: ${CACHE_DIR}"
 echo "  samples_dir: ${SAMPLES_DIR}"
+echo "  use_negative_cases: ${USE_NEGATIVE_CASES} (lesion-only mode)"
 
 echo "=========================================================================="
 echo "GPU Allocation"

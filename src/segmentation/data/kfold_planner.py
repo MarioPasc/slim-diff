@@ -118,6 +118,9 @@ class KFoldPlanner:
         self.stratify_by = cfg.k_fold.stratify_by
         self.seed = cfg.k_fold.seed
 
+        # Negative case filtering
+        self.use_negative_cases = cfg.data.get("use_negative_cases", True)
+
         # Output directory
         self.output_dir = Path(cfg.experiment.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -170,6 +173,10 @@ class KFoldPlanner:
                         source="real",
                     )
 
+                    # Skip negative cases if use_negative_cases is False
+                    if not self.use_negative_cases and not sample.has_lesion:
+                        continue
+
                     # Add to test subjects dict
                     if subject_id not in test_subjects_dict:
                         test_subjects_dict[subject_id] = SubjectInfo(subject_id=subject_id)
@@ -218,6 +225,10 @@ class KFoldPlanner:
                         has_lesion=row["has_lesion"].lower() == "true",
                         source="real",
                     )
+
+                    # Skip negative cases if use_negative_cases is False
+                    if not self.use_negative_cases and not sample.has_lesion:
+                        continue
 
                     # Add to subject
                     if subject_id not in self.real_subjects:
@@ -318,6 +329,10 @@ class KFoldPlanner:
                 replica_name=replica_name,
             )
 
+            # Skip negative cases if use_negative_cases is False
+            if not self.use_negative_cases and not has_lesion_actual:
+                continue
+
             self.synthetic_samples.append(sample)
         
         # Log mismatch statistics
@@ -360,6 +375,7 @@ class KFoldPlanner:
         logger.info(f"  - n_folds: {self.n_folds}")
         logger.info(f"  - real_enabled: {self.real_enabled}")
         logger.info(f"  - synthetic_enabled: {self.synthetic_enabled}")
+        logger.info(f"  - use_negative_cases: {self.use_negative_cases}")
         if self.synthetic_enabled:
             logger.info(f"  - synthetic_training_only: {self.synthetic_training_only}")
             logger.info(f"  - replicas: {self.replicas}")
@@ -414,7 +430,10 @@ class KFoldPlanner:
         if self.merging_strategy == "concat":
             train_combined = self._merge_concat(train_real)
         elif self.merging_strategy == "balance":
-            train_combined = self._merge_balance(train_real)
+            if self.use_negative_cases:
+                train_combined = self._merge_balance(train_real)
+            else:
+                train_combined = self._merge_balance_lesions_only(train_real)
         else:
             raise ValueError(f"Unknown merging_strategy: {self.merging_strategy}")
 
@@ -579,6 +598,64 @@ class KFoldPlanner:
 
         return combined
 
+    def _merge_balance_lesions_only(
+        self, train_real: list[SampleRecord]
+    ) -> list[SampleRecord]:
+        """Merge real and synthetic lesion samples with z-bin balancing.
+
+        When use_negative_cases=False, all samples have lesions.
+        This method balances the number of lesion samples across z-bins
+        to ensure uniform coverage of the z-axis.
+
+        Args:
+            train_real: Real training samples (all have lesions)
+
+        Returns:
+            Combined training samples with balanced z-bin distribution
+        """
+        # Count real samples per z-bin
+        real_counts_by_zbin = defaultdict(int)
+        for sample in train_real:
+            real_counts_by_zbin[sample.z_bin] += 1
+
+        # Get all z-bins from real data
+        zbins = sorted(real_counts_by_zbin.keys())
+
+        if not zbins:
+            return train_real + self.synthetic_samples
+
+        # Find target count (max across z-bins)
+        target_count = max(real_counts_by_zbin.values())
+
+        combined = list(train_real)
+        used_synthetic = set()
+
+        # For each z-bin, add synthetic samples to reach target
+        for zbin in zbins:
+            current_count = real_counts_by_zbin[zbin]
+            deficit = target_count - current_count
+
+            if deficit <= 0:
+                continue
+
+            # Get synthetic lesion samples for this z-bin
+            # Note: when use_negative_cases=False, all synthetic samples have lesions
+            synth_samples = self.synthetic_by_zbin_lesion.get((zbin, True), [])
+
+            for sample in synth_samples:
+                if deficit <= 0:
+                    break
+                if id(sample) not in used_synthetic:
+                    combined.append(sample)
+                    used_synthetic.add(id(sample))
+                    deficit -= 1
+
+        # Add any remaining synthetic samples evenly across z-bins
+        remaining = [s for s in self.synthetic_samples if id(s) not in used_synthetic]
+        combined.extend(remaining)
+
+        return combined
+
     def plan(self) -> Path:
         """Generate fold CSV files.
 
@@ -708,3 +785,142 @@ class KFoldPlanner:
 
             if s['zbins']:
                 print(f"  Z-bins: {len(s['zbins'])} unique bins")
+
+    def generate_zbin_lesion_visualization(
+        self,
+        output_dir: Path | str | None = None,
+    ) -> Path | None:
+        """Generate per-fold z-bin lesion distribution visualization.
+
+        Shows the distribution of lesion samples across z-bins for each fold.
+        This is particularly useful when use_negative_cases=False to verify
+        the balance strategy is working correctly.
+
+        Args:
+            output_dir: Output directory for the visualization.
+                       Defaults to self.output_dir.
+
+        Returns:
+            Path to the saved figure, or None if matplotlib is not available.
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import numpy as np_viz
+        except ImportError:
+            logger.warning("matplotlib not available, skipping visualization")
+            return None
+
+        if output_dir is None:
+            output_dir = self.output_dir
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Collect data for all folds
+        n_folds = self.n_folds
+
+        # Get all z-bins across all folds
+        all_zbins: set[int] = set()
+        fold_data = []
+
+        for fold_idx in range(n_folds):
+            train_samples, val_samples = self.get_fold(fold_idx)
+
+            # Count lesion samples per z-bin (split by source)
+            train_real_by_zbin: dict[int, int] = defaultdict(int)
+            train_synth_by_zbin: dict[int, int] = defaultdict(int)
+            val_by_zbin: dict[int, int] = defaultdict(int)
+
+            for s in train_samples:
+                if s.has_lesion:
+                    all_zbins.add(s.z_bin)
+                    if s.source == "real":
+                        train_real_by_zbin[s.z_bin] += 1
+                    else:
+                        train_synth_by_zbin[s.z_bin] += 1
+
+            for s in val_samples:
+                if s.has_lesion:
+                    all_zbins.add(s.z_bin)
+                    val_by_zbin[s.z_bin] += 1
+
+            fold_data.append({
+                "train_real": dict(train_real_by_zbin),
+                "train_synth": dict(train_synth_by_zbin),
+                "val": dict(val_by_zbin),
+            })
+
+        if not all_zbins:
+            logger.warning("No lesion samples found, skipping visualization")
+            return None
+
+        zbins = sorted(all_zbins)
+
+        # Create figure with one row per fold
+        fig, axes = plt.subplots(
+            n_folds, 2,
+            figsize=(14, 3 * n_folds),
+            dpi=100,
+            squeeze=False,
+        )
+
+        mode_str = "Lesion-Only" if not self.use_negative_cases else "All Slices"
+        fig.suptitle(
+            f"Per-Fold Z-bin Lesion Distribution ({mode_str})",
+            fontsize=14,
+            fontweight="bold",
+            y=1.02,
+        )
+
+        x = np_viz.arange(len(zbins))
+        width = 0.6
+
+        for fold_idx, data in enumerate(fold_data):
+            # Training plot (stacked: real + synthetic)
+            ax_train = axes[fold_idx, 0]
+
+            real_counts = [data["train_real"].get(z, 0) for z in zbins]
+            synth_counts = [data["train_synth"].get(z, 0) for z in zbins]
+
+            ax_train.bar(x, real_counts, width, label="Real", color="#2ecc71")
+            ax_train.bar(x, synth_counts, width, bottom=real_counts,
+                        label="Synthetic", color="#9b59b6")
+
+            ax_train.set_xlabel("Z-bin", fontsize=10)
+            ax_train.set_ylabel("Lesion Count", fontsize=10)
+            ax_train.set_title(f"Fold {fold_idx} - Train", fontsize=11, fontweight="bold")
+
+            # Show every 5th tick or so
+            tick_step = max(1, len(zbins) // 10)
+            tick_positions = np_viz.arange(0, len(zbins), tick_step)
+            ax_train.set_xticks(tick_positions)
+            ax_train.set_xticklabels([zbins[i] for i in tick_positions])
+            ax_train.legend(loc="upper right", fontsize=8)
+            ax_train.spines["top"].set_visible(False)
+            ax_train.spines["right"].set_visible(False)
+
+            # Validation plot
+            ax_val = axes[fold_idx, 1]
+
+            val_counts = [data["val"].get(z, 0) for z in zbins]
+
+            ax_val.bar(x, val_counts, width, label="Real", color="#1abc9c")
+
+            ax_val.set_xlabel("Z-bin", fontsize=10)
+            ax_val.set_ylabel("Lesion Count", fontsize=10)
+            ax_val.set_title(f"Fold {fold_idx} - Validation", fontsize=11, fontweight="bold")
+            ax_val.set_xticks(tick_positions)
+            ax_val.set_xticklabels([zbins[i] for i in tick_positions])
+            ax_val.spines["top"].set_visible(False)
+            ax_val.spines["right"].set_visible(False)
+
+        plt.tight_layout()
+
+        # Save figure
+        suffix = "lesion_only" if not self.use_negative_cases else "all_slices"
+        fig_path = output_dir / f"kfold_zbin_lesion_distribution_{suffix}.png"
+        fig.savefig(fig_path, dpi=150, bbox_inches="tight", facecolor="white")
+        plt.close(fig)
+
+        logger.info(f"Saved z-bin lesion distribution visualization to: {fig_path}")
+
+        return fig_path

@@ -69,6 +69,10 @@ class KFoldSegmentationRunner:
         # Create k-fold planner (handles real + synthetic data mixing)
         self.planner = KFoldPlanner(cfg)
 
+        # Generate z-bin lesion distribution visualization when using lesion-only mode
+        if not cfg.data.get("use_negative_cases", True):
+            self.planner.generate_zbin_lesion_visualization()
+
         # Determine which folds to run
         self.folds_to_run = cfg.k_fold.folds_to_run or list(
             range(cfg.k_fold.n_folds)

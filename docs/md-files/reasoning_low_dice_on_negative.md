@@ -1,0 +1,1 @@
+Los controles dan un DICE score de 1.0 entonces cuando intentamos balancear el conjunto de datos y forzar al modelo a aprender las lesiones da peor rendimiento que cuando podía no aprenderlas.

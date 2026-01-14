@@ -186,13 +186,17 @@ class SegmentationVisualizationCallback(Callback):
             smooth: Smoothing factor
 
         Returns:
-            Dice score
+            Dice score (NaN if both masks are empty)
         """
         pred_flat = pred.view(-1)
         target_flat = target.view(-1)
 
         intersection = (pred_flat * target_flat).sum()
         union = pred_flat.sum() + target_flat.sum()
+
+        # Return NaN if both masks are empty (consistent with MONAI DiceMetric)
+        if union == 0:
+            return torch.tensor(float("nan"))
 
         dice = (2.0 * intersection + smooth) / (union + smooth)
         return dice
@@ -303,7 +307,8 @@ class SegmentationVisualizationCallback(Callback):
 
             # Plot prediction overlay
             axes[row_idx, 2].imshow(pred_overlay)
-            axes[row_idx, 2].set_title(f'Prediction\nDice: {dice_score:.4f}')
+            dice_str = "N/A" if np.isnan(dice_score) else f"{dice_score:.4f}"
+            axes[row_idx, 2].set_title(f'Prediction\nDice: {dice_str}')
             axes[row_idx, 2].axis('off')
 
         plt.tight_layout()
