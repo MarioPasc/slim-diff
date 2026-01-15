@@ -5,7 +5,9 @@ across different training strategies (real_only, real_synthetic_concat,
 real_synthetic_balance, synthetic_only).
 
 Usage:
-    python seg_visualization.py /path/to/results /path/to/output \
+    python seg_visualization.py \
+    /media/mpascual/Sandisk2TB/research/epilepsy/results/segmentation/runs/segmentation_balanced \
+    /media/mpascual/Sandisk2TB/research/epilepsy/results/segmentation/runs/segmentation_balanced \
         --synthetic-expansion-term x2 --metric dice --format png
 """
 

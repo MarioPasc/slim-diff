@@ -399,8 +399,20 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
+        # Compute x0_pred if using FFL mode (mse_ffl_groups)
+        x0_pred = None
+        if self.cfg.loss.get("mode") == "mse_ffl_groups":
+            # For x0_pred, use x_t without anatomical prior channel
+            if self._use_anatomical_conditioning:
+                x_t_for_recon = x_t[:, :2]  # (B, 2, H, W) - remove anatomical prior
+            else:
+                x_t_for_recon = x_t
+            x0_pred = self._predict_x0(x_t_for_recon, model_output, timesteps)
+
         # Compute loss with mask for channel-separated multi-task learning
-        loss, loss_details = self.criterion(model_output, target, mask)
+        loss, loss_details = self.criterion(
+            model_output, target, mask, x0=x0, x0_pred=x0_pred
+        )
 
         # Log metrics
         self.log("train/loss", loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
@@ -408,6 +420,12 @@ class JSDDPMLightningModule(pl.LightningModule):
             self.log("train/loss_image", loss_details["loss_image"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
         if "loss_mask" in loss_details:
             self.log("train/loss_mask", loss_details["loss_mask"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+
+        # Log FFL-specific metrics (mse_ffl_groups mode)
+        if "loss_ffl" in loss_details:
+            self.log("train/loss_ffl", loss_details["loss_ffl"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+        if "ffl_raw" in loss_details:
+            self.log("train/ffl_raw", loss_details["ffl_raw"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
 
         # Log weighted loss metrics (always available when using multi-task loss)
         if "weighted_loss_0" in loss_details:
@@ -425,6 +443,17 @@ class JSDDPMLightningModule(pl.LightningModule):
             # Log precision (exp(-log_var)) for interpretability
             self.log("train/precision_image", torch.exp(-loss_details["log_var_0"]), on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
             self.log("train/precision_mask", torch.exp(-loss_details["log_var_1"]), on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+
+        # Log group uncertainty metrics (mse_ffl_groups mode)
+        if "log_var_group_0" in loss_details:
+            self.log("train/log_var_mse_group", loss_details["log_var_group_0"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/log_var_ffl_group", loss_details["log_var_group_1"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/precision_mse_group", loss_details["precision_group_0"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/precision_ffl_group", loss_details["precision_group_1"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/sigma_mse_group", loss_details["sigma_group_0"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/sigma_ffl_group", loss_details["sigma_group_1"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/group_loss_mse", loss_details["group_0_loss"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/group_loss_ffl", loss_details["group_1_loss"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
 
         return loss
 
@@ -584,8 +613,16 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
+        # Compute x0_pred if using FFL mode (mse_ffl_groups)
+        x0_pred = None
+        if self.cfg.loss.get("mode") == "mse_ffl_groups":
+            # For x0_pred, use x_t without anatomical prior channel
+            x0_pred = self._predict_x0(x_t, model_output, timesteps)
+
         # Compute loss with mask for channel-separated multi-task learning
-        loss, loss_details = self.criterion(model_output, target, mask)
+        loss, loss_details = self.criterion(
+            model_output, target, mask, x0=x0, x0_pred=x0_pred
+        )
 
         # ========== Quality metrics via RECONSTRUCTION at fixed timesteps ==========
         # Reconstruction-based validation: noise x0 to t, denoise back, compare with original x0
@@ -643,7 +680,13 @@ class JSDDPMLightningModule(pl.LightningModule):
             self.log("val/loss_image", loss_details["loss_image"], sync_dist=True, batch_size=B)
         if "loss_mask" in loss_details:
             self.log("val/loss_mask", loss_details["loss_mask"], sync_dist=True, batch_size=B)
-        
+
+        # Log FFL-specific metrics (mse_ffl_groups mode)
+        if "loss_ffl" in loss_details:
+            self.log("val/loss_ffl", loss_details["loss_ffl"], sync_dist=True, batch_size=B)
+        if "ffl_raw" in loss_details:
+            self.log("val/ffl_raw", loss_details["ffl_raw"], sync_dist=True, batch_size=B)
+
         # Reconstruction metrics at each timestep
         if len(ANCHORS) != 0:
             for t_val in reconstruction_timesteps:
@@ -669,6 +712,17 @@ class JSDDPMLightningModule(pl.LightningModule):
             # Log precision (exp(-log_var)) for interpretability
             self.log("val/precision_image", torch.exp(-loss_details["log_var_0"]), sync_dist=True, batch_size=B)
             self.log("val/precision_mask", torch.exp(-loss_details["log_var_1"]), sync_dist=True, batch_size=B)
+
+        # Log group uncertainty metrics (mse_ffl_groups mode)
+        if "log_var_group_0" in loss_details:
+            self.log("val/log_var_mse_group", loss_details["log_var_group_0"], sync_dist=True, batch_size=B)
+            self.log("val/log_var_ffl_group", loss_details["log_var_group_1"], sync_dist=True, batch_size=B)
+            self.log("val/precision_mse_group", loss_details["precision_group_0"], sync_dist=True, batch_size=B)
+            self.log("val/precision_ffl_group", loss_details["precision_group_1"], sync_dist=True, batch_size=B)
+            self.log("val/sigma_mse_group", loss_details["sigma_group_0"], sync_dist=True, batch_size=B)
+            self.log("val/sigma_ffl_group", loss_details["sigma_group_1"], sync_dist=True, batch_size=B)
+            self.log("val/group_loss_mse", loss_details["group_0_loss"], sync_dist=True, batch_size=B)
+            self.log("val/group_loss_ffl", loss_details["group_1_loss"], sync_dist=True, batch_size=B)
 
         if len(ANCHORS) != 0:
             return {"loss": loss, **all_metrics}

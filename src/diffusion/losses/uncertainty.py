@@ -196,3 +196,172 @@ class SimpleWeightedLoss(nn.Module):
         details["total_loss"] = total_loss.detach()
 
         return total_loss, details
+
+
+class GroupUncertaintyWeightedLoss(nn.Module):
+    """Group-level uncertainty-weighted multi-task loss.
+
+    Extension of UncertaintyWeightedLoss that groups related losses
+    together under a single uncertainty parameter per group.
+
+    Example grouping for JS-DDPM with FFL:
+        Group 0: mse_image + mse_mask (spatial losses)
+        Group 1: ffl (frequency loss)
+
+    Each group has one learnable log_var parameter.
+
+    For each group g:
+        group_loss_g = sum(intra_weight_i * loss_i) for i in group_g
+        weighted_g = exp(-log_var_g) * group_loss_g + 0.5 * log_var_g
+    total_loss = sum(weighted_g)
+    """
+
+    def __init__(
+        self,
+        n_groups: int = 2,
+        group_membership: list[int] | None = None,
+        initial_log_vars: list[float] | None = None,
+        learnable: bool = True,
+        clamp_range: tuple[float, float] = (-5.0, 5.0),
+        intra_group_weights: list[float] | None = None,
+    ) -> None:
+        """Initialize the loss module.
+
+        Args:
+            n_groups: Number of loss groups.
+            group_membership: List mapping each loss to its group index.
+                             E.g., [0, 0, 1] means losses 0,1 are group 0,
+                             loss 2 is group 1.
+            initial_log_vars: Initial values for each group's log variance.
+            learnable: Whether log_vars are learnable.
+            clamp_range: Min/max values for clamping log_vars.
+            intra_group_weights: Fixed weights for losses within same group.
+                                E.g., [1.0, 1.0, 1.0] for equal weighting.
+        """
+        super().__init__()
+        self.n_groups = n_groups
+        self.learnable = learnable
+        self.clamp_range = clamp_range
+
+        # Default group membership: [0, 0, 1] for [mse_img, mse_mask, ffl]
+        if group_membership is None:
+            group_membership = [0, 0, 1]
+        self.group_membership = group_membership
+
+        # Default intra-group weights: equal weighting
+        if intra_group_weights is None:
+            intra_group_weights = [1.0] * len(group_membership)
+        self.register_buffer(
+            "intra_group_weights",
+            torch.tensor(intra_group_weights, dtype=torch.float32),
+        )
+
+        # Initialize log variance parameters (one per GROUP)
+        if initial_log_vars is None:
+            initial_log_vars = [0.0] * n_groups
+
+        log_vars = torch.tensor(initial_log_vars, dtype=torch.float32)
+        if learnable:
+            self.log_vars = nn.Parameter(log_vars)
+        else:
+            self.register_buffer("log_vars", log_vars)
+
+        logger.info(
+            f"GroupUncertaintyWeightedLoss: n_groups={n_groups}, "
+            f"membership={self.group_membership}, "
+            f"initial_log_vars={initial_log_vars}, "
+            f"intra_group_weights={intra_group_weights}"
+        )
+
+    def forward(
+        self,
+        losses: list[torch.Tensor] | torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Compute group uncertainty-weighted total loss.
+
+        Args:
+            losses: List of individual task losses.
+
+        Returns:
+            Tuple of (total_loss, details_dict).
+        """
+        if isinstance(losses, torch.Tensor):
+            losses = [losses[i] for i in range(losses.shape[0])]
+
+        n_losses = len(losses)
+        if n_losses != len(self.group_membership):
+            raise ValueError(
+                f"Expected {len(self.group_membership)} losses, got {n_losses}"
+            )
+
+        device = losses[0].device
+
+        # Aggregate losses per group with intra-group weights
+        group_losses = [
+            torch.tensor(0.0, device=device) for _ in range(self.n_groups)
+        ]
+
+        for i, (loss_i, group_idx) in enumerate(
+            zip(losses, self.group_membership)
+        ):
+            group_losses[group_idx] = (
+                group_losses[group_idx] + self.intra_group_weights[i] * loss_i
+            )
+
+        # Apply uncertainty weighting per group
+        total_loss = torch.tensor(0.0, device=device)
+        details = {}
+
+        for g in range(self.n_groups):
+            log_var_g = torch.clamp(
+                self.log_vars[g],
+                min=self.clamp_range[0],
+                max=self.clamp_range[1],
+            )
+
+            precision_g = torch.exp(-log_var_g)
+            weighted_group_loss = precision_g * group_losses[g] + 0.5 * log_var_g
+
+            total_loss = total_loss + weighted_group_loss
+
+            details[f"group_{g}_loss"] = group_losses[g].detach()
+            details[f"group_{g}_weighted_loss"] = weighted_group_loss.detach()
+            details[f"log_var_group_{g}"] = log_var_g.detach()
+            details[f"sigma_group_{g}"] = torch.exp(0.5 * log_var_g).detach()
+            details[f"precision_group_{g}"] = precision_g.detach()
+
+        # Also log individual losses for debugging
+        for i, loss_i in enumerate(losses):
+            details[f"loss_{i}"] = loss_i.detach()
+
+        details["total_loss"] = total_loss.detach()
+
+        return total_loss, details
+
+    def get_log_vars(self) -> torch.Tensor:
+        """Get current log variance values (per group, unclamped).
+
+        Returns:
+            Tensor of log variance values.
+        """
+        return self.log_vars.detach()
+
+    def get_log_vars_clamped(self) -> torch.Tensor | None:
+        """Get clamped log variance values used in forward pass.
+
+        Returns:
+            Clamped log variance tensor if learnable, None otherwise.
+        """
+        if not self.learnable:
+            return None
+        return torch.clamp(
+            self.log_vars.detach(), self.clamp_range[0], self.clamp_range[1]
+        )
+
+    def get_weights(self) -> torch.Tensor:
+        """Get current effective weights (precisions) per group.
+
+        Returns:
+            Tensor of weights exp(-log_var).
+        """
+        return torch.exp(-self.log_vars).detach()

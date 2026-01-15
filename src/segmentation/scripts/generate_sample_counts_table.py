@@ -19,7 +19,7 @@ Usage:
 
 Example:
     python -m src.segmentation.scripts.generate_sample_counts_table \
-        --experiments-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/segmentation/runs/segmentation_experiments \
+        --experiments-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/segmentation/runs/segmentation_balanced \
         --output-dir docs/tex/sample_counts \
         --template-path docs/tex/sample_counts/template.tex \
         --model attentionunet
