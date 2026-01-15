@@ -103,8 +103,6 @@ MODEL_DISPLAY_NAMES = {
 
 EXPERIMENTS = {
     r"$M_0$": "real_only",
-    #r"$M_1$": "real_synthetic_concat",
-    #r"$M_3$": "synthetic_only",
     r"$M_1$": "real_traditional_augmentation",
     r"$M_2$": "real_synthetic_balance",
     r"$M_3$": "real_synthetic_traditional_augmentation",

@@ -31,7 +31,6 @@ data:
     # Replicas to use
     replicas: 
       - "replica_000.npz"  # Each replica has 30 zbins * 2 conditions (lesion/no lesion) * 150 samples = 9000 samples
-      - "replica_001.npz"  # Add more replicas as needed
     
     merging_strategy: "concat" # Options: "concat", "balance"
 
