@@ -91,7 +91,8 @@ MODELS = [
     #"swinunetr", 
     "unetr", 
     "segresnet", 
-    "attentionunet"]
+    "attentionunet"
+]
 MODEL_DISPLAY_NAMES = {
     #"unet": "UNet",
     #"dynunet": "DynUNet",
