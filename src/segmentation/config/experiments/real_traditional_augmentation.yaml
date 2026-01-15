@@ -87,7 +87,7 @@ k_fold:
 # =============================================================================
 training:
   # Batch size and workers
-  batch_size: 128
+  batch_size: 64
   num_workers: 0  # Single-threaded for maximum robustness on slow I/O (external drives)
   pin_memory: true
 
