@@ -504,12 +504,92 @@ class KFoldPlanner:
 
         return train_samples, val_samples
 
+    def _get_target_synthetic_count(self, n_real: int) -> int:
+        """Calculate target synthetic sample count based on replica multiplier.
+
+        When use_negative_cases=False, the number of synthetic samples should be
+        proportional to the filtered real data count. Each replica acts as a
+        multiplier: n_synthetic = n_real * n_replicas.
+
+        Args:
+            n_real: Number of filtered real training samples
+
+        Returns:
+            Target number of synthetic samples to add
+        """
+        return n_real * len(self.replicas)
+
+    def _sample_synthetic_balanced(
+        self, target_count: int, seed: int = 42
+    ) -> list[SampleRecord]:
+        """Sample synthetic samples with balanced z-bin distribution.
+
+        Samples synthetic samples to reach target_count, distributing evenly
+        across z-bins to maintain coverage of the z-axis.
+
+        Args:
+            target_count: Target number of synthetic samples
+            seed: Random seed for reproducibility
+
+        Returns:
+            List of sampled synthetic samples
+        """
+        if target_count <= 0 or not self.synthetic_samples:
+            return []
+
+        if target_count >= len(self.synthetic_samples):
+            return self.synthetic_samples.copy()
+
+        rng = np.random.RandomState(seed)
+
+        # Get all z-bins
+        zbins = sorted(set(s.z_bin for s in self.synthetic_samples))
+        n_zbins = len(zbins)
+
+        if n_zbins == 0:
+            return []
+
+        # Calculate samples per z-bin
+        base_per_zbin = target_count // n_zbins
+        extra = target_count % n_zbins
+
+        sampled = []
+        used_ids = set()
+
+        # Sample from each z-bin
+        for i, zbin in enumerate(zbins):
+            # Allocate extra samples to first z-bins
+            n_for_zbin = base_per_zbin + (1 if i < extra else 0)
+
+            # Get available samples for this z-bin
+            available = [s for s in self.synthetic_by_zbin_lesion.get((zbin, True), [])
+                        if id(s) not in used_ids]
+
+            # Shuffle and take up to n_for_zbin
+            rng.shuffle(available)
+            take = min(n_for_zbin, len(available))
+
+            for s in available[:take]:
+                sampled.append(s)
+                used_ids.add(id(s))
+
+        # If we still need more samples, take from any remaining
+        if len(sampled) < target_count:
+            remaining = [s for s in self.synthetic_samples if id(s) not in used_ids]
+            rng.shuffle(remaining)
+            needed = target_count - len(sampled)
+            sampled.extend(remaining[:needed])
+
+        return sampled
+
     def _merge_concat(
         self, train_real: list[SampleRecord]
     ) -> list[SampleRecord]:
         """Merge real and synthetic samples using concat strategy.
 
-        Simply concatenates all synthetic samples to the real training set.
+        When use_negative_cases=True: Simply concatenates all synthetic samples.
+        When use_negative_cases=False: Limits synthetic to n_real * n_replicas,
+        where replicas act as a multiplier of the filtered real data count.
 
         Args:
             train_real: Real training samples
@@ -517,7 +597,23 @@ class KFoldPlanner:
         Returns:
             Combined training samples
         """
-        return train_real + self.synthetic_samples
+        if self.use_negative_cases:
+            # Original behavior: add all synthetic samples
+            return train_real + self.synthetic_samples
+
+        # Lesion-only mode: limit synthetic based on replica multiplier
+        target_synthetic = self._get_target_synthetic_count(len(train_real))
+        synthetic_to_add = self._sample_synthetic_balanced(
+            target_synthetic, seed=self.seed
+        )
+
+        logger.info(
+            f"Concat merge (lesion-only): {len(train_real)} real + "
+            f"{len(synthetic_to_add)} synthetic (target: {target_synthetic}, "
+            f"{len(self.replicas)} replicas × {len(train_real)} real)"
+        )
+
+        return train_real + synthetic_to_add
 
     def _merge_balance(
         self, train_real: list[SampleRecord]
@@ -604,8 +700,10 @@ class KFoldPlanner:
         """Merge real and synthetic lesion samples with z-bin balancing.
 
         When use_negative_cases=False, all samples have lesions.
-        This method balances the number of lesion samples across z-bins
-        to ensure uniform coverage of the z-axis.
+        This method:
+        1. Calculates target synthetic count: n_real * n_replicas
+        2. Balances the number of lesion samples across z-bins first
+        3. Distributes remaining budget evenly across z-bins
 
         Args:
             train_real: Real training samples (all have lesions)
@@ -613,6 +711,11 @@ class KFoldPlanner:
         Returns:
             Combined training samples with balanced z-bin distribution
         """
+        n_real = len(train_real)
+
+        # Calculate target synthetic count based on replica multiplier
+        target_synthetic = self._get_target_synthetic_count(n_real)
+
         # Count real samples per z-bin
         real_counts_by_zbin = defaultdict(int)
         for sample in train_real:
@@ -622,37 +725,80 @@ class KFoldPlanner:
         zbins = sorted(real_counts_by_zbin.keys())
 
         if not zbins:
-            return train_real + self.synthetic_samples
+            # Fallback: just sample target_synthetic from available
+            synthetic_to_add = self._sample_synthetic_balanced(
+                target_synthetic, seed=self.seed
+            )
+            return train_real + synthetic_to_add
 
-        # Find target count (max across z-bins)
-        target_count = max(real_counts_by_zbin.values())
+        # Find max count across z-bins (for initial balancing)
+        max_per_zbin = max(real_counts_by_zbin.values())
 
         combined = list(train_real)
         used_synthetic = set()
+        synthetic_added = 0
 
-        # For each z-bin, add synthetic samples to reach target
+        # Phase 1: Balance z-bins up to max_per_zbin
         for zbin in zbins:
+            if synthetic_added >= target_synthetic:
+                break
+
             current_count = real_counts_by_zbin[zbin]
-            deficit = target_count - current_count
+            deficit = max_per_zbin - current_count
 
             if deficit <= 0:
                 continue
 
+            # Limit by remaining budget
+            deficit = min(deficit, target_synthetic - synthetic_added)
+
             # Get synthetic lesion samples for this z-bin
-            # Note: when use_negative_cases=False, all synthetic samples have lesions
             synth_samples = self.synthetic_by_zbin_lesion.get((zbin, True), [])
 
             for sample in synth_samples:
-                if deficit <= 0:
+                if deficit <= 0 or synthetic_added >= target_synthetic:
                     break
                 if id(sample) not in used_synthetic:
                     combined.append(sample)
                     used_synthetic.add(id(sample))
                     deficit -= 1
+                    synthetic_added += 1
 
-        # Add any remaining synthetic samples evenly across z-bins
-        remaining = [s for s in self.synthetic_samples if id(s) not in used_synthetic]
-        combined.extend(remaining)
+        # Phase 2: Distribute remaining budget evenly across z-bins
+        remaining_budget = target_synthetic - synthetic_added
+
+        if remaining_budget > 0 and zbins:
+            rng = np.random.RandomState(self.seed + 1)
+
+            # Calculate how many more per z-bin
+            extra_per_zbin = remaining_budget // len(zbins)
+            extra_remainder = remaining_budget % len(zbins)
+
+            for i, zbin in enumerate(zbins):
+                if synthetic_added >= target_synthetic:
+                    break
+
+                # Allocate extra remainder to first z-bins
+                n_to_add = extra_per_zbin + (1 if i < extra_remainder else 0)
+
+                synth_samples = [
+                    s for s in self.synthetic_by_zbin_lesion.get((zbin, True), [])
+                    if id(s) not in used_synthetic
+                ]
+                rng.shuffle(synth_samples)
+
+                for sample in synth_samples[:n_to_add]:
+                    if synthetic_added >= target_synthetic:
+                        break
+                    combined.append(sample)
+                    used_synthetic.add(id(sample))
+                    synthetic_added += 1
+
+        logger.info(
+            f"Balance merge (lesion-only): {n_real} real + "
+            f"{synthetic_added} synthetic (target: {target_synthetic}, "
+            f"{len(self.replicas)} replicas × {n_real} real)"
+        )
 
         return combined
 

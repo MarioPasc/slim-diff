@@ -172,6 +172,8 @@ def plot_kid_results(
     image_x_offset: float = 0.0,
     hide_significance: bool = False,
     brain_frac_csv: Path | None = None,
+    mean_real_kid_train_test: float | None = None,
+    std_real_kid_train_test: float | None = None,
 ) -> None:
     """Create KID visualization plots.
 
@@ -191,6 +193,8 @@ def plot_kid_results(
         image_x_offset: Horizontal offset in data coordinates
         hide_significance: Whether to hide significance markers (*)
         brain_frac_csv: Path to CSV with mean_brain_frac per zbin (optional)
+        mean_real_kid_train_test: Mean KID between train and test sets (baseline)
+        std_real_kid_train_test: Std of KID between train and test sets (baseline)
     """
     # Compute global KID statistics
     global_mean = df_global["kid_global"].mean()
@@ -235,6 +239,27 @@ def plot_kid_results(
         label=f"Global ±1 std: ±{global_std:.5f}",
         zorder=1,
     )
+
+    # Plot real train-test KID baseline if provided
+    if mean_real_kid_train_test is not None:
+        ax1.axhline(
+            mean_real_kid_train_test,
+            color="darkgreen",
+            linestyle="-.",
+            linewidth=PLOT_SETTINGS["line_width"],
+            label=f"Real Train-Test KID: {mean_real_kid_train_test:.5f}",
+            zorder=1,
+        )
+        if std_real_kid_train_test is not None:
+            ax1.fill_between(
+                [zbins[0] - 0.5, zbins[-1] + 0.5],
+                mean_real_kid_train_test - std_real_kid_train_test,
+                mean_real_kid_train_test + std_real_kid_train_test,
+                color="darkgreen",
+                alpha=0.15,
+                label=f"Real Train-Test ±1 std: ±{std_real_kid_train_test:.5f}",
+                zorder=1,
+            )
 
     # Plot per-zbin KID with error bars
     ax1.errorbar(
@@ -419,7 +444,7 @@ def plot_kid_results(
         handles=handles,
         labels=labels,
         loc="lower center",
-        ncol=len(handles),
+        ncol=len(handles) / 2,
         fontsize=PLOT_SETTINGS["legend_fontsize"],
         framealpha=PLOT_SETTINGS["legend_framealpha"],
         bbox_to_anchor=(0.5, -0.02),
@@ -648,6 +673,8 @@ def main(args):
         image_x_offset=args.image_x_offset,
         hide_significance=args.hide_significance,
         brain_frac_csv=brain_frac_csv,
+        mean_real_kid_train_test=args.mean_real_kid_train_test,
+        std_real_kid_train_test=args.std_real_kid_train_test,
     )
 
     # Bin vs rest comparison plot
@@ -669,8 +696,19 @@ if __name__ == "__main__":
         description="Visualize KID evaluation results",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Example usage:
-    python -m src.diffusion.scripts.plot_kid_results --global-csv /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality/kid_replica_global.csv --zbin-csv /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality/kid_replica_zbin_merged2.csv --output-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality --format png --test-csv /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache/test.csv --include-image-samples --image-zoom 0.45 --image-x-offset 1 --plot-mean-brain-frac /home/mpascual/research/code/js-ddpm-epilepsy/docs/train_analysis/train_zbin_distribution.csv --hide-significance --image-y-offset 0.01
+        Example usage:
+            python -m src.diffusion.scripts.plot_kid_results \
+                --global-csv /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality/kid_replica_global.csv \
+                --zbin-csv /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality/kid_replica_zbin_merged2.csv \
+                --output-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/kid_quality \
+                --hide-significance \
+                --include-image-samples \
+                --test-csv /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache/test.csv \
+                --plot-mean-brain-frac docs/train_analysis/train_zbin_distribution.csv \
+                --format pdf \
+                --image-zoom 0.45 \
+                --mean-real-kid-train-test 0.000212 \
+                --std-real-kid-train-test 0.000076
         """,
     )
     parser.add_argument(
@@ -754,14 +792,26 @@ Example usage:
     parser.add_argument(
         "--image-y-offset",
         type=float,
-        default=0.1,
+        default=0.01,
         help="Y-offset for images as fraction of data range (default: 0.1)",
     )
     parser.add_argument(
         "--image-x-offset",
         type=float,
-        default=0.0,
+        default=1.0,
         help="X-offset for images in data coordinates (default: 0.0)",
+    )
+    parser.add_argument(
+        "--mean-real-kid-train-test",
+        type=float,
+        default=None,
+        help="Mean KID between train and test sets (baseline). If provided, plots a horizontal line.",
+    )
+    parser.add_argument(
+        "--std-real-kid-train-test",
+        type=float,
+        default=None,
+        help="Std of KID between train and test sets (baseline). If provided, plots a confidence interval.",
     )
 
     args = parser.parse_args()

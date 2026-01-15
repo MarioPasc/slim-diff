@@ -733,5 +733,236 @@ class TestStatistics:
         assert train_stats["no_lesion"] == actual_no_lesion
 
 
+class TestLesionOnlyReplicaMultiplier:
+    """Test replica multiplier behavior when use_negative_cases=False.
+
+    When use_negative_cases=False:
+    - Only lesion slices are kept (real and synthetic)
+    - Synthetic sample count = n_real_filtered * n_replicas
+    - Replicas act as a multiplier of the filtered real data count
+    """
+
+    @pytest.fixture
+    def lesion_only_setup(self, tmp_path):
+        """Create test setup for lesion-only mode with multiple replicas."""
+        cache_dir = tmp_path / "slice_cache"
+        cache_dir.mkdir()
+        synth_dir = tmp_path / "synthetic"
+        synth_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        # Create real data with some lesion slices
+        # Total: 4 subjects, each with 10 slices, lesion slices at [3,4,5]
+        # When use_negative_cases=False, only lesion slices remain
+        train_subjects = [
+            {"subject_id": f"subj_{i:03d}", "has_lesion": True, "n_slices": 10,
+             "lesion_slices": [3, 4, 5]}  # 3 lesion slices per subject
+            for i in range(4)
+        ]
+        # Total real lesion slices: 4 subjects * 3 slices = 12
+        TestKFoldPlannerFixtures.create_mock_real_csv(cache_dir, "train.csv", train_subjects)
+        TestKFoldPlannerFixtures.create_mock_real_csv(cache_dir, "val.csv", [])
+
+        # Create synthetic replicas with lesion samples
+        # We need replicas that have lesion-positive samples
+        # Note: create_mock_replica alternates lesion/no-lesion, so we need more samples
+        TestKFoldPlannerFixtures.create_mock_replica(synth_dir, "replica_001.npz", n_samples=100)
+        TestKFoldPlannerFixtures.create_mock_replica(synth_dir, "replica_002.npz", n_samples=100)
+        TestKFoldPlannerFixtures.create_mock_replica(synth_dir, "replica_003.npz", n_samples=100)
+
+        return cache_dir, synth_dir, output_dir
+
+    def _create_config(self, cache_dir, synth_dir, output_dir, replicas, strategy="concat"):
+        """Helper to create config with specified replicas."""
+        return OmegaConf.create({
+            "data": {
+                "real": {
+                    "enabled": True,
+                    "cache_dir": str(cache_dir),
+                },
+                "synthetic": {
+                    "enabled": True,
+                    "samples_dir": str(synth_dir),
+                    "replicas": replicas,
+                    "merging_strategy": strategy,
+                },
+                "use_negative_cases": False,  # Key setting!
+            },
+            "k_fold": {
+                "n_folds": 2,
+                "exclude_test": False,
+                "stratify_by": "has_lesion_subject",
+                "seed": 42,
+            },
+            "experiment": {
+                "output_dir": str(output_dir),
+            },
+        })
+
+    def test_concat_one_replica_multiplier(self, lesion_only_setup):
+        """Test concat with 1 replica: synthetic = 1 × n_real."""
+        cache_dir, synth_dir, output_dir = lesion_only_setup
+        cfg = self._create_config(
+            cache_dir, synth_dir, output_dir,
+            replicas=["replica_001.npz"],
+            strategy="concat"
+        )
+        planner = KFoldPlanner(cfg)
+
+        # Get real training samples (after negative case filtering)
+        train_real, _ = planner._get_fold_real_samples(0)
+        n_real = len(train_real)
+
+        # Get combined samples
+        train_combined, _ = planner.get_fold(0)
+        n_synthetic = sum(1 for s in train_combined if s.source == "synthetic")
+
+        # With 1 replica, synthetic should equal n_real
+        assert n_synthetic == n_real, (
+            f"Expected {n_real} synthetic (1 replica × {n_real} real), got {n_synthetic}"
+        )
+
+    def test_concat_two_replicas_multiplier(self, lesion_only_setup):
+        """Test concat with 2 replicas: synthetic = 2 × n_real."""
+        cache_dir, synth_dir, output_dir = lesion_only_setup
+        cfg = self._create_config(
+            cache_dir, synth_dir, output_dir,
+            replicas=["replica_001.npz", "replica_002.npz"],
+            strategy="concat"
+        )
+        planner = KFoldPlanner(cfg)
+
+        train_real, _ = planner._get_fold_real_samples(0)
+        n_real = len(train_real)
+
+        train_combined, _ = planner.get_fold(0)
+        n_synthetic = sum(1 for s in train_combined if s.source == "synthetic")
+
+        # With 2 replicas, synthetic should equal 2 × n_real
+        expected = 2 * n_real
+        assert n_synthetic == expected, (
+            f"Expected {expected} synthetic (2 replicas × {n_real} real), got {n_synthetic}"
+        )
+
+    def test_concat_three_replicas_multiplier(self, lesion_only_setup):
+        """Test concat with 3 replicas: synthetic = 3 × n_real."""
+        cache_dir, synth_dir, output_dir = lesion_only_setup
+        cfg = self._create_config(
+            cache_dir, synth_dir, output_dir,
+            replicas=["replica_001.npz", "replica_002.npz", "replica_003.npz"],
+            strategy="concat"
+        )
+        planner = KFoldPlanner(cfg)
+
+        train_real, _ = planner._get_fold_real_samples(0)
+        n_real = len(train_real)
+
+        train_combined, _ = planner.get_fold(0)
+        n_synthetic = sum(1 for s in train_combined if s.source == "synthetic")
+
+        # With 3 replicas, synthetic should equal 3 × n_real
+        expected = 3 * n_real
+        assert n_synthetic == expected, (
+            f"Expected {expected} synthetic (3 replicas × {n_real} real), got {n_synthetic}"
+        )
+
+    def test_balance_replica_multiplier(self, lesion_only_setup):
+        """Test balance strategy with replica multiplier."""
+        cache_dir, synth_dir, output_dir = lesion_only_setup
+        cfg = self._create_config(
+            cache_dir, synth_dir, output_dir,
+            replicas=["replica_001.npz", "replica_002.npz"],
+            strategy="balance"
+        )
+        planner = KFoldPlanner(cfg)
+
+        train_real, _ = planner._get_fold_real_samples(0)
+        n_real = len(train_real)
+
+        train_combined, _ = planner.get_fold(0)
+        n_synthetic = sum(1 for s in train_combined if s.source == "synthetic")
+
+        # With 2 replicas, synthetic should equal 2 × n_real
+        expected = 2 * n_real
+        assert n_synthetic == expected, (
+            f"Expected {expected} synthetic (2 replicas × {n_real} real), got {n_synthetic}"
+        )
+
+    def test_total_samples_formula(self, lesion_only_setup):
+        """Test total = n_real + n_real × n_replicas."""
+        cache_dir, synth_dir, output_dir = lesion_only_setup
+
+        for n_replicas in [1, 2, 3]:
+            replicas = [f"replica_00{i+1}.npz" for i in range(n_replicas)]
+            cfg = self._create_config(
+                cache_dir, synth_dir, output_dir,
+                replicas=replicas,
+                strategy="concat"
+            )
+            planner = KFoldPlanner(cfg)
+
+            train_real, _ = planner._get_fold_real_samples(0)
+            n_real = len(train_real)
+
+            train_combined, _ = planner.get_fold(0)
+
+            # Total should be: n_real + (n_replicas × n_real)
+            expected_total = n_real + (n_replicas * n_real)
+            assert len(train_combined) == expected_total, (
+                f"With {n_replicas} replicas: expected {expected_total} total "
+                f"({n_real} real + {n_replicas}×{n_real} synthetic), "
+                f"got {len(train_combined)}"
+            )
+
+    def test_synthetic_only_lesion_samples(self, lesion_only_setup):
+        """Test that all synthetic samples have lesions when use_negative_cases=False."""
+        cache_dir, synth_dir, output_dir = lesion_only_setup
+        cfg = self._create_config(
+            cache_dir, synth_dir, output_dir,
+            replicas=["replica_001.npz"],
+            strategy="concat"
+        )
+        planner = KFoldPlanner(cfg)
+
+        train_combined, _ = planner.get_fold(0)
+        synthetic_samples = [s for s in train_combined if s.source == "synthetic"]
+
+        # All synthetic samples should have lesions
+        for s in synthetic_samples:
+            assert s.has_lesion, f"Synthetic sample {s.subject_id} should have lesion"
+
+    def test_zbin_distribution_balanced(self, lesion_only_setup):
+        """Test synthetic samples are distributed across z-bins."""
+        cache_dir, synth_dir, output_dir = lesion_only_setup
+        cfg = self._create_config(
+            cache_dir, synth_dir, output_dir,
+            replicas=["replica_001.npz", "replica_002.npz"],
+            strategy="concat"
+        )
+        planner = KFoldPlanner(cfg)
+
+        train_combined, _ = planner.get_fold(0)
+        synthetic_samples = [s for s in train_combined if s.source == "synthetic"]
+
+        # Count synthetic per z-bin
+        zbin_counts = defaultdict(int)
+        for s in synthetic_samples:
+            zbin_counts[s.z_bin] += 1
+
+        # Should have samples from multiple z-bins
+        assert len(zbin_counts) > 1, "Synthetic samples should span multiple z-bins"
+
+        # Distribution should be reasonably balanced
+        counts = list(zbin_counts.values())
+        if len(counts) > 1:
+            max_count = max(counts)
+            min_count = min(counts)
+            # Allow max to be at most 3x the min (reasonable balance)
+            assert max_count <= 3 * min_count + 1, (
+                f"Z-bin distribution too imbalanced: max={max_count}, min={min_count}"
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

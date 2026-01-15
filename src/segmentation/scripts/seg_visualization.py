@@ -104,10 +104,10 @@ MODEL_DISPLAY_NAMES = {
 EXPERIMENTS = {
     r"$M_0$": "real_only",
     #r"$M_1$": "real_synthetic_concat",
-    r"$M_2$": "real_synthetic_balance",
     #r"$M_3$": "synthetic_only",
-    r"$M_4$": "real_traditional_augmentation",
-    r"$M_5$": "real_synthetic_traditional_augmentation",
+    r"$M_1$": "real_traditional_augmentation",
+    r"$M_2$": "real_synthetic_balance",
+    r"$M_3$": "real_synthetic_traditional_augmentation",
     
 }
 
@@ -121,7 +121,7 @@ METRIC_LABELS = {
     "hd95": "HD95 (mm)",
 }
 
-BOXPLOT_COLORS = ['#77AADD', '#EE8866', '#EEDD88', '#FFAABB', '#99DDFF', '#44BB99', '#BBCC33', '#AAAA00']
+BOXPLOT_COLORS = ['#EE7733', '#0077BB', '#CC3311', '#009988']
 
 
 # ==============================================================================

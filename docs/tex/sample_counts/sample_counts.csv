@@ -1,0 +1,5 @@
+label,experiment,real,traditional_aug,synthetic,total
+$M_0$,real_only,823,0,0,823
+$M_1$,real_traditional_augmentation,823,823,0,823
+$M_2$,real_synthetic_balance,823,0,7250,8073
+$M_3$,real_synthetic_traditional_augmentation,823,8073,7250,8073
