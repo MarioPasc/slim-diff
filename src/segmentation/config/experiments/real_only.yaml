@@ -176,6 +176,7 @@ metrics:
 # =============================================================================
 augmentation:
   enabled: false
+  multiplier: 0  # See real_traditional_augmentation.yaml for multiplier usage
 
   # Spatial transforms (apply to both image and mask)
   random_flip:

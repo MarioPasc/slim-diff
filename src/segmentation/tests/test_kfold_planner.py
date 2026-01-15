@@ -964,5 +964,227 @@ class TestLesionOnlyReplicaMultiplier:
             )
 
 
+class TestAugmentationMultiplier:
+    """Test augmentation multiplier feature.
+
+    The augmentation multiplier creates N additional copies of each training
+    sample. Each copy gets different random augmentations during training.
+
+    Formula: total = base * (1 + multiplier)
+    """
+
+    @pytest.fixture
+    def augmentation_setup(self, tmp_path):
+        """Create test setup for augmentation multiplier testing."""
+        cache_dir = tmp_path / "slice_cache"
+        cache_dir.mkdir()
+        synth_dir = tmp_path / "synthetic"
+        synth_dir.mkdir()
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        # Create real data: 4 subjects with 3 lesion slices each = 12 lesion slices
+        train_subjects = [
+            {"subject_id": f"subj_{i:03d}", "has_lesion": True, "n_slices": 10,
+             "lesion_slices": [3, 4, 5]}
+            for i in range(4)
+        ]
+        TestKFoldPlannerFixtures.create_mock_real_csv(cache_dir, "train.csv", train_subjects)
+        TestKFoldPlannerFixtures.create_mock_real_csv(cache_dir, "val.csv", [])
+
+        # Create synthetic replica
+        TestKFoldPlannerFixtures.create_mock_replica(synth_dir, "replica_001.npz", n_samples=100)
+
+        return cache_dir, synth_dir, output_dir
+
+    def _create_config(self, cache_dir, synth_dir, output_dir,
+                       aug_multiplier=0, synthetic_enabled=False, replicas=None):
+        """Helper to create config with augmentation multiplier."""
+        return OmegaConf.create({
+            "data": {
+                "real": {
+                    "enabled": True,
+                    "cache_dir": str(cache_dir),
+                },
+                "synthetic": {
+                    "enabled": synthetic_enabled,
+                    "samples_dir": str(synth_dir),
+                    "replicas": replicas or [],
+                    "merging_strategy": "concat",
+                },
+                "use_negative_cases": False,
+            },
+            "augmentation": {
+                "enabled": True,
+                "multiplier": aug_multiplier,
+            },
+            "k_fold": {
+                "n_folds": 2,
+                "exclude_test": False,
+                "stratify_by": "has_lesion_subject",
+                "seed": 42,
+            },
+            "experiment": {
+                "output_dir": str(output_dir),
+            },
+        })
+
+    def test_no_multiplier_default(self, augmentation_setup):
+        """Test that multiplier=0 does not duplicate samples."""
+        cache_dir, synth_dir, output_dir = augmentation_setup
+        cfg = self._create_config(cache_dir, synth_dir, output_dir, aug_multiplier=0)
+        planner = KFoldPlanner(cfg)
+
+        train_real, _ = planner._get_fold_real_samples(0)
+        train_combined, _ = planner.get_fold(0)
+
+        # No duplication should occur
+        assert len(train_combined) == len(train_real)
+
+    def test_multiplier_one_doubles_dataset(self, augmentation_setup):
+        """Test multiplier=1 doubles the dataset."""
+        cache_dir, synth_dir, output_dir = augmentation_setup
+        cfg = self._create_config(cache_dir, synth_dir, output_dir, aug_multiplier=1)
+        planner = KFoldPlanner(cfg)
+
+        train_real, _ = planner._get_fold_real_samples(0)
+        n_base = len(train_real)
+
+        train_combined, _ = planner.get_fold(0)
+
+        # multiplier=1: total = base * 2
+        expected = n_base * 2
+        assert len(train_combined) == expected, (
+            f"Expected {expected} (base {n_base} × 2), got {len(train_combined)}"
+        )
+
+    def test_multiplier_two_triples_dataset(self, augmentation_setup):
+        """Test multiplier=2 triples the dataset."""
+        cache_dir, synth_dir, output_dir = augmentation_setup
+        cfg = self._create_config(cache_dir, synth_dir, output_dir, aug_multiplier=2)
+        planner = KFoldPlanner(cfg)
+
+        train_real, _ = planner._get_fold_real_samples(0)
+        n_base = len(train_real)
+
+        train_combined, _ = planner.get_fold(0)
+
+        # multiplier=2: total = base * 3
+        expected = n_base * 3
+        assert len(train_combined) == expected, (
+            f"Expected {expected} (base {n_base} × 3), got {len(train_combined)}"
+        )
+
+    def test_augmented_copies_have_correct_suffixes(self, augmentation_setup):
+        """Test augmented copies have correct subject_id suffixes."""
+        cache_dir, synth_dir, output_dir = augmentation_setup
+        cfg = self._create_config(cache_dir, synth_dir, output_dir, aug_multiplier=2)
+        planner = KFoldPlanner(cfg)
+
+        train_combined, _ = planner.get_fold(0)
+
+        # Check for _aug0 and _aug1 suffixes
+        aug0_samples = [s for s in train_combined if "_aug0" in s.subject_id]
+        aug1_samples = [s for s in train_combined if "_aug1" in s.subject_id]
+        base_samples = [s for s in train_combined if "_aug" not in s.subject_id]
+
+        # With multiplier=2, should have equal base, aug0, and aug1 samples
+        assert len(aug0_samples) == len(base_samples), (
+            f"aug0 count ({len(aug0_samples)}) should equal base count ({len(base_samples)})"
+        )
+        assert len(aug1_samples) == len(base_samples), (
+            f"aug1 count ({len(aug1_samples)}) should equal base count ({len(base_samples)})"
+        )
+
+        # Verify total is correct
+        assert len(train_combined) == len(base_samples) * 3
+
+    def test_multiplier_with_synthetic_data(self, augmentation_setup):
+        """Test multiplier works with real + synthetic data."""
+        cache_dir, synth_dir, output_dir = augmentation_setup
+        cfg = self._create_config(
+            cache_dir, synth_dir, output_dir,
+            aug_multiplier=2,
+            synthetic_enabled=True,
+            replicas=["replica_001.npz"]
+        )
+        planner = KFoldPlanner(cfg)
+
+        train_real, _ = planner._get_fold_real_samples(0)
+        n_real = len(train_real)
+
+        train_combined, _ = planner.get_fold(0)
+
+        # Base = real + synthetic (1 replica = 1× real)
+        # With use_negative_cases=False, synthetic = n_real * n_replicas
+        n_base = n_real + n_real  # real + 1 replica
+        # Total = base * (1 + multiplier)
+        expected = n_base * 3  # multiplier=2
+        assert len(train_combined) == expected, (
+            f"Expected {expected} (base {n_base} × 3), got {len(train_combined)}"
+        )
+
+    def test_multiplier_with_two_replicas(self, augmentation_setup):
+        """Test multiplier with 2 replicas."""
+        cache_dir, synth_dir, output_dir = augmentation_setup
+
+        # Create second replica
+        TestKFoldPlannerFixtures.create_mock_replica(
+            synth_dir, "replica_002.npz", n_samples=100
+        )
+
+        cfg = self._create_config(
+            cache_dir, synth_dir, output_dir,
+            aug_multiplier=2,
+            synthetic_enabled=True,
+            replicas=["replica_001.npz", "replica_002.npz"]
+        )
+        planner = KFoldPlanner(cfg)
+
+        train_real, _ = planner._get_fold_real_samples(0)
+        n_real = len(train_real)
+
+        train_combined, _ = planner.get_fold(0)
+
+        # Base = real + synthetic (2 replicas = 2× real)
+        n_base = n_real + (2 * n_real)  # real + 2 replicas
+        # Total = base * (1 + multiplier)
+        expected = n_base * 3  # multiplier=2
+        assert len(train_combined) == expected, (
+            f"Expected {expected} (base {n_base} × 3), got {len(train_combined)}"
+        )
+
+    def test_augmented_copies_preserve_metadata(self, augmentation_setup):
+        """Test augmented copies preserve original sample metadata."""
+        cache_dir, synth_dir, output_dir = augmentation_setup
+        cfg = self._create_config(cache_dir, synth_dir, output_dir, aug_multiplier=1)
+        planner = KFoldPlanner(cfg)
+
+        train_combined, _ = planner.get_fold(0)
+
+        # Group by filepath - each unique filepath should have base + augmented copies
+        base_samples = [s for s in train_combined if "_aug" not in s.subject_id]
+        augmented = [s for s in train_combined if "_aug0" in s.subject_id]
+
+        # Build lookup by filepath for base samples
+        base_by_filepath = {s.filepath: s for s in base_samples}
+
+        for aug_sample in augmented:
+            # The augmented sample should have the same filepath as the original
+            orig_sample = base_by_filepath.get(aug_sample.filepath)
+            assert orig_sample is not None, (
+                f"No base sample found for filepath: {aug_sample.filepath}"
+            )
+
+            # Metadata should match
+            assert aug_sample.z_bin == orig_sample.z_bin
+            assert aug_sample.has_lesion == orig_sample.has_lesion
+            assert aug_sample.source == orig_sample.source
+
+            # Subject ID should have the augmentation suffix
+            expected_aug_id = f"{orig_sample.subject_id}_aug0"
+            assert aug_sample.subject_id == expected_aug_id
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

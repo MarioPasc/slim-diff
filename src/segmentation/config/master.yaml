@@ -181,6 +181,12 @@ metrics:
 # =============================================================================
 augmentation:
   enabled: false
+  # Augmentation multiplier: creates N additional copies of each training sample
+  # Each copy receives different random augmentations during training
+  # Formula: total = base_samples * (1 + multiplier)
+  # - multiplier: 0 = no duplication (default, augmentation applied probabilistically)
+  # - multiplier: 2 = triples the dataset (e.g., 823 base + 823×2 augmented = 2469)
+  multiplier: 0
 
   # Spatial transforms (apply to both image and mask)
   random_flip:

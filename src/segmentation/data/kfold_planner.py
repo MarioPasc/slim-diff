@@ -121,6 +121,12 @@ class KFoldPlanner:
         # Negative case filtering
         self.use_negative_cases = cfg.data.get("use_negative_cases", True)
 
+        # Augmentation multiplier: adds N augmented copies of each training sample
+        # multiplier=0: no duplication (default, augmentation applied probabilistically)
+        # multiplier=2: adds 2 augmented copies per sample (total = base * 3)
+        aug_cfg = cfg.get("augmentation", {})
+        self.augmentation_multiplier = aug_cfg.get("multiplier", 0) if aug_cfg else 0
+
         # Output directory
         self.output_dir = Path(cfg.experiment.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -381,6 +387,8 @@ class KFoldPlanner:
             logger.info(f"  - replicas: {self.replicas}")
             if not self.synthetic_training_only:
                 logger.info(f"  - merging_strategy: {self.merging_strategy}")
+        if self.augmentation_multiplier > 0:
+            logger.info(f"  - augmentation_multiplier: {self.augmentation_multiplier}")
 
     def _get_mode(self) -> str:
         """Get the current mode string."""
@@ -415,30 +423,79 @@ class KFoldPlanner:
         # Add synthetic samples based on mode
         if not self.synthetic_enabled:
             # Mode 1: Real only
-            return train_real, val_real
-
-        if self.synthetic_training_only:
+            train_samples = train_real
+        elif self.synthetic_training_only:
             # Mode 5: Synthetic for training, real for validation
-            train_synthetic = self.synthetic_samples.copy()
-            return train_synthetic, val_real
-
-        if not self.real_enabled:
+            train_samples = self.synthetic_samples.copy()
+        elif not self.real_enabled:
             # Mode 4: Synthetic only
-            return self._get_synthetic_only_split(fold_idx)
-
-        # Mode 2 or 3: Real + Synthetic
-        if self.merging_strategy == "concat":
-            train_combined = self._merge_concat(train_real)
-        elif self.merging_strategy == "balance":
-            if self.use_negative_cases:
-                train_combined = self._merge_balance(train_real)
-            else:
-                train_combined = self._merge_balance_lesions_only(train_real)
+            train_samples, val_real = self._get_synthetic_only_split(fold_idx)
         else:
-            raise ValueError(f"Unknown merging_strategy: {self.merging_strategy}")
+            # Mode 2 or 3: Real + Synthetic
+            if self.merging_strategy == "concat":
+                train_samples = self._merge_concat(train_real)
+            elif self.merging_strategy == "balance":
+                if self.use_negative_cases:
+                    train_samples = self._merge_balance(train_real)
+                else:
+                    train_samples = self._merge_balance_lesions_only(train_real)
+            else:
+                raise ValueError(f"Unknown merging_strategy: {self.merging_strategy}")
+
+        # Apply augmentation multiplier if configured
+        if self.augmentation_multiplier > 0:
+            train_samples = self._apply_augmentation_multiplier(train_samples)
 
         # Validation always uses only real data
-        return train_combined, val_real
+        return train_samples, val_real
+
+    def _apply_augmentation_multiplier(
+        self, train_samples: list[SampleRecord]
+    ) -> list[SampleRecord]:
+        """Duplicate training samples based on augmentation multiplier.
+
+        Creates N additional copies of each training sample, where N is the
+        augmentation multiplier. Each copy receives a unique subject_id suffix
+        (_aug0, _aug1, etc.) and will receive different random augmentations
+        during training due to the probabilistic nature of transforms.
+
+        Formula: total = base_samples * (1 + multiplier)
+        - multiplier=1: doubles the dataset
+        - multiplier=2: triples the dataset
+
+        Args:
+            train_samples: Original training samples
+
+        Returns:
+            Training samples with augmented copies appended
+        """
+        n_base = len(train_samples)
+        augmented_samples = []
+
+        for copy_idx in range(self.augmentation_multiplier):
+            for sample in train_samples:
+                # Create a copy with modified subject_id
+                aug_sample = SampleRecord(
+                    subject_id=f"{sample.subject_id}_aug{copy_idx}",
+                    filepath=sample.filepath,
+                    z_index=sample.z_index,
+                    z_bin=sample.z_bin,
+                    has_lesion=sample.has_lesion,
+                    source=sample.source,
+                    has_lesion_subject=sample.has_lesion_subject,
+                    replica_name=sample.replica_name,
+                )
+                augmented_samples.append(aug_sample)
+
+        n_augmented = len(augmented_samples)
+        total = n_base + n_augmented
+
+        logger.info(
+            f"Augmentation multiplier ({self.augmentation_multiplier}): "
+            f"{n_base} base + {n_augmented} augmented = {total} total training samples"
+        )
+
+        return train_samples + augmented_samples
 
     def _get_fold_real_samples(
         self, fold_idx: int

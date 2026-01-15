@@ -31,7 +31,7 @@ data:
     # Replicas to use
     replicas: 
       - "replica_000.npz"  # Each replica has 30 zbins * 2 conditions (lesion/no lesion) * 150 samples = 9000 samples
-
+      - "replica_001.npz"  # Add more replicas as needed
     merging_strategy: "balance" # Options: "concat", "balance"
 
   # Guidelines:
@@ -176,6 +176,13 @@ metrics:
 # =============================================================================
 augmentation:
   enabled: true
+  # Augmentation multiplier: creates N additional copies of each training sample
+  # Each copy receives different random augmentations during training
+  # Formula: total = base_samples * (1 + multiplier)
+  # - multiplier: 0 = no duplication (default, augmentation applied probabilistically)
+  # - multiplier: 2 = triples the dataset
+  # With real+synthetic (2 replicas): base = 823×3, total = 823×3×3 = 7407
+  multiplier: 0
 
   # Spatial transforms (apply to both image and mask)
   random_flip:
