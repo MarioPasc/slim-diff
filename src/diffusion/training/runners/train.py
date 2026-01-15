@@ -87,7 +87,11 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
         )
 
     # Gradient norm monitoring
-    callbacks.append(GradientNormCallback(log_every_n_steps=100))
+    gradient_norm_cfg = cfg.logging.callbacks.gradient_norm
+    if gradient_norm_cfg.get("enabled", True):
+        callbacks.append(GradientNormCallback(
+            log_every_n_steps=gradient_norm_cfg.get("log_every_n_steps", 100)
+        ))
 
     # Wandb summary tracking (best metrics)
     callbacks.append(WandbSummaryCallback())
@@ -102,16 +106,22 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
         log_histograms=True,
     ))
 
-    callbacks.append(SNRCallback(
-        log_every_n_epochs=5,
-        n_samples=100,
-    ))
+    # SNR monitoring callback
+    snr_cfg = cfg.logging.callbacks.snr
+    if snr_cfg.get("enabled", True):
+        callbacks.append(SNRCallback(
+            log_every_n_epochs=snr_cfg.get("log_every_n_epochs", 5),
+            n_samples=snr_cfg.get("n_samples", 100),
+        ))
 
-    callbacks.append(PredictionQualityCallback(
-        log_every_n_epochs=5,
-        n_samples=100,
-        timestep_bins=10,
-    ))
+    # Prediction quality callback
+    pred_quality_cfg = cfg.logging.callbacks.prediction_quality
+    if pred_quality_cfg.get("enabled", True):
+        callbacks.append(PredictionQualityCallback(
+            log_every_n_epochs=pred_quality_cfg.get("log_every_n_epochs", 5),
+            n_samples=pred_quality_cfg.get("n_samples", 100),
+            timestep_bins=pred_quality_cfg.get("timestep_bins", 10),
+        ))
 
     callbacks.append(CSVLoggingCallback(cfg=cfg))
 

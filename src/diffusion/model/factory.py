@@ -36,16 +36,26 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
     # 2. Configure Input Channels
     # Base channels (e.g., 2 for FLAIR + Mask, or 1 for FLAIR)
     in_channels = model_cfg.in_channels
-    
+
+    # Check for self-conditioning (adds 2 channels for x0_self_cond)
+    use_self_conditioning = cfg.training.self_conditioning.get("enabled", False)
+    if use_self_conditioning:
+        in_channels += 2  # Add 2 channels for self-conditioned x0 (image + mask)
+        logger.info(
+            f"Self-Conditioning ENABLED: "
+            f"Input channels increased {model_cfg.in_channels} -> {in_channels}"
+        )
+
     if use_anatomical_conditioning:
         # We add 1 channel for the Anatomical Prior Mask
         in_channels += 1
         logger.info(
             f"Anatomical Conditioning ENABLED: "
-            f"Input channels increased {model_cfg.in_channels} -> {in_channels}"
+            f"Input channels increased -> {in_channels}"
         )
-    else:
-        logger.info("Anatomical Conditioning DISABLED: Standard input channels.")
+
+    if not use_self_conditioning and not use_anatomical_conditioning:
+        logger.info("Standard input channels (no conditioning augmentations).")
 
     # Calculate number of class embeddings
     num_class_embeds = 2 * z_bins

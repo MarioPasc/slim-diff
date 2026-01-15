@@ -131,13 +131,19 @@ class DiffusionLoss(nn.Module):
             raise ValueError(f"Unknown loss mode: {self.mode}")
 
         # Lesion weighting config (applies in both modes)
-        self.use_lesion_weighting = loss_cfg.lesion_weighted_mask.enabled
-        self.lesion_weight = loss_cfg.lesion_weighted_mask.lesion_weight
-        self.background_weight = loss_cfg.lesion_weighted_mask.background_weight
+        # Separate weights for image and mask channels
+        self.use_lesion_weighting_image = loss_cfg.lesion_weighted_image.enabled
+        self.lesion_weight_image = loss_cfg.lesion_weighted_image.lesion_weight
+        self.background_weight_image = loss_cfg.lesion_weighted_image.background_weight
+
+        self.use_lesion_weighting_mask = loss_cfg.lesion_weighted_mask.enabled
+        self.lesion_weight_mask = loss_cfg.lesion_weighted_mask.lesion_weight
+        self.background_weight_mask = loss_cfg.lesion_weighted_mask.background_weight
 
         logger.info(
             f"DiffusionLoss: mode={self.mode}, "
-            f"lesion_weighted={self.use_lesion_weighting}"
+            f"lesion_weighted_image={self.use_lesion_weighting_image}, "
+            f"lesion_weighted_mask={self.use_lesion_weighting_mask}"
         )
 
     def _init_mse_channels_mode(self, loss_cfg: DictConfig) -> None:
@@ -229,17 +235,26 @@ class DiffusionLoss(nn.Module):
         eps_target_img = eps_target[:, 0:1]
         eps_target_msk = eps_target[:, 1:2]
 
-        # Image channel loss (standard MSE)
-        loss_img = F.mse_loss(eps_pred_img, eps_target_img)
+        # Image channel loss (optionally lesion-weighted)
+        if self.use_lesion_weighting_image and x0_mask is not None:
+            loss_img = lesion_weighted_mse(
+                eps_pred_img,
+                eps_target_img,
+                x0_mask,
+                self.lesion_weight_image,
+                self.background_weight_image,
+            )
+        else:
+            loss_img = F.mse_loss(eps_pred_img, eps_target_img)
 
-        # Mask channel loss
-        if self.use_lesion_weighting and x0_mask is not None:
+        # Mask channel loss (optionally lesion-weighted)
+        if self.use_lesion_weighting_mask and x0_mask is not None:
             loss_msk = lesion_weighted_mse(
                 eps_pred_msk,
                 eps_target_msk,
                 x0_mask,
-                self.lesion_weight,
-                self.background_weight,
+                self.lesion_weight_mask,
+                self.background_weight_mask,
             )
         else:
             loss_msk = F.mse_loss(eps_pred_msk, eps_target_msk)
@@ -271,16 +286,25 @@ class DiffusionLoss(nn.Module):
         eps_target_img = eps_target[:, 0:1]
         eps_target_msk = eps_target[:, 1:2]
 
-        # MSE losses
-        loss_img = F.mse_loss(eps_pred_img, eps_target_img)
+        # MSE losses (optionally lesion-weighted)
+        if self.use_lesion_weighting_image and x0_mask is not None:
+            loss_img = lesion_weighted_mse(
+                eps_pred_img,
+                eps_target_img,
+                x0_mask,
+                self.lesion_weight_image,
+                self.background_weight_image,
+            )
+        else:
+            loss_img = F.mse_loss(eps_pred_img, eps_target_img)
 
-        if self.use_lesion_weighting and x0_mask is not None:
+        if self.use_lesion_weighting_mask and x0_mask is not None:
             loss_msk = lesion_weighted_mse(
                 eps_pred_msk,
                 eps_target_msk,
                 x0_mask,
-                self.lesion_weight,
-                self.background_weight,
+                self.lesion_weight_mask,
+                self.background_weight_mask,
             )
         else:
             loss_msk = F.mse_loss(eps_pred_msk, eps_target_msk)

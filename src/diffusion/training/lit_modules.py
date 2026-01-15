@@ -30,6 +30,7 @@ from src.diffusion.model.factory import (
     DiffusionSampler,
 )
 from src.diffusion.training.metrics import MetricsCalculator
+from src.diffusion.training.lesion_metrics import LesionQualityMetrics
 from src.diffusion.utils.zbin_priors import (
     apply_postprocess_batch,
     get_anatomical_priors_as_input,
@@ -82,6 +83,12 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Metrics calculator
         self.metrics = MetricsCalculator()
 
+        # Lesion quality metrics calculator
+        self.lesion_metrics = LesionQualityMetrics(
+            min_lesion_size_px=cfg.get("lesion_quality_metrics", {}).get("min_lesion_size_px", 5),
+            intensity_percentile_bg=cfg.get("lesion_quality_metrics", {}).get("intensity_percentile_bg", 50.0),
+        )
+
         # CFG settings
         self.use_cfg = cfg.conditioning.cfg.enabled
         self.cfg_dropout = cfg.conditioning.cfg.dropout_prob
@@ -102,6 +109,10 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Anatomical conditioning (input concatenation)
         self._use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
 
+        # Self-conditioning settings (Chen et al., 2022)
+        self._use_self_conditioning = cfg.training.self_conditioning.get("enabled", False)
+        self._self_cond_prob = cfg.training.self_conditioning.get("probability", 0.5)
+
         # Load priors if needed for either validation postprocessing or anatomical conditioning
         if self._use_zbin_priors or self._use_anatomical_conditioning:
             self._load_zbin_priors()
@@ -112,7 +123,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         logger.info(
             f"Initialized JSDDPMLightningModule with CFG={self.use_cfg}, "
             f"zbin_priors_postprocess={self._use_zbin_priors}, "
-            f"anatomical_conditioning={self._use_anatomical_conditioning}"
+            f"anatomical_conditioning={self._use_anatomical_conditioning}, "
+            f"self_conditioning={self._use_self_conditioning}"
         )
 
     def setup(self, stage: str) -> None:
@@ -230,6 +242,33 @@ class JSDDPMLightningModule(pl.LightningModule):
             device=self.device,
             dtype=torch.long,
         )
+
+    def _get_validation_timesteps(self, batch_size: int) -> torch.Tensor:
+        """Get stratified timesteps for validation (deterministic and low-variance).
+
+        Uses stratified sampling to ensure all timestep ranges are tested evenly,
+        providing consistent validation metrics across epochs.
+
+        Args:
+            batch_size: Number of samples.
+
+        Returns:
+            Stratified timestep indices, shape (B,).
+        """
+        T = self.scheduler.num_train_timesteps
+
+        # Stratified sampling: divide [0, T) into B equal bins
+        bin_size = T // batch_size
+        timesteps = torch.arange(batch_size, device=self.device) * bin_size
+
+        # Add offset to middle of each bin for better coverage
+        offset = bin_size // 2
+        timesteps = timesteps + offset
+
+        # Clamp to valid range [0, T-1]
+        timesteps = torch.clamp(timesteps, 0, T - 1)
+
+        return timesteps.long()
 
     def _add_noise(
         self,
@@ -378,6 +417,23 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Add noise to get x_t
         x_t = self._add_noise(x0, noise, timesteps)
 
+        # Self-conditioning: Optionally concatenate predicted x0 from previous step
+        if self._use_self_conditioning:
+            # 50% of the time, use self-conditioning
+            if torch.rand(1).item() < self._self_cond_prob:
+                # Predict x0 without gradient to use as conditioning signal
+                with torch.no_grad():
+                    # Get prediction without self-conditioning or anatomical prior
+                    model_output_uncond = self._forward(x_t, timesteps, tokens)
+                    x0_self_cond = self._predict_x0(x_t, model_output_uncond, timesteps)
+                    x0_self_cond = torch.clamp(x0_self_cond, -1.0, 1.0)
+            else:
+                # No self-conditioning: use zeros
+                x0_self_cond = torch.zeros_like(x0)
+
+            # Concatenate self-conditioning signal: (B, 2, H, W) + (B, 2, H, W) -> (B, 4, H, W)
+            x_t = torch.cat([x_t, x0_self_cond], dim=1)
+
         # Concatenate anatomical priors if enabled
         if self._use_anatomical_conditioning and self._zbin_priors is not None:
             # Get z_bins from batch metadata
@@ -408,6 +464,8 @@ class JSDDPMLightningModule(pl.LightningModule):
             else:
                 x_t_for_recon = x_t
             x0_pred = self._predict_x0(x_t_for_recon, model_output, timesteps)
+            # CRITICAL: Clamp x0_pred to valid range before FFT to prevent instability
+            x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
 
         # Compute loss with mask for channel-separated multi-task learning
         loss, loss_details = self.criterion(
@@ -501,7 +559,7 @@ class JSDDPMLightningModule(pl.LightningModule):
 
         # Set timesteps for the scheduler
         sampler = self._get_val_sampler()
-        sampler.scheduler.set_timesteps(self.sampler_cfg.num_inference_steps)
+        sampler.scheduler.set_timesteps(self.cfg.sampler.num_inference_steps)
 
         # Get all scheduler timesteps (descending order: [999, 994, 989, ..., 4, 0])
         all_timesteps = sampler.scheduler.timesteps
@@ -551,11 +609,6 @@ class JSDDPMLightningModule(pl.LightningModule):
 
         return current_x
 
-    @property
-    def sampler_cfg(self) -> DictConfig:
-        """Get sampler configuration."""
-        return self.cfg.sampler
-
     def validation_step(
         self,
         batch: dict[str, Any],
@@ -586,13 +639,19 @@ class JSDDPMLightningModule(pl.LightningModule):
         B = x0.shape[0]
         H, W = image.shape[2], image.shape[3]
 
-        # ========== Loss computation at random timesteps ==========
-        # This is consistent with training and monitors denoising performance
-        timesteps = self._sample_timesteps(B)
+        # ========== Loss computation at stratified timesteps ==========
+        # Use stratified sampling for low-variance, consistent validation metrics
+        timesteps = self._get_validation_timesteps(B)
         noise = torch.randn_like(x0)
 
         # Add noise
         x_t = self._add_noise(x0, noise, timesteps)
+
+        # Self-conditioning during validation: always use zeros (no self-conditioning)
+        # This matches inference behavior where we don't have a previous prediction
+        if self._use_self_conditioning:
+            x0_self_cond = torch.zeros_like(x0)
+            x_t = torch.cat([x_t, x0_self_cond], dim=1)
 
         # Concatenate anatomical priors if enabled
         anatomical_priors = None
@@ -618,6 +677,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         if self.cfg.loss.get("mode") == "mse_ffl_groups":
             # For x0_pred, use x_t without anatomical prior channel
             x0_pred = self._predict_x0(x_t, model_output, timesteps)
+            # CRITICAL: Clamp x0_pred to valid range before FFT to prevent instability
+            x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
 
         # Compute loss with mask for channel-separated multi-task learning
         loss, loss_details = self.criterion(
@@ -668,9 +729,21 @@ class JSDDPMLightningModule(pl.LightningModule):
                         recon_image, image,  # Compare reconstructed vs original
                         recon_mask, mask,
                     )
-                    
+
+                    # Compute lesion-specific quality metrics
+                    # Only compute on predicted outputs (not comparing to target)
+                    lesion_metrics_t = self.lesion_metrics.compute_all(
+                        recon_image,
+                        recon_mask,
+                        target_mask=mask,  # Pass target for potential future metrics
+                    )
+
                     # Store with timestep suffix
                     for metric_name, value in metrics_t.items():
+                        all_metrics[f"{metric_name}_t{t_val}"] = value
+
+                    # Store lesion metrics with timestep suffix
+                    for metric_name, value in lesion_metrics_t.items():
                         all_metrics[f"{metric_name}_t{t_val}"] = value
 
         # ========== Log metrics ==========
@@ -696,6 +769,17 @@ class JSDDPMLightningModule(pl.LightningModule):
                     self.log(f"val/dice_t{t_val}", all_metrics[f"dice_t{t_val}"], sync_dist=True, batch_size=B)
                 if f"hd95_t{t_val}" in all_metrics:
                     self.log(f"val/hd95_t{t_val}", all_metrics[f"hd95_t{t_val}"], sync_dist=True, batch_size=B)
+
+                # Log lesion quality metrics
+                lesion_metric_keys = [
+                    'lesion_count', 'lesion_total_area', 'lesion_mean_size', 'lesion_largest_size',
+                    'lesion_intensity_contrast', 'lesion_snr', 'lesion_mean_circularity',
+                    'lesion_mean_solidity', 'lesion_boundary_sharpness'
+                ]
+                for metric_key in lesion_metric_keys:
+                    full_key = f"{metric_key}_t{t_val}"
+                    if full_key in all_metrics:
+                        self.log(f"val/{full_key}", all_metrics[full_key], sync_dist=True, batch_size=B)
 
         # Log weighted loss metrics (always available when using multi-task loss)
         if "weighted_loss_0" in loss_details:

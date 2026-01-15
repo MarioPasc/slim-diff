@@ -77,7 +77,7 @@ class MetricsCalculator:
 
         logger.info(
             f"Initialized MONAI metrics: "
-            f"PSNR(max_val=1.0), "
+            f"PSNR(max_val={data_range}), "
             f"SSIM(spatial_dims=2, data_range={data_range}, win_size={window_size}, sigma={sigma}), "
             f"Dice (functional), HD95 (functional)"
         )

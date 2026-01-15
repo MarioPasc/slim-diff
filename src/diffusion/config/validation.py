@@ -74,6 +74,81 @@ def validate_loss_config(cfg: DictConfig) -> None:
                 f"(image, mask), got {len(initial_log_vars)}"
             )
 
+    # Validate FFL mode dependencies
+    loss_mode = loss_cfg.get("mode", "mse_channels")
+    if loss_mode == "mse_ffl_groups":
+        if "ffl" not in loss_cfg:
+            raise ValueError(
+                "loss.mode='mse_ffl_groups' requires loss.ffl configuration. "
+                "Add loss.ffl section with alpha, loss_weight, etc."
+            )
+        if "group_uncertainty_weighting" not in loss_cfg:
+            raise ValueError(
+                "loss.mode='mse_ffl_groups' requires loss.group_uncertainty_weighting configuration."
+            )
+
+
+def validate_model_config(cfg: DictConfig) -> None:
+    """Validate model configuration parameters.
+
+    Raises:
+        ValueError: If configuration is invalid.
+    """
+    model_cfg = cfg.model
+
+    # Validate anatomical conditioning dependencies
+    use_anatomical = model_cfg.get("anatomical_conditioning", False)
+    if use_anatomical:
+        pp_cfg = cfg.get("postprocessing", {})
+        zbin_cfg = pp_cfg.get("zbin_priors", {})
+        priors_enabled = zbin_cfg.get("enabled", False)
+
+        if not priors_enabled:
+            raise ValueError(
+                "model.anatomical_conditioning=true requires "
+                "postprocessing.zbin_priors.enabled=true. "
+                "Anatomical conditioning needs priors to be computed and loaded."
+            )
+
+        # Verify priors file is specified
+        if not zbin_cfg.get("priors_filename"):
+            raise ValueError(
+                "model.anatomical_conditioning=true requires "
+                "postprocessing.zbin_priors.priors_filename to be specified."
+            )
+
+
+def validate_cfg_config(cfg: DictConfig) -> None:
+    """Validate classifier-free guidance configuration.
+
+    Raises:
+        ValueError: If configuration is invalid.
+    """
+    cond_cfg = cfg.conditioning
+    cfg_enabled = cond_cfg.cfg.enabled
+
+    if cfg_enabled:
+        z_bins = cond_cfg.z_bins
+        null_token = cond_cfg.cfg.null_token
+
+        # Calculate num_class_embeds
+        num_class_embeds = 2 * z_bins + 1  # +1 for CFG
+
+        if null_token >= num_class_embeds:
+            raise ValueError(
+                f"CFG null_token={null_token} is out of range. "
+                f"With z_bins={z_bins}, num_class_embeds={num_class_embeds}. "
+                f"Set null_token to {2 * z_bins}."
+            )
+    else:
+        # Warn if null_token is specified but CFG is disabled
+        if cond_cfg.cfg.get("null_token") is not None:
+            warnings.warn(
+                "conditioning.cfg.null_token is specified but cfg.enabled=false. "
+                "This parameter will be ignored.",
+                UserWarning,
+            )
+
 
 def validate_config(cfg: DictConfig) -> None:
     """Run all configuration validation checks.
@@ -86,3 +161,5 @@ def validate_config(cfg: DictConfig) -> None:
     """
     validate_conditioning_config(cfg)
     validate_loss_config(cfg)
+    validate_model_config(cfg)
+    validate_cfg_config(cfg)

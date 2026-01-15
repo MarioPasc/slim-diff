@@ -202,6 +202,13 @@ training:
     use_for_validation: true
     export_to_checkpoint: false # Optionally save EMA weights in checkpoints.
 
+  # Self-Conditioning (Chen et al., 2022)
+  # Improves diffusion models by conditioning on model's own predictions
+  # Reference: "Analog Bits: Generating Discrete Data using Diffusion Models with Self-Conditioning"
+  self_conditioning:
+    enabled: false  # DISABLED by default: Optional ~10% quality improvement for minimal cost
+    probability: 0.5  # Probability of using self-conditioning during training (recommended: 0.5)
+
 # =============================================================================
 # Loss Configuration
 # =============================================================================
@@ -238,11 +245,17 @@ loss:
     log_matrix: false  # Apply log to weight matrix for numerical stability
     batch_matrix: false  # Use batch statistics for weight matrix
 
-  # Optional lesion-weighted mask loss (applies in both modes)
+  # Optional lesion-weighted losses (applies in both modes)
+  # Separate weights for image and mask channels
+  lesion_weighted_image:
+    enabled: false  # DISABLED by default: Optionally upweight lesions in FLAIR channel
+    lesion_weight: 1.2  # Moderate weight for lesion pixels in image channel
+    background_weight: 1.0
+
   lesion_weighted_mask:
     enabled: true  # ENABLED: Improves lesion detection by upweighting lesion pixels
-    lesion_weight: 1.5  # Extra weight for lesion pixels
-    background_weight: 1.0  
+    lesion_weight: 1.5  # Higher weight for lesion pixels in mask channel
+    background_weight: 1.0
 
 # =============================================================================
 # Postprocessing Configuration
@@ -287,6 +300,26 @@ logging:
     save_last: true
     every_n_epochs: 1
     filename: "jsddpm-{epoch:04d}-{val_loss:.4f}"
+
+  # Callback Configuration
+  callbacks:
+    # Gradient norm monitoring
+    gradient_norm:
+      enabled: true
+      log_every_n_steps: 100
+
+    # SNR monitoring
+    snr:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+
+    # Prediction quality monitoring
+    prediction_quality:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+      timestep_bins: 10
 
 # =============================================================================
 # Visualization Configuration
