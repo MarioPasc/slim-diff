@@ -455,9 +455,10 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
-        # Compute x0_pred if using FFL mode (mse_ffl_groups)
+        # Compute x0_pred if using FFL mode (mse_ffl_groups or mse_lp_norm_ffl_groups)
         x0_pred = None
-        if self.cfg.loss.get("mode") == "mse_ffl_groups":
+        loss_mode = self.cfg.loss.get("mode", "mse_channels")
+        if loss_mode in ("mse_ffl_groups", "mse_lp_norm_ffl_groups"):
             # For x0_pred, use x_t without anatomical prior channel
             if self._use_anatomical_conditioning:
                 x_t_for_recon = x_t[:, :2]  # (B, 2, H, W) - remove anatomical prior
@@ -672,9 +673,10 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
-        # Compute x0_pred if using FFL mode (mse_ffl_groups)
+        # Compute x0_pred if using FFL mode (mse_ffl_groups or mse_lp_norm_ffl_groups)
         x0_pred = None
-        if self.cfg.loss.get("mode") == "mse_ffl_groups":
+        loss_mode = self.cfg.loss.get("mode", "mse_channels")
+        if loss_mode in ("mse_ffl_groups", "mse_lp_norm_ffl_groups"):
             # For x0_pred, use x_t without anatomical prior channel
             x0_pred = self._predict_x0(x_t, model_output, timesteps)
             # CRITICAL: Clamp x0_pred to valid range before FFT to prevent instability
