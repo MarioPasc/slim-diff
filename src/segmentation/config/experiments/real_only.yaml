@@ -55,6 +55,9 @@ data:
   # This filters at SLICE level - epilepsy patients with mixed slices will only contribute lesion slices
   use_negative_cases: false
 
+  # Lesion area filtering (see master.yaml for details)
+  lesions_over_pixel_area: 100
+
   # Mask preprocessing
   mask:
     convert_range: true  # Convert {-1,+1} to {0,1}

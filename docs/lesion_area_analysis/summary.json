@@ -1,0 +1,268 @@
+{
+  "thresholds_analyzed": [
+    0,
+    50,
+    60,
+    75,
+    80,
+    90,
+    100
+  ],
+  "total_samples": 54827,
+  "real_samples": 9827,
+  "synthetic_samples": 45000,
+  "summary": [
+    {
+      "source": "real",
+      "split": "test",
+      "threshold": 0,
+      "total_samples": 1744,
+      "n_lesion": 239,
+      "n_over_threshold": 239,
+      "pct_retained": "100.0%"
+    },
+    {
+      "source": "real",
+      "split": "test",
+      "threshold": 50,
+      "total_samples": 1744,
+      "n_lesion": 239,
+      "n_over_threshold": 101,
+      "pct_retained": "42.3%"
+    },
+    {
+      "source": "real",
+      "split": "test",
+      "threshold": 60,
+      "total_samples": 1744,
+      "n_lesion": 239,
+      "n_over_threshold": 86,
+      "pct_retained": "36.0%"
+    },
+    {
+      "source": "real",
+      "split": "test",
+      "threshold": 75,
+      "total_samples": 1744,
+      "n_lesion": 239,
+      "n_over_threshold": 69,
+      "pct_retained": "28.9%"
+    },
+    {
+      "source": "real",
+      "split": "test",
+      "threshold": 80,
+      "total_samples": 1744,
+      "n_lesion": 239,
+      "n_over_threshold": 63,
+      "pct_retained": "26.4%"
+    },
+    {
+      "source": "real",
+      "split": "test",
+      "threshold": 90,
+      "total_samples": 1744,
+      "n_lesion": 239,
+      "n_over_threshold": 52,
+      "pct_retained": "21.8%"
+    },
+    {
+      "source": "real",
+      "split": "test",
+      "threshold": 100,
+      "total_samples": 1744,
+      "n_lesion": 239,
+      "n_over_threshold": 47,
+      "pct_retained": "19.7%"
+    },
+    {
+      "source": "real",
+      "split": "train",
+      "threshold": 0,
+      "total_samples": 7247,
+      "n_lesion": 916,
+      "n_over_threshold": 916,
+      "pct_retained": "100.0%"
+    },
+    {
+      "source": "real",
+      "split": "train",
+      "threshold": 50,
+      "total_samples": 7247,
+      "n_lesion": 916,
+      "n_over_threshold": 348,
+      "pct_retained": "38.0%"
+    },
+    {
+      "source": "real",
+      "split": "train",
+      "threshold": 60,
+      "total_samples": 7247,
+      "n_lesion": 916,
+      "n_over_threshold": 286,
+      "pct_retained": "31.2%"
+    },
+    {
+      "source": "real",
+      "split": "train",
+      "threshold": 75,
+      "total_samples": 7247,
+      "n_lesion": 916,
+      "n_over_threshold": 207,
+      "pct_retained": "22.6%"
+    },
+    {
+      "source": "real",
+      "split": "train",
+      "threshold": 80,
+      "total_samples": 7247,
+      "n_lesion": 916,
+      "n_over_threshold": 189,
+      "pct_retained": "20.6%"
+    },
+    {
+      "source": "real",
+      "split": "train",
+      "threshold": 90,
+      "total_samples": 7247,
+      "n_lesion": 916,
+      "n_over_threshold": 152,
+      "pct_retained": "16.6%"
+    },
+    {
+      "source": "real",
+      "split": "train",
+      "threshold": 100,
+      "total_samples": 7247,
+      "n_lesion": 916,
+      "n_over_threshold": 125,
+      "pct_retained": "13.6%"
+    },
+    {
+      "source": "real",
+      "split": "val",
+      "threshold": 0,
+      "total_samples": 836,
+      "n_lesion": 113,
+      "n_over_threshold": 113,
+      "pct_retained": "100.0%"
+    },
+    {
+      "source": "real",
+      "split": "val",
+      "threshold": 50,
+      "total_samples": 836,
+      "n_lesion": 113,
+      "n_over_threshold": 70,
+      "pct_retained": "61.9%"
+    },
+    {
+      "source": "real",
+      "split": "val",
+      "threshold": 60,
+      "total_samples": 836,
+      "n_lesion": 113,
+      "n_over_threshold": 63,
+      "pct_retained": "55.8%"
+    },
+    {
+      "source": "real",
+      "split": "val",
+      "threshold": 75,
+      "total_samples": 836,
+      "n_lesion": 113,
+      "n_over_threshold": 63,
+      "pct_retained": "55.8%"
+    },
+    {
+      "source": "real",
+      "split": "val",
+      "threshold": 80,
+      "total_samples": 836,
+      "n_lesion": 113,
+      "n_over_threshold": 62,
+      "pct_retained": "54.9%"
+    },
+    {
+      "source": "real",
+      "split": "val",
+      "threshold": 90,
+      "total_samples": 836,
+      "n_lesion": 113,
+      "n_over_threshold": 62,
+      "pct_retained": "54.9%"
+    },
+    {
+      "source": "real",
+      "split": "val",
+      "threshold": 100,
+      "total_samples": 836,
+      "n_lesion": 113,
+      "n_over_threshold": 62,
+      "pct_retained": "54.9%"
+    },
+    {
+      "source": "synthetic",
+      "split": "train",
+      "threshold": 0,
+      "total_samples": 45000,
+      "n_lesion": 18079,
+      "n_over_threshold": 18079,
+      "pct_retained": "100.0%"
+    },
+    {
+      "source": "synthetic",
+      "split": "train",
+      "threshold": 50,
+      "total_samples": 45000,
+      "n_lesion": 18079,
+      "n_over_threshold": 7746,
+      "pct_retained": "42.8%"
+    },
+    {
+      "source": "synthetic",
+      "split": "train",
+      "threshold": 60,
+      "total_samples": 45000,
+      "n_lesion": 18079,
+      "n_over_threshold": 6111,
+      "pct_retained": "33.8%"
+    },
+    {
+      "source": "synthetic",
+      "split": "train",
+      "threshold": 75,
+      "total_samples": 45000,
+      "n_lesion": 18079,
+      "n_over_threshold": 3758,
+      "pct_retained": "20.8%"
+    },
+    {
+      "source": "synthetic",
+      "split": "train",
+      "threshold": 80,
+      "total_samples": 45000,
+      "n_lesion": 18079,
+      "n_over_threshold": 3368,
+      "pct_retained": "18.6%"
+    },
+    {
+      "source": "synthetic",
+      "split": "train",
+      "threshold": 90,
+      "total_samples": 45000,
+      "n_lesion": 18079,
+      "n_over_threshold": 2652,
+      "pct_retained": "14.7%"
+    },
+    {
+      "source": "synthetic",
+      "split": "train",
+      "threshold": 100,
+      "total_samples": 45000,
+      "n_lesion": 18079,
+      "n_over_threshold": 2086,
+      "pct_retained": "11.5%"
+    }
+  ]
+}

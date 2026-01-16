@@ -761,6 +761,9 @@ class KFoldPlanner:
         2. If lesion < non-lesion, add synthetic lesion samples to balance
         3. Then add remaining synthetic samples evenly (lesion and non-lesion)
 
+        If lesion_area_threshold is set and a z-bin has no synthetic lesions
+        above the threshold, that z-bin is skipped for balancing.
+
         Args:
             train_real: Real training samples
 
@@ -778,6 +781,7 @@ class KFoldPlanner:
 
         combined = list(train_real)
         used_synthetic = set()
+        n_skipped_zbins = 0  # Track z-bins skipped due to no synthetic lesions
 
         # Phase 1: Balance lesion vs non-lesion for each z-bin
         for zbin in zbins:
@@ -788,6 +792,14 @@ class KFoldPlanner:
             if n_lesion < n_no_lesion:
                 deficit = n_no_lesion - n_lesion
                 synth_lesion = self.synthetic_by_zbin_lesion.get((zbin, True), [])
+
+                # Skip z-bin if no synthetic lesions available
+                if not synth_lesion:
+                    n_skipped_zbins += 1
+                    logger.debug(
+                        f"Z-bin {zbin}: No synthetic lesions available, skipping balance"
+                    )
+                    continue
 
                 # Add up to deficit synthetic lesion samples
                 for i, sample in enumerate(synth_lesion):
@@ -808,6 +820,13 @@ class KFoldPlanner:
                     if id(sample) not in used_synthetic:
                         combined.append(sample)
                         used_synthetic.add(id(sample))
+
+        # Log skipped z-bins
+        if n_skipped_zbins > 0:
+            logger.info(
+                f"Balance strategy: Skipped {n_skipped_zbins} z-bins with no "
+                f"synthetic lesions available (may be due to area threshold filtering)"
+            )
 
         # Phase 2: Add remaining synthetic samples in balanced pairs
         remaining_synthetic = [s for s in self.synthetic_samples if id(s) not in used_synthetic]
@@ -841,6 +860,9 @@ class KFoldPlanner:
         2. Balances the number of lesion samples across z-bins first
         3. Distributes remaining budget evenly across z-bins
 
+        If lesion_area_threshold is set and a z-bin has no synthetic lesions
+        above the threshold, that z-bin is skipped for balancing.
+
         Args:
             train_real: Real training samples (all have lesions)
 
@@ -873,6 +895,7 @@ class KFoldPlanner:
         combined = list(train_real)
         used_synthetic = set()
         synthetic_added = 0
+        n_skipped_zbins = 0  # Track z-bins skipped due to no synthetic lesions
 
         # Phase 1: Balance z-bins up to max_per_zbin
         for zbin in zbins:
@@ -890,6 +913,14 @@ class KFoldPlanner:
 
             # Get synthetic lesion samples for this z-bin
             synth_samples = self.synthetic_by_zbin_lesion.get((zbin, True), [])
+
+            # Skip z-bin if no synthetic lesions available
+            if not synth_samples:
+                n_skipped_zbins += 1
+                logger.debug(
+                    f"Z-bin {zbin}: No synthetic lesions available, skipping balance"
+                )
+                continue
 
             for sample in synth_samples:
                 if deficit <= 0 or synthetic_added >= target_synthetic:
@@ -929,6 +960,13 @@ class KFoldPlanner:
                     combined.append(sample)
                     used_synthetic.add(id(sample))
                     synthetic_added += 1
+
+        # Log skipped z-bins
+        if n_skipped_zbins > 0:
+            logger.info(
+                f"Balance strategy (lesion-only): Skipped {n_skipped_zbins} z-bins with no "
+                f"synthetic lesions available (may be due to area threshold filtering)"
+            )
 
         logger.info(
             f"Balance merge (lesion-only): {n_real} real + "
@@ -970,7 +1008,8 @@ class KFoldPlanner:
         # Write CSV
         fieldnames = [
             "fold", "split", "subject_id", "filepath", "z_index", "z_bin",
-            "has_lesion_slice", "has_lesion_subject", "source", "replica"
+            "has_lesion_slice", "has_lesion_subject", "source", "replica",
+            "lesion_pixel_area"
         ]
 
         with open(csv_path, "w", newline="") as f:

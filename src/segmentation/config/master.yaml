@@ -65,6 +65,15 @@ data:
   # This filters at slice level, not subject level (epilepsy patients are double-filtered)
   use_negative_cases: true
 
+  # Lesion area filtering
+  # If set, only include lesion samples where the lesion pixel area >= this threshold.
+  # This affects BOTH real and synthetic data across ALL splits (train/val/test).
+  # Samples with lesion area below threshold are reclassified as has_lesion=false.
+  # Set to null (or omit) to disable filtering.
+  # Use the dryrun script to analyze impact:
+  #   python -m src.segmentation.scripts.dryrun_lesion_area_filter --help
+  lesions_over_pixel_area: null  # e.g., 50, 100, 200
+
 # =============================================================================
 # K-Fold Cross-Validation
 # =============================================================================
