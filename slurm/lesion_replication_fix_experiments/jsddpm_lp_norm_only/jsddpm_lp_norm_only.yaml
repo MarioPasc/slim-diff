@@ -147,6 +147,11 @@ training:
   num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
   pin_memory: true
 
+  # Self conditioning
+  self_conditioning:
+    enabled: true
+    prob: 0.5
+
   # Optimizer
   optimizer:
     type: "AdamW"
