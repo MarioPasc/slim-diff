@@ -76,7 +76,7 @@ model:
   spatial_dims: 2
   in_channels: 2   # [image, mask] - factory.py auto-increases to 3 when anatomical_conditioning=true
   out_channels: 2  # [image, mask]
-  anatomical_conditioning: true  # Uses z-bin priors as input channel for spatial guidance
+  anatomical_conditioning: false  # Uses z-bin priors as input channel for spatial guidance
 
   # UNet architecture
   channels: [64, 128, 256, 256]
