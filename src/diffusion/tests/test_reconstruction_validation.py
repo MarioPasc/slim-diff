@@ -63,6 +63,7 @@ def test_config():
             },
             "lesion_oversampling": {
                 "enabled": True,
+                "mode": "balance",
                 "weight": 5.0,
             },
         },

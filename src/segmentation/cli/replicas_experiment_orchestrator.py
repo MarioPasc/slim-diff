@@ -29,11 +29,11 @@ Output organization:
 
 Usage:
     # Dry run - create planification only
-    python -m src.segmentation.cli.replicas_experiment_orchestrator \\
-        --expansions x1,x2,x3 \\
-        --models dynunet,unet,swinunetr \\
-        --output-dir /media/hddb/mario/results/epilepsy/segmentation \\
-        --device 0 \\
+    python -m src.segmentation.cli.replicas_experiment_orchestrator \
+        --expansions x1,x2,x3,x4,x5 \
+        --models dynunet,unet,swinunetr \
+        --output-dir /media/hddb/mario/results/epilepsy/segmentation \
+        --device 0 \
         --dry-run
 
     # Full execution across 2 GPUs

@@ -13,7 +13,7 @@
 experiment:
   name: "jsddpm_complete"
   output_dir: "./outputs/jsddpm_complete"
-  seed: 42
+  seed: 33
 
 # =============================================================================
 # Data Configuration
@@ -34,7 +34,7 @@ data:
     use_predefined_test: true  # Use imagesTs/labelsTs as test set
     val_fraction: 0.1          # Fraction of train subjects for validation
     control_test_fraction: 0.15  # Fraction of control subjects for test
-    seed: 42
+    seed: 33
 
   transforms:
     target_spacing: [1.875, 1.875, 1.875]  # mm - yields ~128^3 from ~188x232x196
@@ -48,14 +48,15 @@ data:
       clip: true
 
   slice_sampling:
-    z_range: [24, 93]  # Valid z indices after resampling [min_z, max_z] (inclusive)
+    z_range: [30, 90]  # Valid z indices after resampling [min_z, max_z] (inclusive)
     filter_empty_brain: true
     brain_threshold: -0.9  # Threshold for considering pixel as brain in [-1,1] space
     brain_min_fraction: 0.05  # Minimum fraction of brain pixels to keep slice
 
   lesion_oversampling:
     enabled: true
-    weight: 5.0  # Weight multiplier for slices with lesions
+    mode: "balance"  # "balance" for 50/50 lesion/non-lesion sampling, "weight" for manual weight
+    weight: 3.0  # Weight multiplier for lesion slices (only used when mode="weight")
 
 # =============================================================================
 # Conditioning Configuration
@@ -184,7 +185,7 @@ training:
   early_stopping:
     enabled: false
     monitor: "val/loss"
-    patience: 20
+    patience: 50
     mode: "min"
 
   # Exponential Moving Average (EMA)
@@ -225,7 +226,7 @@ loss:
   # p=2: MSE (standard), p=1: MAE (robust), p=1.5: balanced robustness
   # Values p < 2 are less sensitive to large errors (outliers)
   lp_norm:
-    p: 1.5  # L1.5 norm: balances robustness to outliers with sensitivity to errors
+    p: 3  # L1.5 norm: balances robustness to outliers with sensitivity to errors
 
   # Uncertainty weighting (Kendall et al.) - NOT used in mse_lp_norm_ffl_groups mode
   uncertainty_weighting:
@@ -251,7 +252,7 @@ loss:
   ffl:
     enabled: true
     loss_weight: 1.0  # Base scaling factor (uncertainty weighting handles balancing)
-    alpha: 1.5  # Focal exponent: increased from 1.0 to emphasize hard frequencies
+    alpha: 1.75  # Focal exponent: increased from 1.0 to emphasize hard frequencies
                 # Higher alpha = stronger focus on edge/texture frequencies
                 # Addresses statistically significant edge sharpness mismatch (p=0.004)
     patch_factor: 2  # Local frequency analysis: 4 patches of 64x64 from 128x128

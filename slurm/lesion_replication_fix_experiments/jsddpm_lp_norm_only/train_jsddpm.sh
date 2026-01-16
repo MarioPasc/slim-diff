@@ -13,7 +13,7 @@
 # JS-DDPM Training with Lp Norm Only (No FFL - Ablation Study)
 # ========================================================================
 # This experiment uses Lp norm loss only (no FFL) for comparison:
-#   - Lp norm (p=1.5): Robust to outliers, balances sensitivity
+#   - Lp norm (p=3): Robust to outliers, balances sensitivity
 #   - Lesion overweighting: Upweights lesion pixels in both channels
 #   - Kendall uncertainty: Learns optimal weighting between image/mask
 #   - NO FFL: Ablation to measure FFL's contribution
@@ -96,7 +96,7 @@ echo "Cache directory: ${CACHE_DIR}"
 # Only run caching if cache directory doesn't exist
 if [ ! -d "${CACHE_DIR}" ]; then
     echo "Cache directory not found. Running caching step..."
-    jsddpm-cache --config "${MODIFIED_CONFIG}"
+    jsddpm-cache --config "${MODIFIED_CONFIG}" --lesion-area-min-pixels 15 --drop-healthy-patients
     echo "Caching completed."
 else
     echo "Cache directory exists. Skipping caching step."

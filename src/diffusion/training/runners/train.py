@@ -170,6 +170,7 @@ def setup_wandb_config(logger: WandbLogger, cfg: DictConfig) -> None:
         "data/target_spacing": cfg.data.transforms.target_spacing[0],
         "data/roi_size": cfg.data.transforms.roi_size[0],
         "data/lesion_oversampling_enabled": cfg.data.lesion_oversampling.enabled,
+        "data/lesion_oversampling_mode": cfg.data.lesion_oversampling.get("mode", "weight"),
         "data/lesion_oversampling_weight": cfg.data.lesion_oversampling.weight,
     })
 

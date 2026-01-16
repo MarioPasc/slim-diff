@@ -95,7 +95,7 @@ echo "Cache directory: ${CACHE_DIR}"
 # Only run caching if cache directory doesn't exist
 if [ ! -d "${CACHE_DIR}" ]; then
     echo "Cache directory not found. Running caching step..."
-    jsddpm-cache --config "${MODIFIED_CONFIG}"
+    jsddpm-cache --config "${MODIFIED_CONFIG}" --lesion-area-min-pixels 15 --drop-healthy-patients
     echo "Caching completed."
 else
     echo "Cache directory exists. Skipping caching step."

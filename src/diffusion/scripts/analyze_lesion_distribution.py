@@ -157,6 +157,135 @@ def plot_lesion_distribution(
     plt.close()
 
 
+def plot_lesion_size_vs_z(
+    df: pd.DataFrame,
+    output_path: str = None,
+    show: bool = True,
+    lesion_area_th: int = None
+) -> None:
+    """
+    Create a visualization of lesion size distribution by slice index.
+
+    Shows how lesion sizes vary with z-position, helping identify depths
+    where larger lesions are more common.
+
+    Args:
+        df: DataFrame with slice data (must have 'lesion_area_px' column)
+        output_path: Optional path to save the figure
+        show: Whether to display the plot
+        lesion_area_th: Optional threshold to highlight z-heights with lesions over this size
+    """
+    # Filter for lesion slices only
+    lesion_df = df[df['has_lesion'] == True].copy()
+
+    if 'lesion_area_px' not in lesion_df.columns:
+        print("Warning: 'lesion_area_px' column not found in data. Skipping lesion size plot.")
+        return
+
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+
+    # ---- Plot 1: Scatter plot of lesion size vs z-index ----
+    ax1 = axes[0]
+    scatter = ax1.scatter(
+        lesion_df['z_index'],
+        lesion_df['lesion_area_px'],
+        c='#3498DB',
+        alpha=0.5,
+        s=20,
+        edgecolors='none'
+    )
+
+    # Highlight points above threshold
+    if lesion_area_th is not None:
+        above_th = lesion_df[lesion_df['lesion_area_px'] >= lesion_area_th]
+        ax1.scatter(
+            above_th['z_index'],
+            above_th['lesion_area_px'],
+            c='#E74C3C',
+            alpha=0.8,
+            s=40,
+            edgecolors='black',
+            linewidths=0.5,
+            label=f'≥ {lesion_area_th} px ({len(above_th)} slices)'
+        )
+        ax1.axhline(lesion_area_th, color='red', linestyle='--', linewidth=1.5, alpha=0.7,
+                    label=f'Threshold: {lesion_area_th} px')
+        ax1.legend(loc='upper right', fontsize=10)
+
+    ax1.set_xlabel('Slice Index (z)', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Lesion Area (pixels)', fontsize=12, fontweight='bold')
+    ax1.set_title('Lesion Size vs Slice Depth (Scatter)', fontsize=14, fontweight='bold')
+    ax1.grid(alpha=0.3, linestyle='--')
+
+    # ---- Plot 2: Box plot / statistics by z-index ----
+    ax2 = axes[1]
+
+    # Compute statistics by z-index
+    z_stats = lesion_df.groupby('z_index')['lesion_area_px'].agg(['mean', 'std', 'max', 'count'])
+    z_stats = z_stats.reset_index()
+
+    # Plot mean lesion size with error bars
+    ax2.bar(z_stats['z_index'], z_stats['mean'], color='#2ECC71', alpha=0.7, 
+            edgecolor='black', label='Mean lesion size')
+    ax2.errorbar(z_stats['z_index'], z_stats['mean'], yerr=z_stats['std'],
+                 fmt='none', color='black', alpha=0.5, capsize=2)
+
+    # Plot max as line
+    ax2.plot(z_stats['z_index'], z_stats['max'], 'r-', linewidth=2, alpha=0.7, 
+             marker='o', markersize=3, label='Max lesion size')
+
+    # Highlight z-indices with lesions above threshold
+    if lesion_area_th is not None:
+        z_above_th = lesion_df[lesion_df['lesion_area_px'] >= lesion_area_th]['z_index'].unique()
+        for z in z_above_th:
+            ax2.axvline(z, color='red', alpha=0.15, linewidth=3)
+        
+        # Add annotation for highlighted regions
+        if len(z_above_th) > 0:
+            ax2.axhline(lesion_area_th, color='red', linestyle='--', linewidth=1.5, alpha=0.7)
+            z_range = f"z ∈ [{z_above_th.min()}, {z_above_th.max()}]"
+            ax2.text(0.02, 0.98, f"Highlighted: {len(z_above_th)} z-heights with lesions ≥ {lesion_area_th} px\n{z_range}",
+                    transform=ax2.transAxes, fontsize=9, verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+
+    ax2.set_xlabel('Slice Index (z)', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Lesion Area (pixels)', fontsize=12, fontweight='bold')
+    ax2.set_title('Mean & Max Lesion Size by Slice Depth', fontsize=14, fontweight='bold')
+    ax2.grid(axis='y', alpha=0.3, linestyle='--')
+    ax2.legend(loc='upper right', fontsize=10)
+
+    plt.tight_layout()
+
+    # Save if output path specified
+    if output_path:
+        size_path = Path(output_path)
+        size_output = size_path.parent / (size_path.stem + '_lesion_size' + size_path.suffix)
+        plt.savefig(size_output, dpi=300, bbox_inches='tight')
+        print(f"Lesion size plot saved to: {size_output}")
+
+    if show:
+        plt.show()
+
+    plt.close()
+
+    # Print summary statistics
+    print("\n" + "="*60)
+    print("LESION SIZE BY Z-INDEX STATISTICS")
+    print("="*60)
+    print(f"Total lesion slices analyzed: {len(lesion_df)}")
+    print(f"Overall mean lesion size: {lesion_df['lesion_area_px'].mean():.1f} px")
+    print(f"Overall max lesion size: {lesion_df['lesion_area_px'].max()} px")
+    print(f"Overall min lesion size: {lesion_df['lesion_area_px'].min()} px")
+    
+    if lesion_area_th is not None:
+        n_above = len(lesion_df[lesion_df['lesion_area_px'] >= lesion_area_th])
+        pct_above = (n_above / len(lesion_df)) * 100
+        z_above = lesion_df[lesion_df['lesion_area_px'] >= lesion_area_th]['z_index'].unique()
+        print(f"\nSlices with lesion ≥ {lesion_area_th} px: {n_above} ({pct_above:.1f}%)")
+        print(f"Z-indices with large lesions: {sorted(z_above)}")
+    print("="*60)
+
+
 def plot_lesion_distribution_by_split(
     df: pd.DataFrame,
     output_path: str = None,
@@ -248,6 +377,17 @@ def main():
         action='store_true',
         help='Also create split-wise visualization'
     )
+    parser.add_argument(
+        '--lesion-size',
+        action='store_true',
+        help='Plot lesion size vs z-axis height'
+    )
+    parser.add_argument(
+        '--lesion-area-th',
+        type=int,
+        default=None,
+        help='Threshold (in pixels) to highlight z-heights with lesions over this size'
+    )
 
     args = parser.parse_args()
 
@@ -292,6 +432,15 @@ def main():
             df,
             output_path=output_path,
             show=not args.no_show
+        )
+
+    # Plot lesion size vs z-axis if requested
+    if args.lesion_size or args.lesion_area_th is not None:
+        plot_lesion_size_vs_z(
+            df,
+            output_path=output_path,
+            show=not args.no_show,
+            lesion_area_th=args.lesion_area_th
         )
 
     print("\nAnalysis complete!")

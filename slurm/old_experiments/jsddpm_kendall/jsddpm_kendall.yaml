@@ -51,7 +51,8 @@ data:
 
   lesion_oversampling:
     enabled: true
-    weight: 5.0  # Weight multiplier for slices with lesions
+    mode: "balance"  # "balance" for 50/50 lesion/non-lesion sampling, "weight" for manual weight
+    weight: 5.0  # Weight multiplier for lesion slices (only used when mode="weight")
 
 # =============================================================================
 # Conditioning Configuration

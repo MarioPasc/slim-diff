@@ -333,9 +333,10 @@ class TestLocalBinningWithCache:
 
     def test_dataloader_class_balance_with_oversampling(self, baseline_config):
         """Test that dataloader correctly applies lesion oversampling."""
-        # Enable oversampling
+        # Enable oversampling with balance mode for 50/50 sampling
         baseline_config.data.lesion_oversampling.enabled = True
-        baseline_config.data.lesion_oversampling.weight = 5.0
+        baseline_config.data.lesion_oversampling.mode = "balance"
+        baseline_config.data.lesion_oversampling.weight = 5.0  # Not used in balance mode
 
         # Create dataloader with oversampling
         dataloader = create_dataloader(

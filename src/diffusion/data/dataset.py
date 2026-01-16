@@ -140,22 +140,56 @@ class SliceDataset(Dataset):
 
 def get_weighted_sampler(
     dataset: SliceDataset,
+    mode: str = "balance",
     lesion_weight: float = 5.0,
 ) -> WeightedRandomSampler:
     """Create a weighted random sampler for class balancing.
 
     Args:
         dataset: SliceDataset instance.
-        lesion_weight: Weight multiplier for lesion slices.
+        mode: Oversampling mode. Options:
+            - "balance": Automatically compute weights for 50/50 lesion/non-lesion
+              sampling. This ensures the model sees both classes at the same rate.
+            - "weight": Use the provided lesion_weight as a fixed multiplier.
+        lesion_weight: Weight multiplier for lesion slices (only used when mode="weight").
 
     Returns:
         WeightedRandomSampler for the dataloader.
     """
+    # Count lesion and non-lesion samples
+    n_lesion = sum(1 for s in dataset.samples if s["has_lesion"])
+    n_non_lesion = len(dataset.samples) - n_lesion
+
+    if n_lesion == 0:
+        logger.warning("No lesion samples found. Weighted sampling will have no effect.")
+        effective_lesion_weight = 1.0
+    elif n_non_lesion == 0:
+        logger.warning("No non-lesion samples found. Weighted sampling will have no effect.")
+        effective_lesion_weight = 1.0
+    elif mode == "balance":
+        # Compute weight to achieve 50/50 sampling
+        # For equal probability: w_lesion * n_lesion = w_non_lesion * n_non_lesion
+        # With w_non_lesion = 1.0: w_lesion = n_non_lesion / n_lesion
+        effective_lesion_weight = n_non_lesion / n_lesion
+        logger.info(
+            f"Lesion oversampling mode='balance': {n_lesion} lesion, "
+            f"{n_non_lesion} non-lesion samples. "
+            f"Computed lesion weight: {effective_lesion_weight:.2f}x for 50/50 sampling."
+        )
+    elif mode == "weight":
+        effective_lesion_weight = lesion_weight
+        logger.info(
+            f"Lesion oversampling mode='weight': Using fixed weight={lesion_weight}x. "
+            f"({n_lesion} lesion, {n_non_lesion} non-lesion samples)"
+        )
+    else:
+        raise ValueError(f"Unknown lesion_oversampling mode: {mode}. Use 'balance' or 'weight'.")
+
     # Compute weights based on lesion presence
     weights = []
     for sample in dataset.samples:
         if sample["has_lesion"]:
-            weights.append(lesion_weight)
+            weights.append(effective_lesion_weight)
         else:
             weights.append(1.0)
 
@@ -239,8 +273,11 @@ def create_dataloader(
     # Create sampler if needed
     sampler = None
     if use_weighted_sampler:
+        # Get mode with fallback for backward compatibility
+        mode = cfg.data.lesion_oversampling.get("mode", "weight")
         sampler = get_weighted_sampler(
             dataset,
+            mode=mode,
             lesion_weight=cfg.data.lesion_oversampling.weight,
         )
         shuffle = False  # Sampler handles randomization
