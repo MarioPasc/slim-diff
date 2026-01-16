@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J log_jsddpm_lp_norm_only
+#SBATCH -J log_jsddpm_complete_anatomical_conditioning
 #SBATCH --time=4-12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -10,13 +10,13 @@
 #SBATCH --error=%x.%j.err
 
 # ========================================================================
-# JS-DDPM Training with Lp Norm Only (No FFL - Ablation Study)
+# JS-DDPM Training with Lp Norm + Focal Frequency Loss (Complete)
 # ========================================================================
-# This experiment uses Lp norm loss only (no FFL) for comparison:
+# This experiment combines multiple techniques for improved lesion synthesis:
 #   - Lp norm (p=1.5): Robust to outliers, balances sensitivity
+#   - FFL: Improves high-frequency component synthesis (edge sharpness)
 #   - Lesion overweighting: Upweights lesion pixels in both channels
-#   - Kendall uncertainty: Learns optimal weighting between image/mask
-#   - NO FFL: Ablation to measure FFL's contribution
+#   - Kendall uncertainty: Learns optimal weighting between Lp+FFL
 # ========================================================================
 
 set -euo pipefail
@@ -27,7 +27,7 @@ echo "Job started at: $(date)"
 # ========================================================================
 # DISTRIBUTED TRAINING CONFIGURATION
 # ========================================================================
-EXPERIMENT_NAME="jsddpm_lp_norm_only"
+EXPERIMENT_NAME="jsddpm_complete_anatomical_conditioning"
 CONDA_ENV_NAME="jsddpm"
 
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"

@@ -32,15 +32,7 @@ DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
 RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}"
 CONFIG_FILE="${REPO_SRC}/slurm/${EXPERIMENT_NAME}/${EXPERIMENT_NAME}.yaml"
 
-# Dynamic GPU assignment
-export CUDA_VISIBLE_DEVICES=0
-for i in {0..7}; do
-  if [[ -z $(nvidia-smi -i $i --query-compute-apps=pid --format=csv,noheader 2>/dev/null) ]] && nvidia-smi -i $i &>/dev/null; then
-    export CUDA_VISIBLE_DEVICES=$i
-    echo "Auto-assigned to available GPU: $i"
-    break
-  fi
-done
+
 
 # ---------- Load conda module and activate prebuilt env ----------
 module_loaded=0
