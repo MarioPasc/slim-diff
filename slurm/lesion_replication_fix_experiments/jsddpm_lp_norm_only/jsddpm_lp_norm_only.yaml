@@ -1,13 +1,18 @@
-# JS-DDPM Configuration with Focal Frequency Loss
+# JS-DDPM Configuration with Lp Norm Only (No FFL)
 # Joint-Synthesis DDPM for paired FLAIR/lesion mask generation
-# Uses FFL to improve high-frequency component synthesis (edge sharpness)
+#
+# Key features:
+#   - Lp norm (p < 2) to penalize outliers more robustly than MSE
+#   - Lesion pixel overweighting for both Lp norm image and mask channels
+#   - Kendall uncertainty weighting between image and mask Lp norm losses
+#   - NO Focal Frequency Loss (ablation study)
 
 # =============================================================================
 # Experiment Metadata
 # =============================================================================
 experiment:
-  name: "jsddpm_ffl"
-  output_dir: "./outputs/jsddpm_ffl"
+  name: "jsddpm_lp_norm_only"
+  output_dir: "./outputs/jsddpm_lp_norm_only"
   seed: 42
 
 # =============================================================================
@@ -189,66 +194,64 @@ training:
     export_to_checkpoint: true
 
 # =============================================================================
-# Loss Configuration - WITH FOCAL FREQUENCY LOSS
+# Loss Configuration - Lp NORM ONLY (No FFL)
 # =============================================================================
 # References:
-#   [1] Jiang et al., "Focal Frequency Loss for Image Reconstruction and Synthesis", ICCV 2021
-#       https://openaccess.thecvf.com/content/ICCV2021/supplemental/Jiang_Focal_Frequency_Loss_ICCV_2021_supplemental.pdf
-#   [2] IFGAN: Pre- to Post-Contrast Medical Image Synthesis Based on Interactive Frequency GAN
-#       https://www.mdpi.com/2079-9292/13/22/4351
-#   [3] Enhanced Ischemic Stroke Lesion Segmentation in MRI Using Attention U-Net with Generalized Dice Focal Loss
-#       https://www.mdpi.com/2076-3417/14/18/8183
+#   [1] Kendall et al., "Multi-Task Learning Using Uncertainty to Weigh Losses", CVPR 2018
 #
 # Design rationale for epilepsy/FCD lesion synthesis:
-#   - Edge sharpness mismatch (p=0.004) indicates model struggles with high-frequency components
-#   - FCD Type II is characterized by GM-WM junction blurring (specific frequency signature)
-#   - Higher alpha emphasizes hard-to-synthesize frequencies (edges, textures)
-#   - Patch-based FFT captures local frequency patterns relevant to lesion boundaries
-#   - Log matrix provides numerical stability for FLAIR's wide dynamic range
+#   - Lp norm (p < 2): More robust to outliers than MSE (p=2). L1.5 balances
+#     robustness to extreme errors while maintaining sensitivity to moderate errors
+#   - Lesion overweighting: Lesion pixels are rare, so upweighting ensures model learns them
+#   - Kendall uncertainty: Learns optimal weighting between image and mask channels
+#   - NO FFL: Ablation study to measure FFL's contribution to edge sharpness
 # =============================================================================
 loss:
-  # Enable FFL mode: uncertainty between (MSE combined) and (FFL)
-  mode: "mse_ffl_groups"
+  # Enable Lp norm mode (no FFL)
+  mode: "mse_lp_norm"
 
-  # Uncertainty weighting (Kendall et al.) - NOT used in mse_ffl_groups mode
+  # Lp norm configuration - penalizes outliers more robustly than MSE
+  # p=2: MSE (standard), p=1: MAE (robust), p=1.5: balanced robustness
+  # Values p < 2 are less sensitive to large errors (outliers)
+  lp_norm:
+    p: 1.5  # L1.5 norm: balances robustness to outliers with sensitivity to errors
+
+  # Uncertainty weighting (Kendall et al.) - ACTIVE in mse_lp_norm mode
+  # Learns optimal weighting between image and mask Lp norm losses
   uncertainty_weighting:
-    enabled: false  # Disabled - using group_uncertainty_weighting instead
+    enabled: true
+    initial_log_vars: [0.0, 0.0]  # [lp_image, lp_mask]
+    learnable: true
+    clamp_range: [-5.0, 5.0]
+
+  # Group uncertainty weighting - NOT used in mse_lp_norm mode
+  group_uncertainty_weighting:
+    enabled: false
     initial_log_vars: [0.0, 0.0]
     learnable: true
     clamp_range: [-5.0, 5.0]
+    intra_group_weights: [1.0, 1.0, 1.0]
 
-  # Group uncertainty weighting - ACTIVE in mse_ffl_groups mode
-  # Groups MSE losses (image + mask) as Group 0, FFL as Group 1
-  group_uncertainty_weighting:
-    enabled: true
-    initial_log_vars: [0.0, 0.5]  # [mse_group, ffl_group] - FFL starts with lower precision (~0.6)
-                                   # Allows MSE to dominate early training for stability
-    learnable: true
-    clamp_range: [-5.0, 5.0]
-    intra_group_weights: [1.0, 1.0, 1.0]  # [mse_img, mse_mask, ffl]
-
-  # Focal Frequency Loss (Jiang et al., ICCV 2021) [1]
-  # Forces model to learn hard-to-synthesize high-frequency components
-  # Tuned for epilepsy lesion synthesis with edge sharpness focus
+  # Focal Frequency Loss - DISABLED for this experiment
   ffl:
-    enabled: true
-    loss_weight: 1.0  # Base scaling factor (uncertainty weighting handles balancing)
-    alpha: 1.5  # Focal exponent: increased from 1.0 to emphasize hard frequencies
-                # Higher alpha = stronger focus on edge/texture frequencies
-                # Addresses statistically significant edge sharpness mismatch (p=0.004)
-    patch_factor: 2  # Local frequency analysis: 4 patches of 64x64 from 128x128
-                     # Captures lesion-specific texture signatures and regional edge characteristics
-                     # Better for detecting subtle GM-WM boundary blur in FCD
-    ave_spectrum: false  # Per-sample spectrum weighting (not batch average)
-    log_matrix: true  # ENABLED: log(1+x) for numerical stability
-                      # FLAIR MRI has wide dynamic range in frequency domain
-                      # Prevents dominant low-frequencies from overshadowing high-frequency learning
-    batch_matrix: false  # Per-sample weight matrix (not batch statistics)
+    enabled: false
+    loss_weight: 1.0
+    alpha: 1.0
+    patch_factor: 1
+    ave_spectrum: false
+    log_matrix: false
+    batch_matrix: false
 
-  # Lesion-weighted mask loss (applies in both modes)
+  # Lesion pixel overweighting for Lp norm loss
+  # Upweights lesion pixels to improve lesion reconstruction
+  lesion_weighted_image:
+    enabled: true  # ENABLED: Upweight lesions in FLAIR channel for better lesion synthesis
+    lesion_weight: 2.0  # 2x weight for lesion pixels in image channel
+    background_weight: 1.0
+
   lesion_weighted_mask:
-    enabled: true
-    lesion_weight: 1.5
+    enabled: true  # ENABLED: Improves lesion detection by upweighting lesion pixels
+    lesion_weight: 2.5  # 2.5x weight for lesion pixels in mask channel (higher since mask is critical)
     background_weight: 1.0
 
 # =============================================================================
@@ -280,9 +283,9 @@ logging:
     wandb:
       project: "jsddpm-epilepsy"
       entity: "mario-pg02-icai-org"
-      name: jsddpm_ffl
-      tags: ["epilepsy", "diffusion", "jsddpm", "ffl"]
-      notes: "Training JS-DDPM with Focal Frequency Loss for improved edge sharpness"
+      name: jsddpm_lp_norm_only
+      tags: ["epilepsy", "diffusion", "jsddpm", "lp-norm", "kendall", "lesion-weighted", "no-ffl"]
+      notes: "JS-DDPM with Lp norm (p=1.5) + lesion overweighting + Kendall uncertainty (NO FFL ablation)"
       offline: true
 
   # Checkpointing

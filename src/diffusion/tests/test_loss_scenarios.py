@@ -364,3 +364,171 @@ class TestNormalizedMSEAllScenarios:
 
         # Losses should be identical (normalized formula aggregates over batch)
         assert torch.isclose(loss_small, loss_large, rtol=1e-5)
+
+
+class TestLpNormModes:
+    """Test Lp norm loss modes."""
+
+    def create_lp_norm_config(
+        self,
+        mode: str = "mse_lp_norm",
+        p: float = 2.0,
+        uncertainty: bool = False,
+        lesion_weighted: bool = False,
+    ) -> dict:
+        """Create test configuration for Lp norm modes."""
+        return OmegaConf.create({
+            "loss": {
+                "mode": mode,
+                "lp_norm": {
+                    "p": p,
+                },
+                "uncertainty_weighting": {
+                    "enabled": uncertainty,
+                    "initial_log_vars": [0.0, 0.0],
+                    "learnable": False,
+                },
+                "group_uncertainty_weighting": {
+                    "enabled": True,
+                    "initial_log_vars": [0.0, 0.0],
+                    "learnable": False,
+                    "intra_group_weights": [1.0, 1.0, 1.0],
+                },
+                "ffl": {
+                    "loss_weight": 1.0,
+                    "alpha": 1.0,
+                    "patch_factor": 1,
+                    "ave_spectrum": False,
+                    "log_matrix": False,
+                    "batch_matrix": False,
+                },
+                "lesion_weighted_image": {
+                    "enabled": False,
+                    "lesion_weight": 1.2,
+                    "background_weight": 1.0,
+                },
+                "lesion_weighted_mask": {
+                    "enabled": lesion_weighted,
+                    "lesion_weight": 2.5,
+                    "background_weight": 1.0,
+                },
+            }
+        })
+
+    def test_lp_norm_p2_equals_mse(self):
+        """Test that p=2 gives same result as MSE."""
+        from src.diffusion.losses.diffusion_losses import lp_norm_loss
+
+        pred = torch.randn(4, 1, 64, 64)
+        target = torch.randn(4, 1, 64, 64)
+
+        lp_loss = lp_norm_loss(pred, target, p=2.0)
+        mse_loss = torch.nn.functional.mse_loss(pred, target)
+
+        assert torch.isclose(lp_loss, mse_loss, rtol=1e-5), \
+            f"p=2 Lp norm should equal MSE: {lp_loss.item()} vs {mse_loss.item()}"
+
+    def test_lp_norm_p1_is_mae(self):
+        """Test that p=1 gives MAE."""
+        from src.diffusion.losses.diffusion_losses import lp_norm_loss
+
+        pred = torch.randn(4, 1, 64, 64)
+        target = torch.randn(4, 1, 64, 64)
+
+        lp_loss = lp_norm_loss(pred, target, p=1.0)
+        mae_loss = torch.nn.functional.l1_loss(pred, target)
+
+        assert torch.isclose(lp_loss, mae_loss, rtol=1e-5), \
+            f"p=1 Lp norm should equal MAE: {lp_loss.item()} vs {mae_loss.item()}"
+
+    def test_lesion_weighted_lp_norm(self):
+        """Test lesion weighting works with Lp norm."""
+        from src.diffusion.losses.diffusion_losses import lesion_weighted_lp_norm
+
+        pred = torch.randn(4, 1, 64, 64)
+        target = torch.randn(4, 1, 64, 64)
+        mask = torch.ones(4, 1, 64, 64)
+        mask[:, :, :, :32] = -1.0  # Left half is background
+
+        loss = lesion_weighted_lp_norm(pred, target, mask, p=2.0, lesion_weight=2.0)
+
+        assert loss.item() >= 0
+        assert torch.isfinite(loss)
+
+    def test_mse_lp_norm_mode_initialization(self):
+        """Test mse_lp_norm mode initializes correctly."""
+        cfg = self.create_lp_norm_config(mode="mse_lp_norm", p=1.5)
+        criterion = DiffusionLoss(cfg)
+
+        assert criterion.mode == "mse_lp_norm"
+        assert criterion.lp_p == 1.5
+
+    def test_mse_lp_norm_forward(self):
+        """Test mse_lp_norm forward pass."""
+        cfg = self.create_lp_norm_config(mode="mse_lp_norm", p=1.5)
+        criterion = DiffusionLoss(cfg)
+
+        eps_pred = torch.randn(4, 2, 64, 64)
+        eps_target = torch.randn(4, 2, 64, 64)
+        x0_mask = torch.randn(4, 1, 64, 64).sign()
+
+        loss, details = criterion(eps_pred, eps_target, x0_mask)
+
+        assert loss.item() >= 0
+        assert torch.isfinite(loss)
+        assert "loss_image" in details
+        assert "loss_mask" in details
+        assert details["lp_p"] == 1.5
+
+    def test_mse_lp_norm_ffl_groups_mode(self):
+        """Test mse_lp_norm_ffl_groups mode works."""
+        cfg = self.create_lp_norm_config(mode="mse_lp_norm_ffl_groups", p=1.5)
+        criterion = DiffusionLoss(cfg)
+
+        eps_pred = torch.randn(4, 2, 64, 64)
+        eps_target = torch.randn(4, 2, 64, 64)
+        x0_mask = torch.randn(4, 1, 64, 64).sign()
+        x0 = torch.randn(4, 2, 64, 64)
+        x0_pred = torch.randn(4, 2, 64, 64)
+
+        loss, details = criterion(eps_pred, eps_target, x0_mask, x0=x0, x0_pred=x0_pred)
+
+        assert loss.item() >= 0
+        assert torch.isfinite(loss)
+        assert "loss_image" in details
+        assert "loss_mask" in details
+        assert "loss_ffl" in details
+        assert details["lp_p"] == 1.5
+
+    def test_mse_lp_norm_with_lesion_weighting(self):
+        """Test mse_lp_norm mode with lesion weighting."""
+        cfg = self.create_lp_norm_config(
+            mode="mse_lp_norm",
+            p=1.5,
+            lesion_weighted=True,
+        )
+        criterion = DiffusionLoss(cfg)
+
+        eps_pred = torch.randn(4, 2, 64, 64)
+        eps_target = torch.randn(4, 2, 64, 64)
+        x0_mask = torch.randn(4, 1, 64, 64).sign()
+
+        loss, details = criterion(eps_pred, eps_target, x0_mask)
+
+        assert loss.item() >= 0
+        assert torch.isfinite(loss)
+
+    def test_gradient_flow_lp_norm(self):
+        """Test gradients flow correctly in Lp norm modes."""
+        cfg = self.create_lp_norm_config(mode="mse_lp_norm", p=1.5)
+        criterion = DiffusionLoss(cfg)
+
+        eps_pred = torch.randn(4, 2, 64, 64, requires_grad=True)
+        eps_target = torch.randn(4, 2, 64, 64)
+        x0_mask = torch.randn(4, 1, 64, 64).sign()
+
+        loss, _ = criterion(eps_pred, eps_target, x0_mask)
+        loss.backward()
+
+        assert eps_pred.grad is not None
+        assert torch.isfinite(eps_pred.grad).all()

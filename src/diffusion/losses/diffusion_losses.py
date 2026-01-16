@@ -90,6 +90,59 @@ def lesion_weighted_mse(
     return mse.mean()
 
 
+def lp_norm_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    p: float = 2.0,
+) -> torch.Tensor:
+    """Compute Lp norm loss.
+
+    Generalizes MSE (p=2) to arbitrary Lp norms.
+    L_p(pred, target) = mean(|pred - target|^p)
+
+    Args:
+        pred: Predictions, shape (B, C, H, W).
+        target: Targets, shape (B, C, H, W).
+        p: Norm order (p=2 is MSE, p=1 is MAE).
+
+    Returns:
+        Mean Lp loss (scalar).
+    """
+    return torch.abs(pred - target).pow(p).mean()
+
+
+def lesion_weighted_lp_norm(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+    p: float = 2.0,
+    lesion_weight: float = 2.0,
+    background_weight: float = 1.0,
+) -> torch.Tensor:
+    """Compute lesion-weighted Lp norm loss.
+
+    Gives higher weight to lesion pixels (mask > 0 in {-1, +1} space).
+
+    Args:
+        pred: Predictions, shape (B, 1, H, W).
+        target: Targets, shape (B, 1, H, W).
+        mask: Ground truth mask in {-1, +1}, shape (B, 1, H, W).
+        p: Norm order (p=2 is MSE, p=1 is MAE).
+        lesion_weight: Weight for lesion pixels.
+        background_weight: Weight for background pixels.
+
+    Returns:
+        Weighted Lp loss (scalar).
+    """
+    weights = torch.where(
+        mask > 0,
+        torch.full_like(mask, lesion_weight),
+        torch.full_like(mask, background_weight),
+    )
+    lp = torch.abs(pred - target).pow(p) * weights
+    return lp.mean()
+
+
 class DiffusionLoss(nn.Module):
     """Complete diffusion loss module.
 
@@ -127,6 +180,10 @@ class DiffusionLoss(nn.Module):
             self._init_mse_channels_mode(loss_cfg)
         elif self.mode == "mse_ffl_groups":
             self._init_mse_ffl_groups_mode(loss_cfg)
+        elif self.mode == "mse_lp_norm":
+            self._init_mse_lp_norm_mode(loss_cfg)
+        elif self.mode == "mse_lp_norm_ffl_groups":
+            self._init_mse_lp_norm_ffl_groups_mode(loss_cfg)
         else:
             raise ValueError(f"Unknown loss mode: {self.mode}")
 
@@ -195,6 +252,58 @@ class DiffusionLoss(nn.Module):
             f"group_uncertainty learnable={group_cfg.get('learnable', True)}"
         )
 
+    def _init_mse_lp_norm_mode(self, loss_cfg: DictConfig) -> None:
+        """Initialize for mse_lp_norm mode with Lp norm instead of MSE."""
+        lp_cfg = loss_cfg.lp_norm
+        self.lp_p = lp_cfg.get("p", 2.0)
+
+        if loss_cfg.uncertainty_weighting.enabled:
+            self.loss = UncertaintyWeightedLoss(
+                n_tasks=2,
+                initial_log_vars=list(loss_cfg.uncertainty_weighting.initial_log_vars),
+                learnable=loss_cfg.uncertainty_weighting.learnable,
+                clamp_range=loss_cfg.uncertainty_weighting.get("clamp_range", (-5.0, 5.0)),
+            )
+        else:
+            self.loss = SimpleWeightedLoss(weights=[1.0, 1.0])
+
+        self.ffl = None
+        logger.info(
+            f"  mse_lp_norm mode: p={self.lp_p}, "
+            f"uncertainty={loss_cfg.uncertainty_weighting.enabled}"
+        )
+
+    def _init_mse_lp_norm_ffl_groups_mode(self, loss_cfg: DictConfig) -> None:
+        """Initialize for mse_lp_norm_ffl_groups mode with Lp norm + FFL."""
+        lp_cfg = loss_cfg.lp_norm
+        self.lp_p = lp_cfg.get("p", 2.0)
+
+        ffl_cfg = loss_cfg.ffl
+        self.ffl = FocalFrequencyLoss(
+            loss_weight=ffl_cfg.get("loss_weight", 1.0),
+            alpha=ffl_cfg.get("alpha", 1.0),
+            patch_factor=ffl_cfg.get("patch_factor", 1),
+            ave_spectrum=ffl_cfg.get("ave_spectrum", False),
+            log_matrix=ffl_cfg.get("log_matrix", False),
+            batch_matrix=ffl_cfg.get("batch_matrix", False),
+        )
+
+        group_cfg = loss_cfg.group_uncertainty_weighting
+        self.loss = GroupUncertaintyWeightedLoss(
+            n_groups=2,
+            group_membership=[0, 0, 1],
+            initial_log_vars=list(group_cfg.get("initial_log_vars", [0.0, 0.0])),
+            learnable=group_cfg.get("learnable", True),
+            clamp_range=group_cfg.get("clamp_range", (-5.0, 5.0)),
+            intra_group_weights=list(group_cfg.get("intra_group_weights", [1.0, 1.0, 1.0])),
+        )
+
+        logger.info(
+            f"  mse_lp_norm_ffl_groups mode: p={self.lp_p}, "
+            f"FFL alpha={ffl_cfg.get('alpha', 1.0)}, "
+            f"group_uncertainty learnable={group_cfg.get('learnable', True)}"
+        )
+
     def forward(
         self,
         eps_pred: torch.Tensor,
@@ -217,10 +326,18 @@ class DiffusionLoss(nn.Module):
         """
         if self.mode == "mse_channels":
             return self._forward_mse_channels(eps_pred, eps_target, x0_mask)
-        else:
+        elif self.mode == "mse_ffl_groups":
             return self._forward_mse_ffl_groups(
                 eps_pred, eps_target, x0_mask, x0, x0_pred
             )
+        elif self.mode == "mse_lp_norm":
+            return self._forward_mse_lp_norm(eps_pred, eps_target, x0_mask)
+        elif self.mode == "mse_lp_norm_ffl_groups":
+            return self._forward_mse_lp_norm_ffl_groups(
+                eps_pred, eps_target, x0_mask, x0, x0_pred
+            )
+        else:
+            raise ValueError(f"Unknown loss mode: {self.mode}")
 
     def _forward_mse_channels(
         self,
@@ -321,6 +438,115 @@ class DiffusionLoss(nn.Module):
         details["loss_image"] = loss_img.detach()
         details["loss_mask"] = loss_msk.detach()
         details["loss_ffl"] = loss_ffl.detach()
+        details.update(ffl_details)
+
+        return total_loss, details
+
+    def _forward_mse_lp_norm(
+        self,
+        eps_pred: torch.Tensor,
+        eps_target: torch.Tensor,
+        x0_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Forward for mse_lp_norm mode using Lp norm."""
+        # Split channels
+        eps_pred_img = eps_pred[:, 0:1]
+        eps_pred_msk = eps_pred[:, 1:2]
+        eps_target_img = eps_target[:, 0:1]
+        eps_target_msk = eps_target[:, 1:2]
+
+        # Image channel loss (optionally lesion-weighted)
+        if self.use_lesion_weighting_image and x0_mask is not None:
+            loss_img = lesion_weighted_lp_norm(
+                eps_pred_img,
+                eps_target_img,
+                x0_mask,
+                self.lp_p,
+                self.lesion_weight_image,
+                self.background_weight_image,
+            )
+        else:
+            loss_img = lp_norm_loss(eps_pred_img, eps_target_img, self.lp_p)
+
+        # Mask channel loss (optionally lesion-weighted)
+        if self.use_lesion_weighting_mask and x0_mask is not None:
+            loss_msk = lesion_weighted_lp_norm(
+                eps_pred_msk,
+                eps_target_msk,
+                x0_mask,
+                self.lp_p,
+                self.lesion_weight_mask,
+                self.background_weight_mask,
+            )
+        else:
+            loss_msk = lp_norm_loss(eps_pred_msk, eps_target_msk, self.lp_p)
+
+        # Combine losses
+        total_loss, details = self.loss([loss_img, loss_msk])
+
+        # Add named losses to details
+        details["loss_image"] = loss_img.detach()
+        details["loss_mask"] = loss_msk.detach()
+        details["lp_p"] = self.lp_p
+
+        return total_loss, details
+
+    def _forward_mse_lp_norm_ffl_groups(
+        self,
+        eps_pred: torch.Tensor,
+        eps_target: torch.Tensor,
+        x0_mask: torch.Tensor | None,
+        x0: torch.Tensor | None,
+        x0_pred: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Forward for mse_lp_norm_ffl_groups mode with Lp norm + FFL."""
+        if x0 is None or x0_pred is None:
+            raise ValueError("mse_lp_norm_ffl_groups mode requires x0 and x0_pred")
+
+        # Split channels
+        eps_pred_img = eps_pred[:, 0:1]
+        eps_pred_msk = eps_pred[:, 1:2]
+        eps_target_img = eps_target[:, 0:1]
+        eps_target_msk = eps_target[:, 1:2]
+
+        # Lp norm losses (optionally lesion-weighted)
+        if self.use_lesion_weighting_image and x0_mask is not None:
+            loss_img = lesion_weighted_lp_norm(
+                eps_pred_img,
+                eps_target_img,
+                x0_mask,
+                self.lp_p,
+                self.lesion_weight_image,
+                self.background_weight_image,
+            )
+        else:
+            loss_img = lp_norm_loss(eps_pred_img, eps_target_img, self.lp_p)
+
+        if self.use_lesion_weighting_mask and x0_mask is not None:
+            loss_msk = lesion_weighted_lp_norm(
+                eps_pred_msk,
+                eps_target_msk,
+                x0_mask,
+                self.lp_p,
+                self.lesion_weight_mask,
+                self.background_weight_mask,
+            )
+        else:
+            loss_msk = lp_norm_loss(eps_pred_msk, eps_target_msk, self.lp_p)
+
+        # FFL on x0_pred vs x0 (image channel only)
+        x0_pred_img = x0_pred[:, 0:1]
+        x0_img = x0[:, 0:1]
+        loss_ffl, ffl_details = self.ffl(x0_pred_img, x0_img)
+
+        # Group uncertainty weighting: [lp_img, lp_msk, ffl]
+        total_loss, details = self.loss([loss_img, loss_msk, loss_ffl])
+
+        # Add named losses to details
+        details["loss_image"] = loss_img.detach()
+        details["loss_mask"] = loss_msk.detach()
+        details["loss_ffl"] = loss_ffl.detach()
+        details["lp_p"] = self.lp_p
         details.update(ffl_details)
 
         return total_loss, details
