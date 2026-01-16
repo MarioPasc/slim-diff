@@ -214,7 +214,7 @@ def build_inferer(cfg: DictConfig) -> DDPMScheduler | DDIMScheduler:
     return inferer
 
 class DiffusionSampler:
-    """Wrapper for DDIM/DDPM sampling with optional anatomical conditioning."""
+    """Wrapper for DDIM/DDPM sampling with optional anatomical and self conditioning."""
 
     def __init__(
         self,
@@ -228,9 +228,10 @@ class DiffusionSampler:
         self.sampler_cfg = cfg.sampler
         self.cond_cfg = cfg.conditioning
         self.device = device
-        
-        # Capture the conditioning flag
+
+        # Capture the conditioning flags
         self.use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
+        self.use_self_conditioning = cfg.training.self_conditioning.get("enabled", False)
 
         self.num_inference_steps = self.sampler_cfg.num_inference_steps
         self.eta = self.sampler_cfg.eta
@@ -290,11 +291,16 @@ class DiffusionSampler:
 
             # 1. Prepare Model Inputs (Concatenation Logic)
             model_input = x_t
-            
+
+            # Self-conditioning: concatenate zeros (no previous prediction during inference)
+            if self.use_self_conditioning:
+                x0_self_cond = torch.zeros_like(x_t)
+                model_input = torch.cat([model_input, x0_self_cond], dim=1)
+
             if self.use_anatomical_conditioning:
                 # Concatenate mask to noisy input
                 # x_t: [B, C, H, W], mask: [B, 1, H, W] -> input: [B, C+1, H, W]
-                model_input = torch.cat([x_t, anatomical_mask], dim=1)
+                model_input = torch.cat([model_input, anatomical_mask], dim=1)
 
             # 2. Classifier-Free Guidance Logic
             if guidance_scale > 1.0 and self.null_token is not None:
