@@ -30,7 +30,7 @@ CONDA_ENV_NAME="jsddpm"
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
 RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}"
-CONFIG_FILE="${REPO_SRC}/slurm/${EXPERIMENT_NAME}/${EXPERIMENT_NAME}.yaml"
+CONFIG_FILE="${REPO_SRC}/slurm/lesion_replication_fix_experiments/${EXPERIMENT_NAME}/${EXPERIMENT_NAME}.yaml"
 
 
 

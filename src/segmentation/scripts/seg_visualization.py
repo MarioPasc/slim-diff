@@ -5,10 +5,10 @@ across different training strategies (real_only, real_synthetic_concat,
 real_synthetic_balance, synthetic_only).
 
 Usage:
-    python seg_visualization.py \
+    python src/segmentation/scripts/seg_visualization.py \
     /media/mpascual/Sandisk2TB/research/epilepsy/results/segmentation/runs/segmentation_balanced \
     /media/mpascual/Sandisk2TB/research/epilepsy/results/segmentation/runs/segmentation_balanced \
-        --synthetic-expansion-term x2 --metric dice --format png
+    --synthetic-expansion-term x2 --metric dice --format png
 """
 
 from __future__ import annotations

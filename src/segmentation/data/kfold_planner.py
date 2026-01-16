@@ -40,6 +40,7 @@ class SampleRecord:
     source: Literal["real", "synthetic"]
     has_lesion_subject: bool = False
     replica_name: str | None = None  # For synthetic samples
+    lesion_pixel_area: int = 0  # Pixel count of lesion (0 if no lesion)
 
     def to_dict(self, fold: int, split: str) -> dict:
         """Convert to dict for CSV writing."""
@@ -54,6 +55,7 @@ class SampleRecord:
             "has_lesion_subject": self.has_lesion_subject,
             "source": self.source,
             "replica": self.replica_name or "",
+            "lesion_pixel_area": self.lesion_pixel_area,
         }
 
 
@@ -121,6 +123,10 @@ class KFoldPlanner:
         # Negative case filtering
         self.use_negative_cases = cfg.data.get("use_negative_cases", True)
 
+        # Lesion area filtering threshold
+        # If set, only lesions with pixel area >= threshold are considered as "has_lesion"
+        self.lesion_area_threshold = cfg.data.get("lesions_over_pixel_area", None)
+
         # Augmentation multiplier: adds N augmented copies of each training sample
         # multiplier=0: no duplication (default, augmentation applied probabilistically)
         # multiplier=2: adds 2 augmented copies per sample (total = base * 3)
@@ -155,9 +161,27 @@ class KFoldPlanner:
         if self.synthetic_enabled and self.replicas:
             self._load_synthetic_data()
 
+    def _compute_lesion_area(self, npz_path: Path) -> int:
+        """Compute lesion pixel area from NPZ file.
+
+        Args:
+            npz_path: Path to the NPZ file containing the mask.
+
+        Returns:
+            Lesion pixel area (number of pixels > 0.0 in mask), or 0 on error.
+        """
+        try:
+            with np.load(npz_path) as data:
+                mask = data["mask"]
+                return int((mask > 0.0).sum())
+        except Exception as e:
+            logger.warning(f"Could not compute lesion area for {npz_path}: {e}")
+            return 0
+
     def _load_real_data(self):
         """Load real data from train.csv, val.csv, and test.csv."""
         csv_files = ["train.csv", "val.csv"]
+        n_filtered_by_area = 0  # Track samples filtered by area threshold
 
         # Load test samples first
         test_csv = self.real_cache_dir / "test.csv"
@@ -168,6 +192,20 @@ class KFoldPlanner:
                 reader = csv.DictReader(f)
                 for row in reader:
                     subject_id = row["subject_id"]
+                    has_lesion_csv = row["has_lesion"].lower() == "true"
+
+                    # Compute lesion area if sample has lesion
+                    lesion_pixel_area = 0
+                    has_lesion_filtered = has_lesion_csv
+                    if has_lesion_csv:
+                        npz_path = self.real_cache_dir / row["filepath"]
+                        lesion_pixel_area = self._compute_lesion_area(npz_path)
+
+                        # Apply lesion area threshold filtering
+                        if self.lesion_area_threshold is not None:
+                            if lesion_pixel_area < self.lesion_area_threshold:
+                                has_lesion_filtered = False
+                                n_filtered_by_area += 1
 
                     # Create sample record
                     sample = SampleRecord(
@@ -175,8 +213,9 @@ class KFoldPlanner:
                         filepath=row["filepath"],
                         z_index=int(row["z_index"]),
                         z_bin=int(row["z_bin"]),
-                        has_lesion=row["has_lesion"].lower() == "true",
+                        has_lesion=has_lesion_filtered,
                         source="real",
+                        lesion_pixel_area=lesion_pixel_area,
                     )
 
                     # Skip negative cases if use_negative_cases is False
@@ -222,14 +261,30 @@ class KFoldPlanner:
                     if self.exclude_test and subject_id in test_subjects:
                         continue
 
+                    has_lesion_csv = row["has_lesion"].lower() == "true"
+
+                    # Compute lesion area if sample has lesion
+                    lesion_pixel_area = 0
+                    has_lesion_filtered = has_lesion_csv
+                    if has_lesion_csv:
+                        npz_path = self.real_cache_dir / row["filepath"]
+                        lesion_pixel_area = self._compute_lesion_area(npz_path)
+
+                        # Apply lesion area threshold filtering
+                        if self.lesion_area_threshold is not None:
+                            if lesion_pixel_area < self.lesion_area_threshold:
+                                has_lesion_filtered = False
+                                n_filtered_by_area += 1
+
                     # Create sample record
                     sample = SampleRecord(
                         subject_id=subject_id,
                         filepath=row["filepath"],
                         z_index=int(row["z_index"]),
                         z_bin=int(row["z_bin"]),
-                        has_lesion=row["has_lesion"].lower() == "true",
+                        has_lesion=has_lesion_filtered,
                         source="real",
+                        lesion_pixel_area=lesion_pixel_area,
                     )
 
                     # Skip negative cases if use_negative_cases is False
@@ -253,6 +308,12 @@ class KFoldPlanner:
             f"Loaded real train/val data: {len(self.real_subjects)} subjects, "
             f"{total_samples} samples, {lesion_subjects} subjects with lesions"
         )
+
+        if n_filtered_by_area > 0:
+            logger.info(
+                f"Lesion area filtering: {n_filtered_by_area} real samples below "
+                f"threshold ({self.lesion_area_threshold} pixels) reclassified as no-lesion"
+            )
 
     def _load_synthetic_data(self):
         """Load synthetic data from NPZ replicas."""
@@ -279,9 +340,9 @@ class KFoldPlanner:
         Args:
             replica_path: Path to the replica NPZ file
             replica_name: Name of the replica file
-            
+
         Note:
-            We determine has_lesion from actual mask content, NOT from the 
+            We determine has_lesion from actual mask content, NOT from the
             conditioning label (lesion_present). The conditioning label indicates
             what was requested during generation, but ~20% of "lesion" samples
             have empty masks (DDPM generation failure). Using actual mask content
@@ -297,25 +358,36 @@ class KFoldPlanner:
 
         # Extract replica base name without extension
         replica_base = replica_name.replace(".npz", "")
-        
+
         # Track label vs actual mismatch for logging
         n_false_positives = 0  # label=lesion, mask=empty
         n_false_negatives = 0  # label=no-lesion, mask=has-content
+        n_filtered_by_area = 0  # samples filtered by area threshold
 
         for idx in range(n_samples):
             zbin = int(zbins[idx])
-            
+
+            # Compute actual lesion pixel area from mask content
+            mask = masks[idx]
+            lesion_pixel_area = int((mask > 0.0).sum())
+
             # Determine has_lesion from ACTUAL mask content, not conditioning label
             # Threshold: at least 10 pixels above 0.0 to count as lesion
-            mask = masks[idx]
-            has_lesion_actual = bool((mask > 0.0).sum() > 10)
+            has_lesion_actual = lesion_pixel_area > 10
             has_lesion_label = bool(lesion_labels[idx])
-            
+
             # Track mismatches
             if has_lesion_label and not has_lesion_actual:
                 n_false_positives += 1
             elif not has_lesion_label and has_lesion_actual:
                 n_false_negatives += 1
+
+            # Apply lesion area threshold filtering
+            has_lesion_filtered = has_lesion_actual
+            if self.lesion_area_threshold is not None and has_lesion_actual:
+                if lesion_pixel_area < self.lesion_area_threshold:
+                    has_lesion_filtered = False
+                    n_filtered_by_area += 1
 
             # Create synthetic subject ID: synth_<replica>_<index>
             subject_id = f"synth_{replica_base}_{idx:05d}"
@@ -329,18 +401,19 @@ class KFoldPlanner:
                 filepath=filepath,
                 z_index=zbin,  # Use zbin as z_index for synthetic
                 z_bin=zbin,
-                has_lesion=has_lesion_actual,  # Use ACTUAL mask content
+                has_lesion=has_lesion_filtered,  # Use filtered value
                 source="synthetic",
-                has_lesion_subject=has_lesion_actual,  # Each synthetic sample is its own "subject"
+                has_lesion_subject=has_lesion_filtered,  # Each synthetic sample is its own "subject"
                 replica_name=replica_name,
+                lesion_pixel_area=lesion_pixel_area,
             )
 
             # Skip negative cases if use_negative_cases is False
-            if not self.use_negative_cases and not has_lesion_actual:
+            if not self.use_negative_cases and not has_lesion_filtered:
                 continue
 
             self.synthetic_samples.append(sample)
-        
+
         # Log mismatch statistics
         if n_false_positives > 0 or n_false_negatives > 0:
             logger.warning(
@@ -348,6 +421,12 @@ class KFoldPlanner:
                 f"False positives (label=lesion, mask=empty): {n_false_positives}, "
                 f"False negatives (label=no-lesion, mask=has-content): {n_false_negatives}. "
                 f"Using actual mask content for has_lesion flag."
+            )
+
+        if n_filtered_by_area > 0:
+            logger.info(
+                f"Replica {replica_name}: {n_filtered_by_area} samples below "
+                f"area threshold ({self.lesion_area_threshold} pixels) reclassified as no-lesion"
             )
 
     def _create_folds(self):
