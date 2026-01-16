@@ -65,7 +65,7 @@ conditioning:
 
   # Z-position encoding options
   use_sinusoidal: true  # Use sinusoidal position encoding for z-position
-  max_z: 128  # Maximum z-index for sinusoidal encoding
+  max_z: 127  # Maximum z-index for sinusoidal encoding
 
   # Classifier-free guidance (CFG)
   cfg:
@@ -317,6 +317,26 @@ logging:
     save_last: false
     every_n_epochs: 1
     filename: "jsddpm-{epoch:04d}-{val_loss:.4f}"
+
+  # Callback Configuration
+  callbacks:
+    # Gradient norm monitoring
+    gradient_norm:
+      enabled: true
+      log_every_n_steps: 100
+
+    # SNR monitoring
+    snr:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+
+    # Prediction quality monitoring
+    prediction_quality:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+      timestep_bins: 10
 
 # =============================================================================
 # Visualization Configuration

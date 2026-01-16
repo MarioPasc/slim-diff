@@ -65,7 +65,7 @@ conditioning:
 
   # Z-position encoding options
   use_sinusoidal: true  # Use sinusoidal position encoding for z-position (default: false)
-  max_z: 128  # Maximum z-index for sinusoidal encoding
+  max_z: 127  # Maximum z-index for sinusoidal encoding
 
   # Classifier-free guidance (CFG)
   cfg:
