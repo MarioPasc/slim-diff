@@ -459,9 +459,11 @@ class JSDDPMLightningModule(pl.LightningModule):
         x0_pred = None
         loss_mode = self.cfg.loss.get("mode", "mse_channels")
         if loss_mode in ("mse_ffl_groups", "mse_lp_norm_ffl_groups"):
-            # For x0_pred, use x_t without anatomical prior channel
-            if self._use_anatomical_conditioning:
-                x_t_for_recon = x_t[:, :2]  # (B, 2, H, W) - remove anatomical prior
+            # For x0_pred, use x_t without extra channels (self-cond and/or anatomical prior)
+            # x_t may have been concatenated with: self-conditioning (2ch) and/or anatomical (1ch)
+            # We need the original 2 channels for _predict_x0
+            if self._use_self_conditioning or self._use_anatomical_conditioning:
+                x_t_for_recon = x_t[:, :2]  # (B, 2, H, W) - extract original noisy channels
             else:
                 x_t_for_recon = x_t
             x0_pred = self._predict_x0(x_t_for_recon, model_output, timesteps)
@@ -677,8 +679,14 @@ class JSDDPMLightningModule(pl.LightningModule):
         x0_pred = None
         loss_mode = self.cfg.loss.get("mode", "mse_channels")
         if loss_mode in ("mse_ffl_groups", "mse_lp_norm_ffl_groups"):
-            # For x0_pred, use x_t without anatomical prior channel
-            x0_pred = self._predict_x0(x_t, model_output, timesteps)
+            # For x0_pred, use x_t without extra channels (self-cond and/or anatomical prior)
+            # x_t may have been concatenated with: self-conditioning (2ch) and/or anatomical (1ch)
+            # We need the original 2 channels for _predict_x0
+            if self._use_self_conditioning or self._use_anatomical_conditioning:
+                x_t_for_recon = x_t[:, :2]  # (B, 2, H, W) - extract original noisy channels
+            else:
+                x_t_for_recon = x_t
+            x0_pred = self._predict_x0(x_t_for_recon, model_output, timesteps)
             # CRITICAL: Clamp x0_pred to valid range before FFT to prevent instability
             x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
 
