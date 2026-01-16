@@ -568,6 +568,11 @@ class PredictionQualityCallback(Callback):
                 # Add noise
                 x_t = pl_module._add_noise(x0, noise, timesteps)
 
+                # Concatenate self-conditioning zeros if enabled
+                if pl_module._use_self_conditioning:
+                    x0_self_cond = torch.zeros_like(x_t)
+                    x_t = torch.cat([x_t, x0_self_cond], dim=1)
+
                 # Concatenate anatomical prior if enabled
                 if pl_module._use_anatomical_conditioning and pl_module._zbin_priors is not None:
                     z_bins_batch = batch["metadata"]["z_bin"][:self.n_samples]
