@@ -423,8 +423,21 @@ class JSDDPMLightningModule(pl.LightningModule):
             if torch.rand(1).item() < self._self_cond_prob:
                 # Predict x0 without gradient to use as conditioning signal
                 with torch.no_grad():
-                    # Get prediction without self-conditioning or anatomical prior
-                    model_output_uncond = self._forward(x_t, timesteps, tokens)
+                    # Bootstrap prediction: model expects full input channels
+                    # Use zeros for self-conditioning since we don't have a previous prediction yet
+                    x_t_bootstrap = torch.cat([x_t, torch.zeros_like(x_t)], dim=1)  # (B, 4, H, W)
+
+                    # If anatomical conditioning is enabled, add priors to bootstrap input
+                    if self._use_anatomical_conditioning and self._zbin_priors is not None:
+                        z_bins_batch = batch["metadata"]["z_bin"]
+                        anatomical_priors_bootstrap = get_anatomical_priors_as_input(
+                            z_bins_batch,
+                            self._zbin_priors,
+                            device=x_t.device,
+                        )
+                        x_t_bootstrap = torch.cat([x_t_bootstrap, anatomical_priors_bootstrap], dim=1)
+
+                    model_output_uncond = self(x_t_bootstrap, timesteps, tokens)
                     x0_self_cond = self._predict_x0(x_t, model_output_uncond, timesteps)
                     x0_self_cond = torch.clamp(x0_self_cond, -1.0, 1.0)
             else:
@@ -595,8 +608,15 @@ class JSDDPMLightningModule(pl.LightningModule):
 
             # Prepare model input
             model_input = current_x
+
+            # Add self-conditioning zeros if enabled (no previous prediction during inference)
+            if self._use_self_conditioning:
+                x0_self_cond = torch.zeros_like(current_x)
+                model_input = torch.cat([model_input, x0_self_cond], dim=1)
+
+            # Add anatomical priors if enabled
             if self._use_anatomical_conditioning and anatomical_priors is not None:
-                model_input = torch.cat([current_x, anatomical_priors], dim=1)
+                model_input = torch.cat([model_input, anatomical_priors], dim=1)
 
             # Predict noise (no CFG during reconstruction evaluation)
             noise_pred = sampler.model(model_input, timesteps=timesteps_batch, class_labels=tokens)
