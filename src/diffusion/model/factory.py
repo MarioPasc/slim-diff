@@ -286,15 +286,17 @@ class DiffusionSampler:
             x_t = torch.randn(shape, device=self.device, generator=generator)
         self.scheduler.set_timesteps(self.num_inference_steps)
 
+        # Initialize self-conditioning signal (zeros for first step, then previous x0 estimate)
+        x0_self_cond = torch.zeros_like(x_t) if self.use_self_conditioning else None
+
         for t in self.scheduler.timesteps:
             timesteps = torch.full((B,), t, device=self.device, dtype=torch.long)
 
             # 1. Prepare Model Inputs (Concatenation Logic)
             model_input = x_t
 
-            # Self-conditioning: concatenate zeros (no previous prediction during inference)
+            # Self-conditioning: use previous x0 estimate (zeros on first step)
             if self.use_self_conditioning:
-                x0_self_cond = torch.zeros_like(x_t)
                 model_input = torch.cat([model_input, x0_self_cond], dim=1)
 
             if self.use_anatomical_conditioning:
@@ -331,7 +333,14 @@ class DiffusionSampler:
                     class_labels=tokens
                 )
 
-            # 3. Scheduler Step
+            # 3. Update self-conditioning signal with current x0 estimate
+            if self.use_self_conditioning:
+                # Compute x0 estimate from current noise prediction for next iteration
+                x0_self_cond = predict_x0(x_t, noise_pred, self.scheduler, timesteps)
+                # Clamp to valid range to prevent instability
+                x0_self_cond = torch.clamp(x0_self_cond, -1.0, 1.0)
+
+            # 4. Scheduler Step
             if isinstance(self.scheduler, DDIMScheduler):
                 x_t, _ = self.scheduler.step(noise_pred, t, x_t, eta=self.eta)
             else:

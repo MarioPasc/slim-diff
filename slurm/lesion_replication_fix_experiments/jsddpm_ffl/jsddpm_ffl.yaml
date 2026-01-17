@@ -252,9 +252,9 @@ loss:
   ffl:
     enabled: true
     loss_weight: 1.0  # Base scaling factor (uncertainty weighting handles balancing)
-    alpha: 1.75  # Focal exponent: increased from 1.0 to emphasize hard frequencies
-                # Higher alpha = stronger focus on edge/texture frequencies
-                # Addresses statistically significant edge sharpness mismatch (p=0.004)
+    alpha: 1.2  # Focal exponent: moderate emphasis on hard frequencies
+               # Compromise between 1.0 (linear) and 1.75 (aggressive)
+               # Helps with edge sharpness while avoiding high-frequency noise artifacts
     patch_factor: 2  # Local frequency analysis: 4 patches of 64x64 from 128x128
                      # Captures lesion-specific texture signatures and regional edge characteristics
                      # Better for detecting subtle GM-WM boundary blur in FCD
@@ -354,7 +354,7 @@ visualization:
     enabled: true
     alpha: 0.5
     color: [255, 0, 0]
-    threshold: 0.0
+    threshold: 0.3  # Increased from 0.0 to filter mask noise and show only confident predictions
 
   save_png: true
   save_npz: false

@@ -603,15 +603,17 @@ class JSDDPMLightningModule(pl.LightningModule):
 
         current_x = x_t.clone()
 
+        # Initialize self-conditioning signal (zeros for first step, then previous x0 estimate)
+        x0_self_cond = torch.zeros_like(current_x) if self._use_self_conditioning else None
+
         for t in timesteps_to_run:
             timesteps_batch = torch.full((B,), t, device=self.device, dtype=torch.long)
 
             # Prepare model input
             model_input = current_x
 
-            # Add self-conditioning zeros if enabled (no previous prediction during inference)
+            # Add self-conditioning signal (uses previous x0 estimate, zeros on first step)
             if self._use_self_conditioning:
-                x0_self_cond = torch.zeros_like(current_x)
                 model_input = torch.cat([model_input, x0_self_cond], dim=1)
 
             # Add anatomical priors if enabled
@@ -620,6 +622,11 @@ class JSDDPMLightningModule(pl.LightningModule):
 
             # Predict noise (no CFG during reconstruction evaluation)
             noise_pred = sampler.model(model_input, timesteps=timesteps_batch, class_labels=tokens)
+
+            # Update self-conditioning signal with current x0 estimate for next iteration
+            if self._use_self_conditioning:
+                x0_self_cond = self._predict_x0(current_x, noise_pred, timesteps_batch)
+                x0_self_cond = torch.clamp(x0_self_cond, -1.0, 1.0)
 
             # Scheduler step
             if hasattr(sampler.scheduler, 'step'):

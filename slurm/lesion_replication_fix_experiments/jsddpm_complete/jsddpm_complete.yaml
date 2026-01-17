@@ -222,11 +222,12 @@ loss:
   # Enable Lp norm + FFL mode with group uncertainty weighting
   mode: "mse_lp_norm_ffl_groups"
 
-  # Lp norm configuration - penalizes outliers more robustly than MSE
-  # p=2: MSE (standard), p=1: MAE (robust), p=1.5: balanced robustness
-  # Values p < 2 are less sensitive to large errors (outliers)
+  # Lp norm configuration - balances outlier sensitivity with edge emphasis
+  # p=2: MSE (standard), p=1: MAE (robust to outliers)
+  # p > 2: More sensitive to large errors (useful for lesion boundaries)
+  # p=2.25: Compromise - moderate emphasis on large errors without extreme amplification
   lp_norm:
-    p: 3  # L1.5 norm: balances robustness to outliers with sensitivity to errors
+    p: 2.25  # Slightly above MSE for lesion boundary emphasis, but not extreme like p=3
 
   # Uncertainty weighting (Kendall et al.) - NOT used in mse_lp_norm_ffl_groups mode
   uncertainty_weighting:
@@ -252,9 +253,9 @@ loss:
   ffl:
     enabled: true
     loss_weight: 1.0  # Base scaling factor (uncertainty weighting handles balancing)
-    alpha: 1.75  # Focal exponent: increased from 1.0 to emphasize hard frequencies
-                # Higher alpha = stronger focus on edge/texture frequencies
-                # Addresses statistically significant edge sharpness mismatch (p=0.004)
+    alpha: 1.2  # Focal exponent: moderate emphasis on hard frequencies
+               # Compromise between 1.0 (linear) and 1.75 (aggressive)
+               # Helps with edge sharpness while avoiding high-frequency noise artifacts
     patch_factor: 2  # Local frequency analysis: 4 patches of 64x64 from 128x128
                      # Captures lesion-specific texture signatures and regional edge characteristics
                      # Better for detecting subtle GM-WM boundary blur in FCD
@@ -307,7 +308,7 @@ logging:
       entity: "mario-pg02-icai-org"
       name: jsddpm_complete
       tags: ["epilepsy", "diffusion", "jsddpm", "lp-norm", "ffl", "kendall", "lesion-weighted"]
-      notes: "JS-DDPM with Lp norm (p=1.5) + FFL + lesion overweighting + Kendall uncertainty"
+      notes: "JS-DDPM with Lp norm (p=2.25) + FFL (alpha=1.2) + lesion overweighting + Kendall uncertainty"
       offline: true
 
   # Checkpointing
@@ -354,7 +355,7 @@ visualization:
     enabled: true
     alpha: 0.5
     color: [255, 0, 0]
-    threshold: 0.0
+    threshold: 0.3  # Increased from 0.0 to filter mask noise and show only confident predictions
 
   save_png: true
   save_npz: false
