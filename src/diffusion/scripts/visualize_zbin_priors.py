@@ -430,8 +430,8 @@ def main() -> None:
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="docs/data_visualization",
-        help="Output directory for visualizations (default: docs/data_visualization)",
+        default="docs/zbin_priors_visualization",
+        help="Output directory for visualizations (default: docs/zbin_priors_visualization)",
     )
 
     args = parser.parse_args()

@@ -28,7 +28,9 @@ from src.diffusion.model.factory import (
     build_scheduler,
     predict_x0,
     DiffusionSampler,
+    AnatomicalConditioningMethod,
 )
+from src.diffusion.model.components.anatomical_encoder import AnatomicalPriorEncoder
 from src.diffusion.training.metrics import MetricsCalculator
 from src.diffusion.training.lesion_metrics import LesionQualityMetrics
 from src.diffusion.utils.zbin_priors import (
@@ -73,7 +75,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         validate_config(cfg)
 
         # Build model components
-        self.model = build_model(cfg)
+        # build_model now returns (model, anatomical_encoder) tuple
+        self.model, self._anatomical_encoder = build_model(cfg)
         self.scheduler = build_scheduler(cfg)
         self.inferer = build_inferer(cfg)
 
@@ -106,8 +109,11 @@ class JSDDPMLightningModule(pl.LightningModule):
             and "validation" in zbin_cfg.get("apply_to", [])
         )
 
-        # Anatomical conditioning (input concatenation)
+        # Anatomical conditioning settings
         self._use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
+        self._anatomical_method: AnatomicalConditioningMethod = cfg.model.get(
+            "anatomical_conditioning_method", "concat"
+        )
 
         # Self-conditioning settings (Chen et al., 2022)
         self._use_self_conditioning = cfg.training.self_conditioning.get("enabled", False)
@@ -123,7 +129,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         logger.info(
             f"Initialized JSDDPMLightningModule with CFG={self.use_cfg}, "
             f"zbin_priors_postprocess={self._use_zbin_priors}, "
-            f"anatomical_conditioning={self._use_anatomical_conditioning}, "
+            f"anatomical_conditioning={self._use_anatomical_conditioning} "
+            f"(method: {self._anatomical_method if self._use_anatomical_conditioning else 'N/A'}), "
             f"self_conditioning={self._use_self_conditioning}"
         )
 
@@ -146,18 +153,30 @@ class JSDDPMLightningModule(pl.LightningModule):
         if not hasattr(self.logger, "experiment"):
             return
 
-        # Count parameters
+        # Count parameters (including anatomical encoder if present)
         total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+
+        encoder_params = 0
+        if self._anatomical_encoder is not None:
+            encoder_params = sum(p.numel() for p in self._anatomical_encoder.parameters())
+            total_params += encoder_params
+            trainable_params += sum(
+                p.numel() for p in self._anatomical_encoder.parameters() if p.requires_grad
+            )
 
         # Log to wandb summary
         self.logger.experiment.summary["model/total_parameters"] = total_params
         self.logger.experiment.summary["model/trainable_parameters"] = trainable_params
+        if encoder_params > 0:
+            self.logger.experiment.summary["model/anatomical_encoder_parameters"] = encoder_params
 
         # Log architecture details
         logger.info(f"Model architecture: {self.cfg.model.type}")
         logger.info(f"Total parameters: {total_params:,}")
         logger.info(f"Trainable parameters: {trainable_params:,}")
+        if encoder_params > 0:
+            logger.info(f"Anatomical encoder parameters: {encoder_params:,}")
 
         # Log to wandb config (in case it wasn't already logged)
         self.logger.experiment.config.update({
@@ -200,6 +219,7 @@ class JSDDPMLightningModule(pl.LightningModule):
                 scheduler=self.inferer,
                 cfg=self.cfg,
                 device=self.device,
+                anatomical_encoder=self._anatomical_encoder,
             )
             logger.info(
                 f"Created validation sampler with {self.cfg.sampler.num_inference_steps} "
@@ -212,19 +232,25 @@ class JSDDPMLightningModule(pl.LightningModule):
         x: torch.Tensor,
         timesteps: torch.Tensor,
         class_labels: torch.Tensor,
+        context: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass through the model.
 
         Args:
-            x: Noisy input, shape (B, C, H, W) where C=2 (no anatomical)
-               or C=3 (with anatomical prior concatenated).
+            x: Noisy input, shape (B, C, H, W).
+                - C=2 base (image + mask)
+                - C=4 with self-conditioning
+                - C=3/5 with anatomical concat (depends on self-cond)
             timesteps: Timesteps, shape (B,).
             class_labels: Conditioning tokens, shape (B,).
+            context: Optional cross-attention context for anatomical conditioning,
+                shape (B, seq_len, embed_dim). Only used when anatomical_conditioning_method
+                is "cross_attention".
 
         Returns:
             Predicted noise, shape (B, 2, H, W).
         """
-        return self.model(x, timesteps=timesteps, class_labels=class_labels)
+        return self.model(x, timesteps=timesteps, context=context, class_labels=class_labels)
 
     def _sample_timesteps(self, batch_size: int) -> torch.Tensor:
         """Sample random timesteps for training.
@@ -417,6 +443,21 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Add noise to get x_t
         x_t = self._add_noise(x0, noise, timesteps)
 
+        # Get anatomical priors and context early (needed for both methods and self-cond bootstrap)
+        anatomical_priors = None
+        anatomical_context = None
+        if self._use_anatomical_conditioning and self._zbin_priors is not None:
+            z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
+            anatomical_priors = get_anatomical_priors_as_input(
+                z_bins_batch,
+                self._zbin_priors,
+                device=x_t.device,
+            )  # (B, 1, H, W)
+
+            # For cross_attention method, encode priors into context
+            if self._anatomical_method == "cross_attention" and self._anatomical_encoder is not None:
+                anatomical_context = self._anatomical_encoder(anatomical_priors)  # (B, seq_len, embed_dim)
+
         # Self-conditioning: Optionally concatenate predicted x0 from previous step
         if self._use_self_conditioning:
             # 50% of the time, use self-conditioning
@@ -427,17 +468,19 @@ class JSDDPMLightningModule(pl.LightningModule):
                     # Use zeros for self-conditioning since we don't have a previous prediction yet
                     x_t_bootstrap = torch.cat([x_t, torch.zeros_like(x_t)], dim=1)  # (B, 4, H, W)
 
-                    # If anatomical conditioning is enabled, add priors to bootstrap input
-                    if self._use_anatomical_conditioning and self._zbin_priors is not None:
-                        z_bins_batch = batch["metadata"]["z_bin"]
-                        anatomical_priors_bootstrap = get_anatomical_priors_as_input(
-                            z_bins_batch,
-                            self._zbin_priors,
-                            device=x_t.device,
-                        )
-                        x_t_bootstrap = torch.cat([x_t_bootstrap, anatomical_priors_bootstrap], dim=1)
+                    # If anatomical conditioning is enabled with concat method, add priors to bootstrap input
+                    if (
+                        self._use_anatomical_conditioning
+                        and self._anatomical_method == "concat"
+                        and anatomical_priors is not None
+                    ):
+                        x_t_bootstrap = torch.cat([x_t_bootstrap, anatomical_priors], dim=1)
 
-                    model_output_uncond = self(x_t_bootstrap, timesteps, tokens)
+                    # For cross_attention method, pass context; for concat, context is None
+                    model_output_uncond = self(
+                        x_t_bootstrap, timesteps, tokens,
+                        context=anatomical_context
+                    )
                     x0_self_cond = self._predict_x0(x_t, model_output_uncond, timesteps)
                     x0_self_cond = torch.clamp(x0_self_cond, -1.0, 1.0)
             else:
@@ -447,23 +490,17 @@ class JSDDPMLightningModule(pl.LightningModule):
             # Concatenate self-conditioning signal: (B, 2, H, W) + (B, 2, H, W) -> (B, 4, H, W)
             x_t = torch.cat([x_t, x0_self_cond], dim=1)
 
-        # Concatenate anatomical priors if enabled
-        if self._use_anatomical_conditioning and self._zbin_priors is not None:
-            # Get z_bins from batch metadata
-            z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
-
-            # Get anatomical priors as input channel
-            anatomical_priors = get_anatomical_priors_as_input(
-                z_bins_batch,
-                self._zbin_priors,
-                device=x_t.device,
-            )  # (B, 1, H, W)
-
-            # Concatenate to x_t: (B, 2, H, W) + (B, 1, H, W) -> (B, 3, H, W)
+        # Concatenate anatomical priors if using concat method
+        if (
+            self._use_anatomical_conditioning
+            and self._anatomical_method == "concat"
+            and anatomical_priors is not None
+        ):
+            # Concatenate to x_t: (B, C, H, W) + (B, 1, H, W) -> (B, C+1, H, W)
             x_t = torch.cat([x_t, anatomical_priors], dim=1)
 
-        # Predict
-        model_output = self(x_t, timesteps, tokens)
+        # Predict (pass context for cross_attention method, None for concat method)
+        model_output = self(x_t, timesteps, tokens, context=anatomical_context)
 
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
@@ -473,9 +510,16 @@ class JSDDPMLightningModule(pl.LightningModule):
         loss_mode = self.cfg.loss.get("mode", "mse_channels")
         if loss_mode in ("mse_ffl_groups", "mse_lp_norm_ffl_groups"):
             # For x0_pred, use x_t without extra channels (self-cond and/or anatomical prior)
-            # x_t may have been concatenated with: self-conditioning (2ch) and/or anatomical (1ch)
+            # x_t may have been concatenated with:
+            # - self-conditioning (2ch)
+            # - anatomical prior (1ch) if using concat method
             # We need the original 2 channels for _predict_x0
-            if self._use_self_conditioning or self._use_anatomical_conditioning:
+            # Note: cross_attention method doesn't add channels to x_t
+            uses_concat_anatomical = (
+                self._use_anatomical_conditioning
+                and self._anatomical_method == "concat"
+            )
+            if self._use_self_conditioning or uses_concat_anatomical:
                 x_t_for_recon = x_t[:, :2]  # (B, 2, H, W) - extract original noisy channels
             else:
                 x_t_for_recon = x_t
@@ -606,6 +650,16 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Initialize self-conditioning signal (zeros for first step, then previous x0 estimate)
         x0_self_cond = torch.zeros_like(current_x) if self._use_self_conditioning else None
 
+        # Pre-compute cross-attention context if using cross_attention method
+        anatomical_context = None
+        if (
+            self._use_anatomical_conditioning
+            and self._anatomical_method == "cross_attention"
+            and self._anatomical_encoder is not None
+            and anatomical_priors is not None
+        ):
+            anatomical_context = self._anatomical_encoder(anatomical_priors)
+
         for t in timesteps_to_run:
             timesteps_batch = torch.full((B,), t, device=self.device, dtype=torch.long)
 
@@ -616,12 +670,22 @@ class JSDDPMLightningModule(pl.LightningModule):
             if self._use_self_conditioning:
                 model_input = torch.cat([model_input, x0_self_cond], dim=1)
 
-            # Add anatomical priors if enabled
-            if self._use_anatomical_conditioning and anatomical_priors is not None:
+            # Add anatomical priors if using concat method
+            if (
+                self._use_anatomical_conditioning
+                and self._anatomical_method == "concat"
+                and anatomical_priors is not None
+            ):
                 model_input = torch.cat([model_input, anatomical_priors], dim=1)
 
             # Predict noise (no CFG during reconstruction evaluation)
-            noise_pred = sampler.model(model_input, timesteps=timesteps_batch, class_labels=tokens)
+            # Pass context for cross_attention method
+            noise_pred = sampler.model(
+                model_input,
+                timesteps=timesteps_batch,
+                context=anatomical_context,
+                class_labels=tokens,
+            )
 
             # Update self-conditioning signal with current x0 estimate for next iteration
             if self._use_self_conditioning:
@@ -683,8 +747,9 @@ class JSDDPMLightningModule(pl.LightningModule):
             x0_self_cond = torch.zeros_like(x0)
             x_t = torch.cat([x_t, x0_self_cond], dim=1)
 
-        # Concatenate anatomical priors if enabled
+        # Get anatomical priors and context for both methods
         anatomical_priors = None
+        anatomical_context = None
         if self._use_anatomical_conditioning and self._zbin_priors is not None:
             z_bins_batch = batch["metadata"]["z_bin"]
             anatomical_priors = get_anatomical_priors_as_input(
@@ -692,12 +757,23 @@ class JSDDPMLightningModule(pl.LightningModule):
                 self._zbin_priors,
                 device=x_t.device,
             )
+
+            # For cross_attention method, encode priors into context
+            if self._anatomical_method == "cross_attention" and self._anatomical_encoder is not None:
+                anatomical_context = self._anatomical_encoder(anatomical_priors)
+
+        # Prepare model input based on conditioning method
+        if (
+            self._use_anatomical_conditioning
+            and self._anatomical_method == "concat"
+            and anatomical_priors is not None
+        ):
             x_t_with_priors = torch.cat([x_t, anatomical_priors], dim=1)
         else:
             x_t_with_priors = x_t
 
-        # Predict
-        model_output = self(x_t_with_priors, timesteps, tokens)
+        # Predict (pass context for cross_attention method)
+        model_output = self(x_t_with_priors, timesteps, tokens, context=anatomical_context)
 
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
@@ -707,9 +783,16 @@ class JSDDPMLightningModule(pl.LightningModule):
         loss_mode = self.cfg.loss.get("mode", "mse_channels")
         if loss_mode in ("mse_ffl_groups", "mse_lp_norm_ffl_groups"):
             # For x0_pred, use x_t without extra channels (self-cond and/or anatomical prior)
-            # x_t may have been concatenated with: self-conditioning (2ch) and/or anatomical (1ch)
+            # x_t may have been concatenated with:
+            # - self-conditioning (2ch)
+            # - anatomical prior (1ch) if using concat method
             # We need the original 2 channels for _predict_x0
-            if self._use_self_conditioning or self._use_anatomical_conditioning:
+            # Note: cross_attention method doesn't add channels to x_t
+            uses_concat_anatomical = (
+                self._use_anatomical_conditioning
+                and self._anatomical_method == "concat"
+            )
+            if self._use_self_conditioning or uses_concat_anatomical:
                 x_t_for_recon = x_t[:, :2]  # (B, 2, H, W) - extract original noisy channels
             else:
                 x_t_for_recon = x_t

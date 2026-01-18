@@ -82,8 +82,25 @@ model:
   spatial_dims: 2
   in_channels: 2   # [image, mask] - factory.py auto-increases to 3 when anatomical_conditioning=true
   out_channels: 2  # [image, mask]
-  anatomical_conditioning: false  # Uses z-bin priors as input channel for spatial guidance
 
+  # Anatomical conditioning: use z-bin priors for spatial guidance
+  # Method options:
+  #   - "concat": Concatenate prior as input channel (+1 channel)
+  #   - "cross_attention": Encode prior via CNN, use cross-attention in UNet
+  anatomical_conditioning: true
+  anatomical_conditioning_method: "cross_attention"  # "concat" or "cross_attention"
+
+  # Cross-attention dimension (only used when method is "cross_attention")
+  # Defaults to channels[-1] if not specified
+  cross_attention_dim: 256
+
+  # Anatomical encoder configuration (only used when method is "cross_attention")
+  anatomical_encoder:
+    hidden_dims: [32, 64, 128]  # CNN encoder hidden channels
+    downsample_factor: 8        # Spatial downsampling (128x128 -> 16x16 = 256 tokens)
+    positional_encoding: "sinusoidal"  # "sinusoidal" or "learned"
+    norm_num_groups: 8
+    
   # UNet architecture
   channels: [64, 128, 256, 256]
   attention_levels: [false, false, true, true]
@@ -285,7 +302,7 @@ postprocessing:
     enabled: true
     priors_filename: "zbin_priors_brain_roi.npz"
     prob_threshold: 0.20
-    dilate_radius_px: 3
+    dilate_radius_px: 1
     gaussian_sigma_px: 0.7
     min_component_px: 500
     n_first_bins: 5

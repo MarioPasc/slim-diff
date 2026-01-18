@@ -1,37 +1,81 @@
 """Model factory for JS-DDPM.
 
 Builds the DiffusionModelUNet, scheduler, and inferer from configuration.
+
+Anatomical Conditioning Methods:
+--------------------------------
+The factory supports two methods for incorporating anatomical z-bin priors:
+
+1. "concat" (default, original behavior):
+   - Concatenates the prior mask as an additional input channel
+   - Simple and effective, minimal overhead
+   - Input channels: base + self_cond + 1
+
+2. "cross_attention":
+   - Encodes the prior via a lightweight CNN into spatial context embeddings
+   - Uses cross-attention in the UNet to attend to the prior
+   - More expressive: learned, selective, multi-scale spatial guidance
+   - Input channels: base + self_cond (no +1)
+   - Requires AnatomicalPriorEncoder module
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 import torch
+import torch.nn as nn
 from monai.networks.nets.diffusion_model_unet import DiffusionModelUNet
 from monai.networks.schedulers.ddim import DDIMScheduler
 from monai.networks.schedulers.ddpm import DDPMScheduler
 from omegaconf import DictConfig
 
 from src.diffusion.model.embeddings import ConditionalEmbeddingWithSinusoidal
+from src.diffusion.model.components.anatomical_encoder import (
+    AnatomicalPriorEncoder,
+    build_anatomical_encoder,
+)
 
 logger = logging.getLogger(__name__)
 
+# Type alias for conditioning methods
+AnatomicalConditioningMethod = Literal["concat", "cross_attention"]
 
-def build_model(cfg: DictConfig) -> DiffusionModelUNet:
-    """Build the DiffusionModelUNet from configuration.
 
-    Refinement:
-    - Checks `cfg.model.anatomical_conditioning`.
-    - If True, increases in_channels by 1 to allow input concatenation.
+def build_model(
+    cfg: DictConfig,
+) -> tuple[DiffusionModelUNet, AnatomicalPriorEncoder | None]:
+    """Build the DiffusionModelUNet and optional AnatomicalPriorEncoder from config.
+
+    Handles two anatomical conditioning methods:
+    - "concat": Adds +1 input channel for the prior mask (default)
+    - "cross_attention": Enables cross-attention with a separate encoder
+
+    Args:
+        cfg: Configuration object.
+
+    Returns:
+        Tuple of (model, anatomical_encoder).
+        anatomical_encoder is None if anatomical_conditioning is False or method is "concat".
     """
     model_cfg = cfg.model
     cond_cfg = cfg.conditioning
     z_bins = cond_cfg.z_bins
 
-    # 1. Check for Anatomical Conditioning Toggle
+    # 1. Check for Anatomical Conditioning Toggle and Method
     # Default to False if not present to ensure backward compatibility
     use_anatomical_conditioning = model_cfg.get("anatomical_conditioning", False)
+    anatomical_method: AnatomicalConditioningMethod = model_cfg.get(
+        "anatomical_conditioning_method", "concat"
+    )
+
+    # Validate method
+    if anatomical_method not in ("concat", "cross_attention"):
+        raise ValueError(
+            f"Unknown anatomical_conditioning_method: {anatomical_method}. "
+            f"Must be 'concat' or 'cross_attention'."
+        )
 
     # 2. Configure Input Channels
     # Base channels (e.g., 2 for FLAIR + Mask, or 1 for FLAIR)
@@ -46,13 +90,31 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
             f"Input channels increased {model_cfg.in_channels} -> {in_channels}"
         )
 
+    # Handle anatomical conditioning based on method
+    use_cross_attention_anatomical = False
+    cross_attention_dim = None
+    anatomical_encoder = None
+
     if use_anatomical_conditioning:
-        # We add 1 channel for the Anatomical Prior Mask
-        in_channels += 1
-        logger.info(
-            f"Anatomical Conditioning ENABLED: "
-            f"Input channels increased -> {in_channels}"
-        )
+        if anatomical_method == "concat":
+            # Original behavior: add 1 channel for the Anatomical Prior Mask
+            in_channels += 1
+            logger.info(
+                f"Anatomical Conditioning ENABLED (concat method): "
+                f"Input channels increased -> {in_channels}"
+            )
+        elif anatomical_method == "cross_attention":
+            # Cross-attention: don't add input channel, use separate encoder
+            use_cross_attention_anatomical = True
+            # Get cross_attention_dim from config or use default based on model channels
+            cross_attention_dim = model_cfg.get(
+                "cross_attention_dim",
+                model_cfg.channels[-1]  # Default: same as deepest channel
+            )
+            logger.info(
+                f"Anatomical Conditioning ENABLED (cross_attention method): "
+                f"cross_attention_dim={cross_attention_dim}"
+            )
 
     if not use_self_conditioning and not use_anatomical_conditioning:
         logger.info("Standard input channels (no conditioning augmentations).")
@@ -65,10 +127,16 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
     channels = tuple(model_cfg.channels)
     attention_levels = tuple(model_cfg.attention_levels)
 
-    # 3. Create Model
+    # 3. Determine with_conditioning flag
+    # Enable cross-attention if:
+    # - Originally enabled in config (model_cfg.with_conditioning), OR
+    # - Using cross-attention for anatomical conditioning
+    enable_with_conditioning = model_cfg.with_conditioning or use_cross_attention_anatomical
+
+    # 4. Create Model
     model = DiffusionModelUNet(
         spatial_dims=model_cfg.spatial_dims,
-        in_channels=in_channels,          # UPDATED
+        in_channels=in_channels,
         out_channels=model_cfg.out_channels,
         channels=channels,
         attention_levels=attention_levels,
@@ -78,7 +146,8 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
         norm_eps=1e-6,
         resblock_updown=model_cfg.resblock_updown,
         num_class_embeds=num_class_embeds if model_cfg.use_class_embedding else None,
-        with_conditioning=model_cfg.with_conditioning,
+        with_conditioning=enable_with_conditioning,
+        cross_attention_dim=cross_attention_dim if use_cross_attention_anatomical else None,
         dropout_cattn=model_cfg.dropout,
     )
 
@@ -98,14 +167,21 @@ def build_model(cfg: DictConfig) -> DiffusionModelUNet:
         )
         model.class_embedding = custom_embedding
 
+    # 5. Build AnatomicalPriorEncoder if using cross-attention method
+    if use_cross_attention_anatomical:
+        anatomical_encoder = build_anatomical_encoder(cfg, cross_attention_dim)
+        encoder_params = sum(p.numel() for p in anatomical_encoder.parameters())
+        logger.info(f"Built AnatomicalPriorEncoder: {encoder_params:,} params")
+
     # Log model info
     n_params = sum(p.numel() for p in model.parameters())
     logger.info(
         f"Built DiffusionModelUNet: {n_params:,} params. "
-        f"Anatomical Conditioning: {use_anatomical_conditioning}"
+        f"Anatomical Conditioning: {use_anatomical_conditioning} "
+        f"(method: {anatomical_method if use_anatomical_conditioning else 'N/A'})"
     )
 
-    return model
+    return model, anatomical_encoder
 
 
 def build_scheduler(cfg: DictConfig) -> DDPMScheduler | DDIMScheduler:
@@ -214,7 +290,12 @@ def build_inferer(cfg: DictConfig) -> DDPMScheduler | DDIMScheduler:
     return inferer
 
 class DiffusionSampler:
-    """Wrapper for DDIM/DDPM sampling with optional anatomical and self conditioning."""
+    """Wrapper for DDIM/DDPM sampling with optional anatomical and self conditioning.
+
+    Supports two anatomical conditioning methods:
+    - "concat": Concatenates prior mask as input channel
+    - "cross_attention": Encodes prior via AnatomicalPriorEncoder and uses cross-attention
+    """
 
     def __init__(
         self,
@@ -222,7 +303,18 @@ class DiffusionSampler:
         scheduler: DDIMScheduler | DDPMScheduler,
         cfg: DictConfig,
         device: torch.device | str = "cuda",
+        anatomical_encoder: AnatomicalPriorEncoder | None = None,
     ) -> None:
+        """Initialize the sampler.
+
+        Args:
+            model: The DiffusionModelUNet.
+            scheduler: The diffusion scheduler (DDIM or DDPM).
+            cfg: Configuration object.
+            device: Target device for sampling.
+            anatomical_encoder: Optional encoder for cross-attention anatomical conditioning.
+                Required if anatomical_conditioning_method is "cross_attention".
+        """
         self.model = model
         self.scheduler = scheduler
         self.sampler_cfg = cfg.sampler
@@ -231,7 +323,26 @@ class DiffusionSampler:
 
         # Capture the conditioning flags
         self.use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
+        self.anatomical_method: AnatomicalConditioningMethod = cfg.model.get(
+            "anatomical_conditioning_method", "concat"
+        )
         self.use_self_conditioning = cfg.training.self_conditioning.get("enabled", False)
+
+        # Store anatomical encoder for cross-attention method
+        self.anatomical_encoder = anatomical_encoder
+        if (
+            self.use_anatomical_conditioning
+            and self.anatomical_method == "cross_attention"
+            and self.anatomical_encoder is None
+        ):
+            raise ValueError(
+                "anatomical_encoder is required when using cross_attention method"
+            )
+
+        # Move encoder to device if present
+        if self.anatomical_encoder is not None:
+            self.anatomical_encoder = self.anatomical_encoder.to(device)
+            self.anatomical_encoder.eval()
 
         self.num_inference_steps = self.sampler_cfg.num_inference_steps
         self.eta = self.sampler_cfg.eta
@@ -256,6 +367,8 @@ class DiffusionSampler:
             guidance_scale: CFG scale. If None, uses default from config.
             generator: Optional torch.Generator for reproducible noise.
             anatomical_mask: (B, 1, H, W) Tensor. Required if anatomical_conditioning is True.
+                For "concat" method: concatenated as input channel.
+                For "cross_attention" method: encoded and used as cross-attention context.
             x_T: Optional (B, C, H, W) pre-generated initial noise. If provided,
                  generator is ignored and x_T is used directly. Enables deterministic
                  per-sample seeding for replica generation.
@@ -275,7 +388,10 @@ class DiffusionSampler:
             if anatomical_mask is None:
                 raise ValueError("Model expects 'anatomical_mask', but None provided.")
             if anatomical_mask.shape != (B, 1, shape[2], shape[3]):
-                raise ValueError(f"Mask shape {anatomical_mask.shape} mismatch. Expected ({B}, 1, {shape[2]}, {shape[3]})")
+                raise ValueError(
+                    f"Mask shape {anatomical_mask.shape} mismatch. "
+                    f"Expected ({B}, 1, {shape[2]}, {shape[3]})"
+                )
 
         # Use pre-generated noise if provided, otherwise generate fresh noise
         if x_T is not None:
@@ -289,17 +405,31 @@ class DiffusionSampler:
         # Initialize self-conditioning signal (zeros for first step, then previous x0 estimate)
         x0_self_cond = torch.zeros_like(x_t) if self.use_self_conditioning else None
 
+        # Pre-compute cross-attention context if using cross_attention method
+        anatomical_context = None
+        if (
+            self.use_anatomical_conditioning
+            and self.anatomical_method == "cross_attention"
+        ):
+            anatomical_context = self.anatomical_encoder(
+                anatomical_mask.to(self.device)
+            )  # (B, seq_len, embed_dim)
+
         for t in self.scheduler.timesteps:
             timesteps = torch.full((B,), t, device=self.device, dtype=torch.long)
 
-            # 1. Prepare Model Inputs (Concatenation Logic)
+            # 1. Prepare Model Inputs
             model_input = x_t
 
             # Self-conditioning: use previous x0 estimate (zeros on first step)
             if self.use_self_conditioning:
                 model_input = torch.cat([model_input, x0_self_cond], dim=1)
 
-            if self.use_anatomical_conditioning:
+            # Anatomical conditioning: concat method
+            if (
+                self.use_anatomical_conditioning
+                and self.anatomical_method == "concat"
+            ):
                 # Concatenate mask to noisy input
                 # x_t: [B, C, H, W], mask: [B, 1, H, W] -> input: [B, C+1, H, W]
                 model_input = torch.cat([model_input, anatomical_mask], dim=1)
@@ -314,13 +444,21 @@ class DiffusionSampler:
                 null_tokens = torch.full_like(tokens, self.null_token)
                 tokens_double = torch.cat([tokens, null_tokens], dim=0)
 
+                # Prepare context for cross-attention (if using)
+                context_double = None
+                if anatomical_context is not None:
+                    context_double = torch.cat(
+                        [anatomical_context, anatomical_context], dim=0
+                    )
+
                 # Forward pass
                 noise_pred = self.model(
-                    model_input_double, 
-                    timesteps=t_double, 
-                    class_labels=tokens_double
+                    model_input_double,
+                    timesteps=t_double,
+                    context=context_double,
+                    class_labels=tokens_double,
                 )
-                
+
                 noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2, dim=0)
                 noise_pred = noise_pred_uncond + guidance_scale * (
                     noise_pred_cond - noise_pred_uncond
@@ -328,9 +466,10 @@ class DiffusionSampler:
             else:
                 # Standard Forward Pass
                 noise_pred = self.model(
-                    model_input, 
-                    timesteps=timesteps, 
-                    class_labels=tokens
+                    model_input,
+                    timesteps=timesteps,
+                    context=anatomical_context,
+                    class_labels=tokens,
                 )
 
             # 3. Update self-conditioning signal with current x0 estimate
@@ -357,17 +496,17 @@ class DiffusionSampler:
     ) -> torch.Tensor:
         """Generate a single sample with optional mask."""
         tokens = torch.tensor([token], device=self.device, dtype=torch.long)
-        
+
         # Handle single-item batch for mask
         if anatomical_mask is not None and anatomical_mask.dim() == 3:
             anatomical_mask = anatomical_mask.unsqueeze(0)
-            
+
         sample = self.sample(
-            tokens, 
-            (1, 2, 128, 128), 
-            guidance_scale, 
-            generator, 
-            anatomical_mask=anatomical_mask
+            tokens,
+            (1, 2, 128, 128),
+            guidance_scale,
+            generator,
+            anatomical_mask=anatomical_mask,
         )
         return sample[0]
 
