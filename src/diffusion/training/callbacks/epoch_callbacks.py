@@ -226,7 +226,7 @@ class VisualizationCallback(Callback):
             and "visualization" in zbin_cfg.get("apply_to", [])
         )
 
-        # Anatomical conditioning (input concatenation)
+        # Anatomical conditioning (sampler handles both concat and cross_attention methods)
         self._use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
 
         # Load priors if needed for either post-processing or anatomical conditioning

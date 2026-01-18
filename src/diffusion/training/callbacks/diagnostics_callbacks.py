@@ -573,7 +573,8 @@ class PredictionQualityCallback(Callback):
                     x0_self_cond = torch.zeros_like(x_t)
                     x_t = torch.cat([x_t, x0_self_cond], dim=1)
 
-                # Concatenate anatomical prior if enabled
+                # Handle anatomical conditioning based on method
+                anatomical_context = None
                 if pl_module._use_anatomical_conditioning and pl_module._zbin_priors is not None:
                     z_bins_batch = batch["metadata"]["z_bin"][:self.n_samples]
                     anatomical_priors = get_anatomical_priors_as_input(
@@ -581,10 +582,17 @@ class PredictionQualityCallback(Callback):
                         pl_module._zbin_priors,
                         device=pl_module.device,
                     )
-                    x_t = torch.cat([x_t, anatomical_priors], dim=1)
 
-                # Predict noise
-                eps_pred = pl_module(x_t, timesteps, tokens)
+                    if pl_module._anatomical_method == "cross_attention":
+                        # Encode prior via CNN and pass as cross-attention context
+                        if pl_module._anatomical_encoder is not None:
+                            anatomical_context = pl_module._anatomical_encoder(anatomical_priors)
+                    else:
+                        # Concat method: add prior as additional input channel
+                        x_t = torch.cat([x_t, anatomical_priors], dim=1)
+
+                # Predict noise (pass context for cross_attention method)
+                eps_pred = pl_module(x_t, timesteps, tokens, context=anatomical_context)
 
                 # Compute per-channel MSE
                 mse_image = torch.mean((eps_pred[:, 0:1] - noise[:, 0:1]) ** 2).item()

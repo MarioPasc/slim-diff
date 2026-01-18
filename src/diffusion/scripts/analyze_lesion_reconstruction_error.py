@@ -188,6 +188,7 @@ def build_model_standalone(cfg: DictConfig) -> torch.nn.Module:
 
     # Check for conditioning options (with defaults for older configs)
     use_anatomical_conditioning = model_cfg.get("anatomical_conditioning", False)
+    anatomical_method = model_cfg.get("anatomical_conditioning_method", "concat")
     use_self_conditioning = cfg.training.get("self_conditioning", {}).get(
         "enabled", False
     )
@@ -199,9 +200,13 @@ def build_model_standalone(cfg: DictConfig) -> torch.nn.Module:
         in_channels += 2
         logger.info(f"Self-Conditioning: input channels -> {in_channels}")
 
-    if use_anatomical_conditioning:
+    # Anatomical conditioning: only concat method adds input channels
+    # cross_attention method uses context instead
+    if use_anatomical_conditioning and anatomical_method == "concat":
         in_channels += 1
-        logger.info(f"Anatomical Conditioning: input channels -> {in_channels}")
+        logger.info(f"Anatomical Conditioning (concat): input channels -> {in_channels}")
+    elif use_anatomical_conditioning and anatomical_method == "cross_attention":
+        logger.info(f"Anatomical Conditioning (cross_attention): using context, no extra input channels")
 
     # Calculate number of class embeddings
     num_class_embeds = 2 * z_bins
@@ -210,6 +215,14 @@ def build_model_standalone(cfg: DictConfig) -> torch.nn.Module:
 
     channels = tuple(model_cfg.channels)
     attention_levels = tuple(model_cfg.attention_levels)
+
+    # Determine cross-attention settings
+    # cross_attention method requires with_conditioning=True
+    with_conditioning = model_cfg.with_conditioning
+    cross_attention_dim = None
+    if use_anatomical_conditioning and anatomical_method == "cross_attention":
+        with_conditioning = True
+        cross_attention_dim = model_cfg.get("cross_attention_dim", channels[-1])
 
     # Create model
     model = DiffusionModelUNet(
@@ -224,7 +237,8 @@ def build_model_standalone(cfg: DictConfig) -> torch.nn.Module:
         norm_eps=1e-6,
         resblock_updown=model_cfg.resblock_updown,
         num_class_embeds=num_class_embeds if model_cfg.use_class_embedding else None,
-        with_conditioning=model_cfg.with_conditioning,
+        with_conditioning=with_conditioning,
+        cross_attention_dim=cross_attention_dim,
         dropout_cattn=model_cfg.dropout,
     )
 
@@ -454,6 +468,8 @@ def reconstruct_from_noisy(
     tokens: torch.Tensor,
     scheduler: torch.nn.Module,
     anatomical_priors: torch.Tensor | None = None,
+    anatomical_encoder: torch.nn.Module | None = None,
+    anatomical_method: str = "concat",
     device: str = "cuda",
 ) -> torch.Tensor:
     """Predict x0 from noisy x_t using single-step reconstruction.
@@ -468,6 +484,8 @@ def reconstruct_from_noisy(
         tokens: Conditioning tokens, shape (B,).
         scheduler: DDPM scheduler.
         anatomical_priors: Optional anatomical priors, shape (B, 1, H, W).
+        anatomical_encoder: Optional encoder for cross_attention method.
+        anatomical_method: Anatomical conditioning method ("concat" or "cross_attention").
         device: Device for tensors.
 
     Returns:
@@ -476,14 +494,32 @@ def reconstruct_from_noisy(
     B = x_t.shape[0]
     timesteps = torch.full((B,), timestep, device=device, dtype=torch.long)
 
-    # Prepare model input
+    # Prepare model input and context based on anatomical method
     model_input = x_t
+    anatomical_context = None
+
     if anatomical_priors is not None:
-        model_input = torch.cat([x_t, anatomical_priors], dim=1)
+        if anatomical_method == "cross_attention":
+            # Encode priors to context for cross-attention
+            if anatomical_encoder is not None:
+                anatomical_context = anatomical_encoder(anatomical_priors)
+            else:
+                logger.warning(
+                    "cross_attention method requires anatomical_encoder, but None provided. "
+                    "Skipping anatomical conditioning."
+                )
+        else:
+            # Concat method: add prior as input channel
+            model_input = torch.cat([x_t, anatomical_priors], dim=1)
 
     # Predict noise
     with torch.no_grad():
-        eps_pred = model(model_input, timesteps=timesteps, class_labels=tokens)
+        eps_pred = model(
+            model_input,
+            timesteps=timesteps,
+            context=anatomical_context,
+            class_labels=tokens,
+        )
 
     # Reconstruct x0
     x0_hat = predict_x0(x_t, eps_pred, scheduler, timesteps)
@@ -573,6 +609,7 @@ def run_analysis(
     timestep: int,
     cfg: DictConfig,
     zbin_priors: dict[int, NDArray[np.bool_]] | None,
+    anatomical_encoder: torch.nn.Module | None = None,
     device: str = "cuda",
     batch_size: int = 16,
 ) -> AnalysisResults:
@@ -585,6 +622,7 @@ def run_analysis(
         timestep: Timestep at which to add noise.
         cfg: Configuration object.
         zbin_priors: Z-bin priors for anatomical conditioning.
+        anatomical_encoder: Optional encoder for cross_attention method.
         device: Device for computation.
         batch_size: Batch size for processing.
 
@@ -595,6 +633,7 @@ def run_analysis(
     results = AnalysisResults(timestep=timestep, num_samples=len(samples))
 
     use_anatomical = cfg.model.get("anatomical_conditioning", False)
+    anatomical_method = cfg.model.get("anatomical_conditioning_method", "concat")
 
     # Process in batches
     for start_idx in tqdm(
@@ -624,7 +663,15 @@ def run_analysis(
 
         # Reconstruct
         x0_hat = reconstruct_from_noisy(
-            model, x_t, timestep, tokens, scheduler, anatomical_priors, device
+            model,
+            x_t,
+            timestep,
+            tokens,
+            scheduler,
+            anatomical_priors=anatomical_priors,
+            anatomical_encoder=anatomical_encoder,
+            anatomical_method=anatomical_method,
+            device=device,
         )
 
         # Compute errors
@@ -1351,9 +1398,11 @@ def main() -> None:
         checkpoint_path, cfg, args.device, args.use_ema
     )
 
-    # Load z-bin priors if needed
+    # Load z-bin priors and anatomical encoder if needed
     use_anatomical = cfg.model.get("anatomical_conditioning", False)
+    anatomical_method = cfg.model.get("anatomical_conditioning_method", "concat")
     zbin_priors = None
+    anatomical_encoder = None
 
     if use_anatomical:
         try:
@@ -1364,6 +1413,41 @@ def main() -> None:
             logger.info(f"Loaded z-bin priors for anatomical conditioning")
         except Exception as e:
             logger.warning(f"Failed to load z-bin priors: {e}")
+
+        # Load anatomical encoder for cross_attention method
+        if anatomical_method == "cross_attention":
+            try:
+                from src.diffusion.model.components.anatomical_encoder import AnatomicalPriorEncoder
+
+                encoder_cfg = cfg.model.get("anatomical_encoder", {})
+                cross_attention_dim = cfg.model.get("cross_attention_dim", 256)
+
+                anatomical_encoder = AnatomicalPriorEncoder(
+                    embed_dim=cross_attention_dim,
+                    hidden_dims=tuple(encoder_cfg.get("hidden_dims", [32, 64, 128])),
+                    downsample_factor=encoder_cfg.get("downsample_factor", 8),
+                    input_size=(128, 128),
+                    positional_encoding=encoder_cfg.get("positional_encoding", "sinusoidal"),
+                    norm_num_groups=encoder_cfg.get("norm_num_groups", 8),
+                )
+                anatomical_encoder.to(args.device)
+                anatomical_encoder.eval()
+
+                # Try to load encoder weights from checkpoint
+                ckpt = torch.load(checkpoint_path, map_location=args.device, weights_only=False)
+                if "state_dict" in ckpt:
+                    encoder_state = {}
+                    for k, v in ckpt["state_dict"].items():
+                        if k.startswith("_anatomical_encoder."):
+                            encoder_state[k[21:]] = v  # Remove prefix
+                    if encoder_state:
+                        anatomical_encoder.load_state_dict(encoder_state)
+                        logger.info(f"Loaded anatomical encoder weights from checkpoint")
+                    else:
+                        logger.warning("No anatomical encoder weights found in checkpoint")
+
+            except Exception as e:
+                logger.warning(f"Failed to load anatomical encoder: {e}")
 
     # Load data
     samples = load_lesion_samples(
@@ -1382,6 +1466,7 @@ def main() -> None:
         timestep=args.timestep,
         cfg=cfg,
         zbin_priors=zbin_priors,
+        anatomical_encoder=anatomical_encoder,
         device=args.device,
         batch_size=args.batch_size,
     )
