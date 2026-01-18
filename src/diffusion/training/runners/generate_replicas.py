@@ -259,12 +259,16 @@ def load_model_with_ema(
                 "Using regular model weights. Ensure export_to_checkpoint=True during training."
             )
 
+    # Get anatomical encoder if using cross_attention method
+    anatomical_encoder = getattr(lit_module, "_anatomical_encoder", None)
+
     # Create sampler
     sampler = DiffusionSampler(
         model=lit_module.model,
         scheduler=lit_module.inferer,
         cfg=cfg,
         device=device,
+        anatomical_encoder=anatomical_encoder,
     )
 
     return lit_module.model, sampler, ema_loaded

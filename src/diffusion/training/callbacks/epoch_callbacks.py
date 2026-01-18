@@ -367,11 +367,15 @@ class VisualizationCallback(Callback):
             DiffusionSampler instance.
         """
         if self._sampler is None:
+            # Get anatomical encoder from pl_module if using cross_attention method
+            anatomical_encoder = getattr(pl_module, "_anatomical_encoder", None)
+
             self._sampler = DiffusionSampler(
                 model=pl_module.model,
                 scheduler=pl_module.inferer,
                 cfg=self.cfg,
                 device=pl_module.device,
+                anatomical_encoder=anatomical_encoder,
             )
         return self._sampler
 

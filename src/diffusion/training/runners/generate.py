@@ -57,12 +57,16 @@ def load_model_from_checkpoint(
     lit_module.eval()
     lit_module.to(device)
 
+    # Get anatomical encoder if using cross_attention method
+    anatomical_encoder = getattr(lit_module, "_anatomical_encoder", None)
+
     # Create sampler
     sampler = DiffusionSampler(
         model=lit_module.model,
         scheduler=lit_module.inferer,
         cfg=cfg,
         device=device,
+        anatomical_encoder=anatomical_encoder,
     )
 
     return lit_module.model, sampler
