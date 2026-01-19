@@ -459,3 +459,71 @@ class BraTSMenSliceCacheBuilder(SliceCacheBuilder):
         )
 
         return (final_min, final_max)
+
+    def filter_collected_slices(
+        self,
+        slices: list[dict[str, Any]],
+        split: str,
+    ) -> list[dict[str, Any]]:
+        """Filter collected slices to balance lesion/non-lesion distribution.
+
+        For BraTS-MEN, if drop_healthy_patients=True, this drops 50% of non-lesion
+        slices per z-bin to reduce the imbalance between lesion and non-lesion slices.
+
+        This is different from epilepsy's interpretation of drop_healthy_patients,
+        which drops entire control subjects.
+
+        Args:
+            slices: List of slice metadata dictionaries
+            split: Split name ("train", "val", or "test")
+
+        Returns:
+            Filtered list of slice metadata dictionaries
+        """
+        if not self.drop_healthy_patients:
+            return slices
+
+        # Group slices by z-bin
+        slices_by_zbin = {}
+        for slice_meta in slices:
+            z_bin = slice_meta["z_bin"]
+            if z_bin not in slices_by_zbin:
+                slices_by_zbin[z_bin] = {"lesion": [], "non_lesion": []}
+
+            if slice_meta["has_lesion"]:
+                slices_by_zbin[z_bin]["lesion"].append(slice_meta)
+            else:
+                slices_by_zbin[z_bin]["non_lesion"].append(slice_meta)
+
+        # Filter 50% of non-lesion slices per z-bin
+        filtered_slices = []
+        total_dropped = 0
+
+        rng = np.random.RandomState(42)  # Fixed seed for reproducibility
+
+        for z_bin in sorted(slices_by_zbin.keys()):
+            bin_data = slices_by_zbin[z_bin]
+
+            # Keep all lesion slices
+            filtered_slices.extend(bin_data["lesion"])
+
+            # Keep 50% of non-lesion slices
+            non_lesion_slices = bin_data["non_lesion"]
+            n_to_keep = len(non_lesion_slices) // 2
+
+            if len(non_lesion_slices) > 0:
+                # Randomly select 50% to keep
+                indices = rng.choice(
+                    len(non_lesion_slices), size=n_to_keep, replace=False
+                )
+                kept_slices = [non_lesion_slices[i] for i in indices]
+                filtered_slices.extend(kept_slices)
+                total_dropped += len(non_lesion_slices) - n_to_keep
+
+        logger.info(
+            f"BraTS-MEN {split}: Dropped {total_dropped} non-lesion slices "
+            f"({len(slices)} → {len(filtered_slices)}, "
+            f"{100 * (1 - len(filtered_slices) / len(slices)):.1f}% reduction)"
+        )
+
+        return filtered_slices

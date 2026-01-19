@@ -195,6 +195,28 @@ class SliceCacheBuilder(ABC):
     # Concrete Methods - Shared logic across all datasets
     # =========================================================================
 
+    def filter_collected_slices(
+        self,
+        slices: list[dict[str, Any]],
+        split: str,
+    ) -> list[dict[str, Any]]:
+        """Optional hook to filter slices after collection but before CSV writing.
+
+        Default implementation returns slices unchanged.
+        Subclasses can override to implement custom filtering logic.
+
+        For example, BraTS-MEN uses this to balance lesion/non-lesion slices per z-bin,
+        while epilepsy uses drop_healthy_patients at the subject level instead.
+
+        Args:
+            slices: List of slice metadata dictionaries
+            split: Split name ("train", "val", or "test")
+
+        Returns:
+            Filtered list of slice metadata dictionaries
+        """
+        return slices
+
     def build_cache(self) -> None:
         """Main entry point: build complete slice cache.
 
@@ -256,14 +278,17 @@ class SliceCacheBuilder(ABC):
                 slice_metadata = self.process_subject(subject_info, slices_dir)
                 all_metadata[split].extend(slice_metadata)
 
-                # Update stats
-                for meta in slice_metadata:
-                    stats["total_slices"] += 1
-                    stats[f"{split}_slices"] += 1
-                    if meta["has_lesion"]:
-                        stats[f"{split}_lesion_slices"] += 1
-                    else:
-                        stats[f"{split}_empty_slices"] += 1
+            # Apply subclass-specific slice filtering (e.g., balance lesion/non-lesion per z-bin)
+            all_metadata[split] = self.filter_collected_slices(all_metadata[split], split)
+
+            # Update stats (after filtering)
+            for meta in all_metadata[split]:
+                stats["total_slices"] += 1
+                stats[f"{split}_slices"] += 1
+                if meta["has_lesion"]:
+                    stats[f"{split}_lesion_slices"] += 1
+                else:
+                    stats[f"{split}_empty_slices"] += 1
 
             # Write CSV index for this split
             self.write_index_csv(all_metadata[split], split)

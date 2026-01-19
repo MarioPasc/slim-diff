@@ -24,8 +24,9 @@ slice_sampling:
   brain_min_fraction: 0.05
 
 # Filtering options
-lesion_area_min_pixels: 0  # Filter lesion slices with < N pixels
-drop_healthy_patients: false  # Not applicable for BraTS-MEN (no control subjects)
+lesion_area_min_pixels: 15  # Filter lesion slices with < N pixels
+drop_healthy_patients: true  # BraTS-MEN: Drops 50% of non-lesion slices per z-bin to balance data
+                              # (Different from epilepsy, which drops control subjects)
 
 # =============================================================================
 # Dataset-Specific Configurations
