@@ -1,0 +1,82 @@
+# Cache Configuration for Epilepsy Dataset (FCD Lesions)
+# This file is used to build the slice cache for the epilepsy dataset
+
+# =============================================================================
+# Dataset Selection
+# =============================================================================
+dataset_type: "epilepsy"
+
+# =============================================================================
+# Cache Settings
+# =============================================================================
+cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
+
+# Z-position binning (30 bins is standard for epilepsy)
+z_bins: 30
+
+# Slice sampling configuration
+slice_sampling:
+  z_range: [30, 90]  # Fixed range for epilepsy, or use "auto" for auto-detection
+  auto_z_range_offset: 5  # Slices to remove from each side when using "auto" (tightens range)
+
+  filter_empty_brain: true
+  brain_threshold: -0.9
+  brain_min_fraction: 0.05
+
+# Filtering options
+lesion_area_min_pixels: 0  # Filter lesion slices with < N pixels
+drop_healthy_patients: false  # Drop all control/healthy subjects
+
+# =============================================================================
+# Dataset-Specific Configurations
+# =============================================================================
+datasets:
+  epilepsy:
+    root_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/source"
+
+    # Epilepsy (lesion) dataset
+    epilepsy_dataset:
+      name: "Dataset210_MRIe_none"
+      modality_index: 0  # 0=FLAIR, 1=T1N
+
+    # Control (healthy) dataset
+    control_dataset:
+      name: "Dataset310_MRIcontrol_none"
+      modality_index: 0
+
+    # Split configuration
+    splits:
+      use_predefined_test: true
+      val_fraction: 0.1
+      control_test_fraction: 0.15
+      seed: 33
+
+# =============================================================================
+# Preprocessing Configuration
+# =============================================================================
+transforms:
+  target_spacing: [1.875, 1.875, 1.875]  # mm
+  roi_size: [128, 128, 128]
+
+  intensity_norm:
+    type: "percentile"
+    lower: 0.5
+    upper: 99.5
+    b_min: -1.0
+    b_max: 1.0
+    clip: true
+
+# =============================================================================
+# Z-Bin Prior Computation
+# =============================================================================
+postprocessing:
+  zbin_priors:
+    enabled: true
+    priors_filename: "zbin_priors_brain_roi.npz"
+    prob_threshold: 0.20
+    dilate_radius_px: 1
+    gaussian_sigma_px: 0.7
+    min_component_px: 500
+    n_first_bins: 5
+    max_components_for_first_bins: 3
+    relaxed_threshold_factor: 0.1

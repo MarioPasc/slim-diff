@@ -1,6 +1,20 @@
 """Slice-level caching for efficient data loading.
 
-This module provides functionality to:
+DEPRECATED: This module is deprecated in favor of the modular caching system.
+
+For new code, use:
+    from src.diffusion.data.caching import get_registry
+
+    registry = get_registry()
+    builder = registry.create("epilepsy", cache_config)
+    builder.build_cache()
+
+Or use the CLI:
+    python -m src.diffusion.data.caching.cli --config configs/cache/epilepsy.yaml
+
+This module provides backwards compatibility for existing code and scripts.
+
+Legacy functionality:
 1. Process 3D volumes into 2D slices
 2. Cache slices as .npz files with metadata
 3. Generate index CSVs for train/val/test splits
@@ -274,6 +288,13 @@ def build_slice_cache(
 ) -> None:
     """Build the complete slice cache from 3D volumes.
 
+    DEPRECATED: This function is maintained for backwards compatibility.
+    New code should use the modular caching system:
+        from src.diffusion.data.caching import get_registry
+        registry = get_registry()
+        builder = registry.create("epilepsy", cache_config)
+        builder.build_cache()
+
     Args:
         cfg: Configuration object.
         lesion_area_min_pixels: Minimum lesion area in pixels. Lesion slices
@@ -281,6 +302,14 @@ def build_slice_cache(
         drop_healthy_patients: If True, only include slices from epileptic
             patients (drops all control/healthy subjects). Default is False.
     """
+    import warnings
+    warnings.warn(
+        "build_slice_cache() is deprecated. "
+        "Use src.diffusion.data.caching module for new code.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     cache_dir = Path(cfg.data.cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
 

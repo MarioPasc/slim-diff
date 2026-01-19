@@ -97,52 +97,63 @@ def create_visualization_grid(
     samples: list[torch.Tensor],
     z_bins: list[int],
     cfg: DictConfig,
+    condition_labels: list[str] | None = None,
 ) -> np.ndarray:
-    """Create a 2x5 visualization grid.
+    """Create n_conditions × n_zbins visualization grid (dataset-agnostic).
 
-    Row 1: Control samples (no lesion)
-    Row 2: Epilepsy samples (with lesion overlay)
+    Row 1: First condition (typically control/healthy, no overlay)
+    Row 2+: Other conditions (with lesion overlay)
 
     Args:
-        samples: List of 10 samples (5 control + 5 epilepsy), each (2, H, W).
+        samples: List of n_conditions * n_zbins samples, each (2, H, W).
         z_bins: List of z-bin values used.
         cfg: Configuration for overlay settings.
+        condition_labels: List of row labels (e.g., ["Control", "Epilepsy"]).
+                         If None, defaults to ["Control", "Epilepsy"].
 
     Returns:
-        Grid image as numpy array, shape (H*2, W*5, 3).
+        Grid image as numpy array, shape (H*n_conditions, W*n_zbins, 3).
     """
+    # Default to epilepsy labels for backwards compatibility
+    if condition_labels is None:
+        condition_labels = ["Control", "Epilepsy"]
+
+    n_conditions = len(condition_labels)
     n_cols = len(z_bins)
     vis_cfg = cfg.visualization.overlay
 
-    # Split into control and epilepsy
-    control_samples = samples[:n_cols]
-    epilepsy_samples = samples[n_cols:]
+    # Reshape samples: [condition_0_zbins, condition_1_zbins, ...]
+    samples_by_condition = [
+        samples[i * n_cols : (i + 1) * n_cols] for i in range(n_conditions)
+    ]
 
     # Get image dimensions
-    H, W = control_samples[0].shape[1:]
+    H, W = samples[0].shape[1:]
 
     # Create grid
-    grid = np.zeros((H * 2, W * n_cols, 3), dtype=np.float32)
+    grid = np.zeros((H * n_conditions, W * n_cols, 3), dtype=np.float32)
 
-    # Row 1: Control (just image, no overlay)
-    for i, sample in enumerate(control_samples):
-        image = to_display_range(sample[0])  # (H, W)
-        rgb = np.stack([image, image, image], axis=-1)
-        grid[:H, i * W : (i + 1) * W] = rgb
+    # Fill grid row by row
+    for cond_idx, cond_samples in enumerate(samples_by_condition):
+        for col_idx, sample in enumerate(cond_samples):
+            image = to_display_range(sample[0])  # (H, W)
+            mask = sample[1].cpu().numpy()  # (H, W)
 
-    # Row 2: Epilepsy with mask overlay
-    for i, sample in enumerate(epilepsy_samples):
-        image = to_display_range(sample[0])  # (H, W)
-        mask = sample[1].cpu().numpy()  # (H, W)
+            # Apply overlay only if not the first condition (control/healthy)
+            if cond_idx == 0:
+                # First condition: no overlay (control/healthy)
+                rgb = np.stack([image, image, image], axis=-1)
+            else:
+                # Other conditions: with overlay (lesion/tumor)
+                rgb = create_overlay(
+                    image,
+                    mask,
+                    alpha=vis_cfg.alpha,
+                    color=tuple(vis_cfg.color),
+                    threshold=vis_cfg.threshold,
+                )
 
-        rgb = create_overlay(
-            image,
-            mask,
-            alpha=vis_cfg.alpha,
-            color=tuple(vis_cfg.color),
-            threshold=vis_cfg.threshold,
-        )
-        grid[H:, i * W : (i + 1) * W] = rgb
+            grid[cond_idx * H : (cond_idx + 1) * H, col_idx * W : (col_idx + 1) * W] = rgb
 
     return grid
 
@@ -150,40 +161,49 @@ def create_visualization_grid(
 def add_labels_to_grid(
     grid: np.ndarray,
     z_bins: list[int],
+    condition_labels: list[str] | None = None,
     figsize: tuple[float, float] = (15, 6),
 ) -> plt.Figure:
-    """Add labels and create matplotlib figure.
+    """Add dataset-agnostic labels and create matplotlib figure.
 
     Args:
-        grid: Grid image, shape (H*2, W*5, 3).
+        grid: Grid image, shape (H*n_conditions, W*n_zbins, 3).
         z_bins: Z-bin values for column labels.
+        condition_labels: List of row labels (e.g., ["Control", "Epilepsy"]).
+                         If None, defaults to ["Control", "Epilepsy"].
         figsize: Figure size.
 
     Returns:
         Matplotlib figure.
     """
+    # Default to epilepsy labels for backwards compatibility
+    if condition_labels is None:
+        condition_labels = ["Control", "Epilepsy"]
+
+    n_conditions = len(condition_labels)
+    H = grid.shape[0] // n_conditions
+    W = grid.shape[1] // len(z_bins)
+
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     ax.imshow(grid)
     ax.axis("off")
 
-    # Add row labels
-    H = grid.shape[0] // 2
-    W = grid.shape[1] // len(z_bins)
+    # Add row labels (dataset-agnostic)
+    for i, label in enumerate(condition_labels):
+        ax.text(
+            -10,
+            i * H + H // 2,
+            label,
+            ha="right",
+            va="center",
+            fontsize=12,
+            fontweight="bold",
+        )
 
-    ax.text(
-        -10, H // 2, "Control",
-        ha="right", va="center", fontsize=12, fontweight="bold"
-    )
-    ax.text(
-        -10, H + H // 2, "Epilepsy",
-        ha="right", va="center", fontsize=12, fontweight="bold"
-    )
-
-    # Add column labels (z-bins)
+    # Add column labels (z-bins) - unchanged
     for i, zb in enumerate(z_bins):
         ax.text(
-            i * W + W // 2, -10, f"z={zb}",
-            ha="center", va="bottom", fontsize=10
+            i * W + W // 2, -10, f"z={zb}", ha="center", va="bottom", fontsize=10
         )
 
     fig.tight_layout()
@@ -209,6 +229,13 @@ class VisualizationCallback(Callback):
         self.vis_cfg = cfg.visualization
         self.output_dir = Path(cfg.experiment.output_dir) / "viz"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get condition labels from config (dataset-agnostic)
+        # Default to ["Control", "Epilepsy"] for backwards compatibility
+        self.condition_labels = self.vis_cfg.get(
+            "condition_labels", ["Control", "Epilepsy"]
+        )
+        logger.info(f"Visualization condition labels: {self.condition_labels}")
 
         # Compute valid z_bins from z_range to prevent generating
         # slices outside the training distribution
@@ -401,11 +428,16 @@ class VisualizationCallback(Callback):
 
         logger.info(f"Generating visualization for epoch {current_epoch}")
 
-        # Get conditioning tokens
+        # Get conditioning tokens - dynamically based on number of conditions
         n_bins = self.cfg.conditioning.z_bins
-        control_tokens, lesion_tokens = get_visualization_tokens(
-            self.z_bins, n_bins
-        )
+        n_conditions = len(self.condition_labels)
+
+        # Generate tokens for all conditions dynamically
+        # Token encoding: token = z_bin + condition_idx * n_bins
+        tokens_by_condition = []
+        for cond_idx in range(n_conditions):
+            cond_tokens = [z_bin + cond_idx * n_bins for z_bin in self.z_bins]
+            tokens_by_condition.append(cond_tokens)
 
         # Get sampler
         sampler = self._get_sampler(pl_module)
@@ -415,35 +447,21 @@ class VisualizationCallback(Callback):
         samples = []
 
         with torch.no_grad():
-            # Control samples
-            for i, token in enumerate(control_tokens):
-                # Get anatomical prior if needed
-                anatomical_mask = None
-                if self._use_anatomical_conditioning and self._zbin_priors is not None:
-                    z_bin = self.z_bins[i]
-                    anatomical_mask = get_anatomical_priors_as_input(
-                        [z_bin],
-                        self._zbin_priors,
-                        device=pl_module.device,
-                    ).squeeze(0)  # Remove batch dim: (1, 1, H, W) -> (1, H, W)
+            # Generate samples for each condition
+            for cond_idx, cond_tokens in enumerate(tokens_by_condition):
+                for i, token in enumerate(cond_tokens):
+                    # Get anatomical prior if needed
+                    anatomical_mask = None
+                    if self._use_anatomical_conditioning and self._zbin_priors is not None:
+                        z_bin = self.z_bins[i]
+                        anatomical_mask = get_anatomical_priors_as_input(
+                            [z_bin],
+                            self._zbin_priors,
+                            device=pl_module.device,
+                        ).squeeze(0)  # Remove batch dim: (1, 1, H, W) -> (1, H, W)
 
-                sample = sampler.sample_single(token, anatomical_mask=anatomical_mask)
-                samples.append(sample)
-
-            # Epilepsy samples
-            for i, token in enumerate(lesion_tokens):
-                # Get anatomical prior if needed
-                anatomical_mask = None
-                if self._use_anatomical_conditioning and self._zbin_priors is not None:
-                    z_bin = self.z_bins[i]
-                    anatomical_mask = get_anatomical_priors_as_input(
-                        [z_bin],
-                        self._zbin_priors,
-                        device=pl_module.device,
-                    ).squeeze(0)  # Remove batch dim: (1, 1, H, W) -> (1, H, W)
-
-                sample = sampler.sample_single(token, anatomical_mask=anatomical_mask)
-                samples.append(sample)
+                    sample = sampler.sample_single(token, anatomical_mask=anatomical_mask)
+                    samples.append(sample)
 
         # Apply z-bin prior post-processing (if enabled)
         if self._use_zbin_priors and self._zbin_priors is not None:
@@ -474,12 +492,14 @@ class VisualizationCallback(Callback):
                 cleaned_samples.append(cleaned_sample)
             samples = cleaned_samples
 
-        # Create grid
-        grid = create_visualization_grid(samples, self.z_bins, self.cfg)
+        # Create grid with dynamic labels
+        grid = create_visualization_grid(
+            samples, self.z_bins, self.cfg, self.condition_labels
+        )
 
-        # Save PNG
+        # Save PNG with dynamic labels
         if self.vis_cfg.save_png:
-            fig = add_labels_to_grid(grid, self.z_bins)
+            fig = add_labels_to_grid(grid, self.z_bins, self.condition_labels)
             save_path = self.output_dir / f"epoch_{current_epoch:04d}.png"
             fig.savefig(save_path, dpi=150, bbox_inches="tight")
             plt.close(fig)

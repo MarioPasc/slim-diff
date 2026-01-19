@@ -84,6 +84,68 @@ class CreateZeroMaskd(MapTransform):
         return d
 
 
+class MergeMultiClassLabeld(MapTransform):
+    """Merge multi-class segmentation to binary using config mapping.
+
+    This transform is used for datasets with multi-class segmentations (e.g., BraTS-MEN)
+    to merge classes into binary foreground/background before binarization.
+
+    Example:
+        For BraTS-MEN with classes NCR (1), ED (2), ET (3):
+        merge_map = {1: 1, 2: 0, 3: 1}  # NCR→foreground, ED→background, ET→foreground
+        Input:  [0, 0, 1, 2, 3, 1, 0] (raw labels)
+        Output: [0, 0, 1, 0, 1, 1, 0] (merged binary)
+    """
+
+    def __init__(
+        self,
+        keys: list[str] | str = "seg",
+        merge_map: dict[int, int] | None = None,
+        allow_missing_keys: bool = False,
+    ) -> None:
+        """Initialize the transform.
+
+        Args:
+            keys: Keys to transform.
+            merge_map: Dictionary mapping source labels to target labels (0 or 1).
+                      Example: {1: 1, 2: 0, 3: 1} maps label 1→1, 2→0, 3→1.
+                      Labels not in the map are set to 0 (background).
+            allow_missing_keys: Whether to allow missing keys.
+        """
+        super().__init__(keys, allow_missing_keys)
+        self.merge_map = merge_map or {}
+
+    def __call__(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Apply the transform.
+
+        Args:
+            data: Dictionary containing the mask with multi-class labels.
+
+        Returns:
+            Dictionary with merged binary mask (values 0 or 1, not yet scaled to {-1, +1}).
+        """
+        d = dict(data)
+        for key in self.key_iterator(d):
+            mask = d[key]
+
+            # Create output mask (all zeros initially = background)
+            if isinstance(mask, torch.Tensor):
+                merged = torch.zeros_like(mask)
+            else:
+                merged = np.zeros_like(mask)
+
+            # Apply mapping for each source label
+            for src_label, dst_label in self.merge_map.items():
+                if isinstance(mask, torch.Tensor):
+                    merged[mask == src_label] = dst_label
+                else:
+                    merged[mask == src_label] = dst_label
+
+            d[key] = merged
+
+        return d
+
+
 class BinarizeMaskd(MapTransform):
     """Binarize mask and map to {-1, +1} for diffusion.
 

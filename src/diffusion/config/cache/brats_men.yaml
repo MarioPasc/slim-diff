@@ -1,0 +1,99 @@
+# Cache Configuration for BraTS-MEN Dataset (Meningiomas)
+# This file is used to build the slice cache for the BraTS-MEN dataset
+
+# =============================================================================
+# Dataset Selection
+# =============================================================================
+dataset_type: "brats_men"
+
+# =============================================================================
+# Cache Settings
+# =============================================================================
+cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/meningioma/slice_cache"
+
+# Z-position binning (30 bins is standard)
+z_bins: 30
+
+# Slice sampling configuration
+slice_sampling:
+  z_range: "auto"  # Auto-detect from tumor distribution
+  auto_z_range_offset: 5  # Slices to remove from each side of detected range (tightens range)
+
+  filter_empty_brain: true
+  brain_threshold: -0.9
+  brain_min_fraction: 0.05
+
+# Filtering options
+lesion_area_min_pixels: 0  # Filter lesion slices with < N pixels
+drop_healthy_patients: false  # Not applicable for BraTS-MEN (no control subjects)
+
+# =============================================================================
+# Dataset-Specific Configurations
+# =============================================================================
+datasets:
+  brats_men:
+    root_dir: "/media/mpascual/PortableSSD/Meningiomas/BraTS/BraTS_Men_Train"
+
+    # Modality selection (actual file naming in dataset)
+    # Options: "t1c" (contrast), "t1n" (native), "t2f" (FLAIR), "t2w" (T2-weighted)
+    # Legacy aliases also supported: "t1", "t1gd", "flair", "t2"
+    modality_name: "t1c"  # t1c recommended for meningioma visualization
+
+    # Multi-class to binary label merging
+    # BraTS-MEN has 3 classes: NCR (1), ED (2), ET (3)
+    # Map each class to 0 (background) or 1 (foreground)
+    merge_labels:
+      1: 1  # NCR (necrotic core) → foreground
+      2: 0  # ED (edema) → background
+      3: 1  # ET (enhancing tumor) → foreground
+
+    # Note: Different merging strategies are possible:
+    # - All tumor classes as foreground: {1: 1, 2: 1, 3: 1}
+    # - Only enhancing tumor: {1: 0, 2: 0, 3: 1}
+    # - Only core (NCR + ET): {1: 1, 2: 0, 3: 1} (current)
+
+    # Dataset subset sampling (for debugging/testing)
+    # Use a percentage of the full dataset (e.g., 10 for 10%, 100 for full dataset)
+    # If < 100, randomly samples this percentage first, then splits into train/val/test
+    # Example: dataset_subset_percent=10 with 1000 subjects → 100 subjects total
+    #   → 70 train, 15 val, 15 test (using train_fraction/val_fraction/test_fraction)
+    dataset_subset_percent: 10  # 100 = full dataset (1000 subjects)
+
+    # Split configuration (programmatic splitting of flat directory structure)
+    # Note: BraTS-MEN has a flat structure (all subjects in root_dir)
+    # Splits are created programmatically with specified fractions
+    splits:
+      train_fraction: 0.7   # 70% for training
+      val_fraction: 0.15    # 15% for validation
+      test_fraction: 0.15   # 15% for testing (remaining)
+      seed: 42              # Random seed for reproducible splits
+
+# =============================================================================
+# Preprocessing Configuration
+# =============================================================================
+transforms:
+  target_spacing: [1.875, 1.875, 1.875]  # mm
+  roi_size: [128, 128, 128]
+
+  intensity_norm:
+    type: "percentile"
+    lower: 0.5
+    upper: 99.5
+    b_min: -1.0
+    b_max: 1.0
+    clip: true
+
+# =============================================================================
+# Z-Bin Prior Computation
+# =============================================================================
+postprocessing:
+  zbin_priors:
+    enabled: true
+    priors_filename: "zbin_priors_brain_roi.npz"
+    prob_threshold: 0.20
+    dilate_radius_px: 1
+    gaussian_sigma_px: 0.7
+    min_component_px: 500
+    n_first_bins: 5
+    max_components_for_first_bins: 3
+    relaxed_threshold_factor: 0.1

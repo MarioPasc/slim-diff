@@ -6,6 +6,11 @@
 #   - FFL to improve high-frequency component synthesis (edge sharpness)
 #   - Lesion pixel overweighting for both Lp norm image and mask channels
 #   - Kendall uncertainty weighting between Lp norm group and FFL group
+#
+# IMPORTANT: This config is DATASET-AGNOSTIC
+# Dataset-specific settings (paths, splits, preprocessing) belong in cache configs:
+#   - src/diffusion/config/cache/epilepsy.yaml
+#   - src/diffusion/config/cache/brats_men.yaml
 
 # =============================================================================
 # Experiment Metadata
@@ -16,43 +21,18 @@ experiment:
   seed: 33
 
 # =============================================================================
-# Data Configuration
+# Data Configuration (DATASET-AGNOSTIC)
 # =============================================================================
 data:
-  root_dir: "/media/mpascual/Sandisk2TB/research/epilepsy/data"
-  cache_dir: "${data.root_dir}/slice_cache"
+  # Path to pre-built slice cache (generated via jsddpm-cache command)
+  cache_dir: "./data/slice_cache"
 
-  epilepsy:
-    name: "Dataset210_MRIe_none"
-    modality_index: 0  # 0=FLAIR, 1=T1N
+  # Data loader settings (dataset-agnostic)
+  batch_size: 32
+  num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
+  pin_memory: true
 
-  control:
-    name: "Dataset310_MRIcontrol_none"
-    modality_index: 0  # 0=FLAIR, 1=T1N
-
-  splits:
-    use_predefined_test: true  # Use imagesTs/labelsTs as test set
-    val_fraction: 0.1          # Fraction of train subjects for validation
-    control_test_fraction: 0.15  # Fraction of control subjects for test
-    seed: 33
-
-  transforms:
-    target_spacing: [1.875, 1.875, 1.875]  # mm - yields ~128^3 from ~188x232x196
-    roi_size: [128, 128, 128]
-    intensity_norm:
-      type: "percentile"  # Options: "percentile", "minmax"
-      lower: 0.5
-      upper: 99.5
-      b_min: -1.0
-      b_max: 1.0
-      clip: true
-
-  slice_sampling:
-    z_range: [30, 90]  # Valid z indices after resampling [min_z, max_z] (inclusive)
-    filter_empty_brain: true
-    brain_threshold: -0.9  # Threshold for considering pixel as brain in [-1,1] space
-    brain_min_fraction: 0.05  # Minimum fraction of brain pixels to keep slice
-
+  # Lesion oversampling strategy (dataset-agnostic)
   lesion_oversampling:
     enabled: true
     mode: "balance"  # "balance" for 50/50 lesion/non-lesion sampling, "weight" for manual weight
@@ -160,10 +140,7 @@ sampler:
 # Training Configuration
 # =============================================================================
 training:
-  # Batch size and workers
-  batch_size: 32
-  num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
-  pin_memory: true
+  # Batch size and workers are in data section above
 
   # Self conditioning
   self_conditioning:
@@ -357,11 +334,19 @@ logging:
       timestep_bins: 10
 
 # =============================================================================
-# Visualization Configuration
+# Visualization Configuration (DATASET-AGNOSTIC)
 # =============================================================================
 visualization:
   enabled: true
   every_n_epochs: 1
+
+  # Dataset-specific condition labels (for visualization grid rows)
+  # Configure per dataset in your experiment config:
+  #   - For epilepsy: ["Control", "Epilepsy"]
+  #   - For BraTS-MEN: ["Healthy", "Meningioma"]
+  condition_labels:
+    - "Control"
+    - "Epilepsy"
 
   z_bins_to_show: null  # Auto-select bins matching z_range
 
