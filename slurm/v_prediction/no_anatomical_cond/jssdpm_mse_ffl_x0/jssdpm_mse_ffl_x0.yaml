@@ -28,6 +28,17 @@ data:
   num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
   pin_memory: true
 
+  transforms:
+    target_spacing: [1.875, 1.875, 1.875]  # mm - yields ~128^3 from ~188x232x196
+    roi_size: [128, 128, 128]
+    intensity_norm:
+      type: "percentile"  # Options: "percentile", "minmax"
+      lower: 0.5
+      upper: 99.5
+      b_min: -1.0
+      b_max: 1.0
+      clip: true
+      
   # Needed for ConditionalEmbeddingWithSinusoidal
   slice_sampling:
     z_range: [30, 90]  # Valid z indices after resampling [min_z, max_z] (inclusive)
