@@ -23,10 +23,10 @@ Output:
 
 Usage:
 python -m src.diffusion.scripts.analyze_lesion_reconstruction_error \
-    --config slurm/old_experiments/jsddpm_sinus_kendall_weighted_anatomicalprior/jsddpm_sinus_kendall_weighted_anatomicalprior.yaml \
-    --checkpoint /media/mpascual/Sandisk2TB/research/epilepsy/results/jsddpm_sinus_kendall_weighted_anatomicalprior/checkpoints/jsddpm-epoch=0280-val_loss=0.0000.ckpt \
-    --cache-dir /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache \
-    --output-dir outputs/lesion_error_analysis \
+    --config slurm/lesion_replication_fix_experiments/jsddpm_complete/jsddpm_complete.yaml \
+    --checkpoint /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/updated_loss/anatomical_conditioning/jsddpm_complete/checkpoints/jsddpm-epoch=0422-val_loss=0.0000.ckpt \
+    --cache-dir /media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache \
+    --output-dir /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/updated_loss/anatomical_conditioning/jsddpm_complete/lesion_error_analysis \
     --timestep 100 \
     --num-samples 100
 """
@@ -269,7 +269,7 @@ def load_model_from_checkpoint(
     cfg: DictConfig,
     device: str = "cuda",
     use_ema: bool = True,
-) -> tuple[torch.nn.Module, torch.nn.Module, bool]:
+) -> tuple[torch.nn.Module, torch.nn.Module, bool, int]:
     """Load model from checkpoint with optional EMA weights.
 
     This function handles older checkpoints that may have different config
@@ -277,6 +277,7 @@ def load_model_from_checkpoint(
     1. Building the model architecture from the current config
     2. Loading weights with strict=False to handle mismatches
     3. Reporting any missing/unexpected keys
+    4. Detecting actual input channels from loaded weights
 
     Args:
         checkpoint_path: Path to Lightning checkpoint.
@@ -285,7 +286,7 @@ def load_model_from_checkpoint(
         use_ema: Whether to load EMA weights if available.
 
     Returns:
-        Tuple of (model, scheduler, ema_loaded_flag).
+        Tuple of (model, scheduler, ema_loaded_flag, actual_in_channels).
     """
     logger.info(f"Loading checkpoint from {checkpoint_path}")
 
@@ -337,6 +338,17 @@ def load_model_from_checkpoint(
                 "Cannot load model."
             )
 
+    # Detect actual input channels from loaded weights
+    actual_in_channels = cfg.model.in_channels  # Default from config
+    # Try different possible key names for the first conv layer
+    conv_in_keys = ["conv_in.0.weight", "conv_in.conv.weight"]
+    for key in conv_in_keys:
+        if key in state_dict:
+            # Shape is [out_channels, in_channels, kernel_h, kernel_w]
+            actual_in_channels = state_dict[key].shape[1]
+            logger.info(f"Detected actual input channels from checkpoint ({key}): {actual_in_channels}")
+            break
+
     # Load state dict with flexible matching
     logger.info(f"Loading weights from: {source}")
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
@@ -360,7 +372,7 @@ def load_model_from_checkpoint(
             "EMA weights requested but not found. Using regular model weights."
         )
 
-    return model, scheduler, ema_loaded
+    return model, scheduler, ema_loaded, actual_in_channels
 
 
 # =============================================================================
@@ -471,6 +483,7 @@ def reconstruct_from_noisy(
     anatomical_encoder: torch.nn.Module | None = None,
     anatomical_method: str = "concat",
     device: str = "cuda",
+    n_output_channels: int = 2,
 ) -> torch.Tensor:
     """Predict x0 from noisy x_t using single-step reconstruction.
 
@@ -479,7 +492,8 @@ def reconstruct_from_noisy(
 
     Args:
         model: Diffusion model.
-        x_t: Noisy samples at timestep t, shape (B, C, H, W).
+        x_t: Noisy samples at timestep t, shape (B, C, H, W). May include
+            self-conditioning channels.
         timestep: Current timestep.
         tokens: Conditioning tokens, shape (B,).
         scheduler: DDPM scheduler.
@@ -487,9 +501,10 @@ def reconstruct_from_noisy(
         anatomical_encoder: Optional encoder for cross_attention method.
         anatomical_method: Anatomical conditioning method ("concat" or "cross_attention").
         device: Device for tensors.
+        n_output_channels: Number of output channels (typically 2 for image+mask).
 
     Returns:
-        Reconstructed x0, shape (B, C, H, W).
+        Reconstructed x0, shape (B, n_output_channels, H, W).
     """
     B = x_t.shape[0]
     timesteps = torch.full((B,), timestep, device=device, dtype=torch.long)
@@ -521,8 +536,10 @@ def reconstruct_from_noisy(
             class_labels=tokens,
         )
 
-    # Reconstruct x0
-    x0_hat = predict_x0(x_t, eps_pred, scheduler, timesteps)
+    # Reconstruct x0 using only the first n_output_channels of x_t
+    # (exclude self-conditioning channels for the reconstruction formula)
+    x_t_for_recon = x_t[:, :n_output_channels]
+    x0_hat = predict_x0(x_t_for_recon, eps_pred, scheduler, timesteps)
 
     return x0_hat
 
@@ -612,6 +629,7 @@ def run_analysis(
     anatomical_encoder: torch.nn.Module | None = None,
     device: str = "cuda",
     batch_size: int = 16,
+    actual_in_channels: int = 2,
 ) -> AnalysisResults:
     """Run the full reconstruction error analysis.
 
@@ -625,6 +643,7 @@ def run_analysis(
         anatomical_encoder: Optional encoder for cross_attention method.
         device: Device for computation.
         batch_size: Batch size for processing.
+        actual_in_channels: Actual input channels expected by the model.
 
     Returns:
         AnalysisResults with all sample results.
@@ -634,6 +653,15 @@ def run_analysis(
 
     use_anatomical = cfg.model.get("anatomical_conditioning", False)
     anatomical_method = cfg.model.get("anatomical_conditioning_method", "concat")
+    
+    # Determine if self-conditioning channels are needed
+    base_channels = 2  # image + mask
+    if use_anatomical and anatomical_method == "concat":
+        base_channels += 1  # +1 for anatomical prior
+    
+    needs_self_cond = actual_in_channels > base_channels
+    if needs_self_cond:
+        logger.info(f"Model expects {actual_in_channels} channels, adding {actual_in_channels - base_channels} self-conditioning dummy channels")
 
     # Process in batches
     for start_idx in tqdm(
@@ -660,6 +688,13 @@ def run_analysis(
             anatomical_priors = get_anatomical_priors_as_input(
                 z_bins_batch, zbin_priors, device
             )
+
+        # Add self-conditioning dummy channels if needed
+        if needs_self_cond:
+            B, C, H, W = x_t.shape
+            num_self_cond_channels = actual_in_channels - (C + (1 if use_anatomical and anatomical_method == "concat" else 0))
+            self_cond_dummy = torch.zeros(B, num_self_cond_channels, H, W, device=device)
+            x_t = torch.cat([x_t, self_cond_dummy], dim=1)
 
         # Reconstruct
         x0_hat = reconstruct_from_noisy(
@@ -1394,7 +1429,7 @@ def main() -> None:
     logger.info(f"Split: {args.split}")
 
     # Load model
-    model, scheduler, ema_loaded = load_model_from_checkpoint(
+    model, scheduler, ema_loaded, actual_in_channels = load_model_from_checkpoint(
         checkpoint_path, cfg, args.device, args.use_ema
     )
 
@@ -1439,10 +1474,21 @@ def main() -> None:
                     encoder_state = {}
                     for k, v in ckpt["state_dict"].items():
                         if k.startswith("_anatomical_encoder."):
-                            encoder_state[k[21:]] = v  # Remove prefix
+                            key_without_prefix = k[21:]  # Remove "_anatomical_encoder." prefix
+                            # Fix corrupted key names (missing first character)
+                            if key_without_prefix.startswith("ackbone."):
+                                key_without_prefix = "b" + key_without_prefix
+                            elif key_without_prefix.startswith("roj."):
+                                key_without_prefix = "p" + key_without_prefix
+                            elif key_without_prefix.startswith("os_encoding."):
+                                key_without_prefix = "p" + key_without_prefix
+                            encoder_state[key_without_prefix] = v
                     if encoder_state:
-                        anatomical_encoder.load_state_dict(encoder_state)
-                        logger.info(f"Loaded anatomical encoder weights from checkpoint")
+                        missing, unexpected = anatomical_encoder.load_state_dict(encoder_state, strict=False)
+                        if not missing and not unexpected:
+                            logger.info(f"Loaded anatomical encoder weights from checkpoint")
+                        else:
+                            logger.warning(f"Anatomical encoder loaded with missing={len(missing)}, unexpected={len(unexpected)} keys")
                     else:
                         logger.warning("No anatomical encoder weights found in checkpoint")
 
@@ -1469,6 +1515,7 @@ def main() -> None:
         anatomical_encoder=anatomical_encoder,
         device=args.device,
         batch_size=args.batch_size,
+        actual_in_channels=actual_in_channels,
     )
 
     # Statistical analysis

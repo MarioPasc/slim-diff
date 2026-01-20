@@ -528,23 +528,32 @@ def get_alpha_bar(scheduler: DDPMScheduler, t: torch.Tensor) -> torch.Tensor:
 
 def predict_x0(
     x_t: torch.Tensor,
-    eps_pred: torch.Tensor,
+    model_output: torch.Tensor,
     scheduler: DDPMScheduler,
     t: torch.Tensor,
 ) -> torch.Tensor:
-    """Predict x0 from x_t and epsilon prediction.
+    """Predict x0 from x_t and model output.
 
-    x0_hat = (x_t - sqrt(1 - alpha_bar_t) * eps_pred) / sqrt(alpha_bar_t)
+    Supports all prediction types:
+    - epsilon: x0_hat = (x_t - sqrt(1 - alpha_bar_t) * eps_pred) / sqrt(alpha_bar_t)
+    - sample: x0_hat = model_output (direct prediction)
+    - v_prediction: x0_hat = sqrt(alpha_bar_t) * x_t - sqrt(1 - alpha_bar_t) * v_pred
 
     Args:
         x_t: Noisy samples at timestep t.
-        eps_pred: Predicted noise.
-        scheduler: The DDPM scheduler.
+        model_output: Model prediction (epsilon, x0, or v depending on prediction_type).
+        scheduler: The DDPM/DDIM scheduler (must have prediction_type attribute).
         t: Timesteps.
 
     Returns:
         Predicted x0.
     """
+    prediction_type = scheduler.prediction_type
+
+    # Handle direct sample prediction (no computation needed)
+    if prediction_type == "sample":
+        return model_output
+
     alpha_bar_t = get_alpha_bar(scheduler, t)
 
     # Reshape for broadcasting (B,) -> (B, 1, 1, 1)
@@ -554,6 +563,13 @@ def predict_x0(
     sqrt_alpha_bar = torch.sqrt(alpha_bar_t)
     sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar_t)
 
-    x0_hat = (x_t - sqrt_one_minus_alpha_bar * eps_pred) / sqrt_alpha_bar
+    if prediction_type == "epsilon":
+        x0_hat = (x_t - sqrt_one_minus_alpha_bar * model_output) / sqrt_alpha_bar
+    elif prediction_type == "v_prediction":
+        # v = sqrt(alpha_bar) * noise - sqrt(1-alpha_bar) * x0
+        # Solving for x0: x0 = sqrt(alpha_bar) * x_t - sqrt(1-alpha_bar) * v
+        x0_hat = sqrt_alpha_bar * x_t - sqrt_one_minus_alpha_bar * model_output
+    else:
+        raise ValueError(f"Unknown prediction type: {prediction_type}")
 
     return x0_hat

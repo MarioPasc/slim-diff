@@ -7,52 +7,28 @@
 #   - Lesion pixel overweighting for both Lp norm image and mask channels
 #   - Kendall uncertainty weighting between Lp norm group and FFL group
 
+
 # =============================================================================
 # Experiment Metadata
 # =============================================================================
 experiment:
-  name: "jsddpm_complete"
-  output_dir: "./outputs/jsddpm_complete"
+  name: "jssdpm_lp_norm_x0"
+  output_dir: "./outputs/jssdpm_lp_norm_x0"
   seed: 33
 
 # =============================================================================
-# Data Configuration
+# Data Configuration (DATASET-AGNOSTIC)
 # =============================================================================
 data:
-  root_dir: "/media/mpascual/Sandisk2TB/research/epilepsy/data"
-  cache_dir: "${data.root_dir}/slice_cache"
+  # Path to pre-built slice cache (generated via jsddpm-cache command)
+  cache_dir: "./data/slice_cache"
 
-  epilepsy:
-    name: "Dataset210_MRIe_none"
-    modality_index: 0  # 0=FLAIR, 1=T1N
+  # Data loader settings (dataset-agnostic)
+  batch_size: 32
+  num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
+  pin_memory: true
 
-  control:
-    name: "Dataset310_MRIcontrol_none"
-    modality_index: 0  # 0=FLAIR, 1=T1N
-
-  splits:
-    use_predefined_test: true  # Use imagesTs/labelsTs as test set
-    val_fraction: 0.1          # Fraction of train subjects for validation
-    control_test_fraction: 0.15  # Fraction of control subjects for test
-    seed: 33
-
-  transforms:
-    target_spacing: [1.875, 1.875, 1.875]  # mm - yields ~128^3 from ~188x232x196
-    roi_size: [128, 128, 128]
-    intensity_norm:
-      type: "percentile"  # Options: "percentile", "minmax"
-      lower: 0.5
-      upper: 99.5
-      b_min: -1.0
-      b_max: 1.0
-      clip: true
-
-  slice_sampling:
-    z_range: [30, 90]  # Valid z indices after resampling [min_z, max_z] (inclusive)
-    filter_empty_brain: true
-    brain_threshold: -0.9  # Threshold for considering pixel as brain in [-1,1] space
-    brain_min_fraction: 0.05  # Minimum fraction of brain pixels to keep slice
-
+  # Lesion oversampling strategy (dataset-agnostic)
   lesion_oversampling:
     enabled: true
     mode: "balance"  # "balance" for 50/50 lesion/non-lesion sampling, "weight" for manual weight
@@ -80,7 +56,7 @@ conditioning:
 model:
   type: "DiffusionModelUNet"
   spatial_dims: 2
-  in_channels: 2   # [image, mask] - factory.py auto-increases to 3 when anatomical_conditioning=true
+  in_channels: 2   # [image, mask] - factory.py auto-increases when conditioning is enabled
   out_channels: 2  # [image, mask]
 
   # Anatomical conditioning: use z-bin priors for spatial guidance
@@ -120,7 +96,7 @@ model:
   # Resblock updown
   resblock_updown: false
 
-  # Cross-attention (not used for class conditioning)
+  # Cross-attention (auto-enabled when anatomical_conditioning_method is "cross_attention")
   with_conditioning: false
 
 # =============================================================================
@@ -139,7 +115,7 @@ scheduler:
   sig_range: 6.0
 
   # Prediction type
-  prediction_type: "epsilon"
+  prediction_type: "v_prediction"
 
   # Clip sample during sampling
   clip_sample: true
@@ -150,8 +126,8 @@ scheduler:
 # =============================================================================
 sampler:
   type: "DDIM"
-  num_inference_steps: 200
-  eta: 0.0  # 0.0 = deterministic DDIM, 1.0 = DDPM
+  num_inference_steps: 500
+  eta: 0.2  # 0.0 = deterministic DDIM, 1.0 = DDPM
 
   # Classifier-free guidance scale
   guidance_scale: 1.0
@@ -236,14 +212,15 @@ training:
 #   - Kendall uncertainty: Learns optimal weighting between Lp norm group and FFL automatically
 # =============================================================================
 loss:
-  # Enable Lp norm + FFL mode with group uncertainty weighting
-  mode: "mse_ffl_groups"
+  # Enable Lp norm 
+  mode: "mse_lp_norm"
 
-  # Lp norm configuration - penalizes outliers more robustly than MSE
-  # p=2: MSE (standard), p=1: MAE (robust), p=1.5: balanced robustness
-  # Values p < 2 are less sensitive to large errors (outliers)
+  # Lp norm configuration - balances outlier sensitivity with edge emphasis
+  # p=2: MSE (standard), p=1: MAE (robust to outliers)
+  # p > 2: More sensitive to large errors (useful for lesion boundaries)
+  # p=2.25: Compromise - moderate emphasis on large errors without extreme amplification
   lp_norm:
-    p: 3  # L3 norm: less robust to outliers, more sensitive to large errors
+    p: 2.25  # Slightly above MSE for lesion boundary emphasis, but not extreme like p=3
 
   # Uncertainty weighting (Kendall et al.) - NOT used in mse_lp_norm_ffl_groups mode
   uncertainty_weighting:
@@ -267,7 +244,7 @@ loss:
   # Forces model to learn hard-to-synthesize high-frequency components (edges, lesion boundaries)
   # Tuned for epilepsy lesion synthesis with edge sharpness focus
   ffl:
-    enabled: true
+    enabled: false
     loss_weight: 1.0  # Base scaling factor (uncertainty weighting handles balancing)
     alpha: 1.2  # Focal exponent: moderate emphasis on hard frequencies
                # Compromise between 1.0 (linear) and 1.75 (aggressive)
@@ -324,7 +301,7 @@ logging:
       entity: "mario-pg02-icai-org"
       name: jsddpm_complete
       tags: ["epilepsy", "diffusion", "jsddpm", "lp-norm", "ffl", "kendall", "lesion-weighted"]
-      notes: "JS-DDPM with Lp norm (p=1.5) + FFL + lesion overweighting + Kendall uncertainty"
+      notes: "JS-DDPM with Lp norm (p=2.25) + FFL (alpha=1.2) + lesion overweighting + Kendall uncertainty"
       offline: true
 
   # Checkpointing

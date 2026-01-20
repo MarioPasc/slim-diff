@@ -1,0 +1,191 @@
+# =============================================================================
+# Model Comparison Configuration
+# =============================================================================
+# This configuration file specifies which models to compare and how to
+# generate comparative visualizations.
+
+# =============================================================================
+# Root Results Directory
+# =============================================================================
+# Base path where all model results are stored
+root_results_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/updated_loss"
+
+# =============================================================================
+# Models to Compare
+# =============================================================================
+# Dictionary mapping display_name -> relative_path (from root_results_dir)
+# Each model directory should contain:
+#   - csv_logs/performance.csv (training results)
+#   - csv_logs/histograms/ (timestep/token distributions)
+#   - checkpoints/*.ckpt (model checkpoint, for reconstruction comparison)
+models:
+  "JS-DDPM Complete - Conditioned": "anatomical_conditioning/jsddpm_complete"
+  "JS-DDPM Complete - Not Conditioned": "no_anatomical_conditioning/jsddpm_complete"
+
+  "JS-DDPM FFL - Conditioned": "anatomical_conditioning/jsddpm_ffl"
+  "JS-DDPM FFL - Not Conditioned": "no_anatomical_conditioning/jsddpm_ffl"
+
+  "JS-DDPM No Self-Cond - Conditioned": "anatomical_conditioning/jsddpm_complete_no_self_cond"
+  "JS-DDPM No Self-Cond - Not Conditioned": "no_anatomical_conditioning/jsddpm_complete_no_self_cond"
+
+  "JS-DDPM Lp Norm - Not Conditioned": "no_anatomical_conditioning/jssdpm_lp_norm_only"
+# =============================================================================
+# Visualization Settings
+# =============================================================================
+visualizations:
+  # Which visualizations to generate (ordered by priority)
+  enabled:
+    - loss_curves
+    - uncertainty_evolution
+    - timestep_mse_heatmap
+    - reconstruction_comparison  # MANDATORY
+    - summary_table
+    - publication_panel  # Publication-ready 3-panel figure
+
+  # Output formats for plots
+  formats: ["png", "pdf"]
+
+  # DPI for raster outputs
+  dpi: 300
+
+# =============================================================================
+# Loss Curves Configuration
+# =============================================================================
+loss_curves:
+  # Metrics to plot
+  metrics:
+    - "train/loss"
+    - "val/loss"
+    - "train/loss_image"
+    - "train/loss_mask"
+    - "val/loss_image"
+    - "val/loss_mask"
+
+  # Rolling average window for smoothing (set to 1 for no smoothing)
+  smoothing_window: 10
+
+  # Figure size in inches [width, height]
+  figsize: [14, 10]
+
+# =============================================================================
+# Uncertainty Evolution Configuration
+# =============================================================================
+uncertainty_evolution:
+  # Uncertainty-related metrics to track
+  metrics:
+    - "train/log_var_mse_group"
+    - "train/log_var_ffl_group"
+    - "train/sigma_mse_group"
+    - "train/sigma_ffl_group"
+    - "train/precision_mse_group"
+    - "train/precision_ffl_group"
+
+  # Figure size in inches [width, height]
+  figsize: [14, 8]
+
+# =============================================================================
+# Timestep MSE Heatmap Configuration
+# =============================================================================
+timestep_mse_heatmap:
+  # Channels to analyze
+  channels: ["image", "mask"]
+
+  # Epoch to use (-1 = final epoch, or specific epoch number)
+  epoch: -1
+
+  # Figure size in inches [width, height]
+  figsize: [12, 8]
+
+  # Colormap for heatmap
+  cmap: "viridis"
+
+# =============================================================================
+# Reconstruction Comparison Configuration (MANDATORY)
+# =============================================================================
+# This visualization compares lesion reconstruction quality across models
+reconstruction_comparison:
+  # Path to cache configuration (for loading real data)
+  cache_config_path: "src/diffusion/config/cache/epilepsy.yaml"
+
+  # Timestep for noise addition (t=100 recommended)
+  timestep: 100
+
+  # Number of representative z-bins to display
+  n_zbins: 5
+
+  # Lesion size criteria (in pixels)
+  min_lesion_pixels: 25
+  max_lesion_pixels: 500
+
+  # Number of samples per z-bin
+  n_samples_per_bin: 1
+
+  # Random seed for reproducibility
+  seed: 42
+
+  # Whether to use EMA weights from checkpoint
+  use_ema: true
+
+  # Figure size in inches [width, height]
+  figsize: [20, 12]
+
+  # Residual map colormap and range
+  residual_cmap: "RdBu_r"
+  residual_vmin: -0.5
+  residual_vmax: 0.5
+
+  # Lesion boundary overlay settings
+  overlay_alpha: 0.4
+  overlay_color: [0, 255, 0]  # Green
+
+# =============================================================================
+# Summary Table Configuration
+# =============================================================================
+summary_table:
+  # Metrics to include in summary
+  metrics:
+    - "val/loss"
+    - "train/loss"
+    - "val/loss_image"
+    - "val/loss_mask"
+    - "train/loss_image"
+    - "train/loss_mask"
+
+  # Epoch to use (-1 = final epoch)
+  epoch: -1
+
+  # Primary metric for ranking (lowest = best)
+  primary_metric: "val/loss"
+
+  # Whether lower values are better for the primary metric
+  lower_is_better: true
+
+# =============================================================================
+# Publication Panel Configuration
+# =============================================================================
+# Creates a single publication-ready figure with 3 subplots:
+# A) Train/Val loss curves
+# B) Precision (exp(-log sigma^2)) evolution
+# C) Per-timestep MSE heatmap
+publication_panel:
+  # Figure size in inches [width, height]
+  figsize: [18, 5]
+
+  # Smoothing window for loss curves
+  smoothing_window: 10
+
+  # Colormap for heatmap
+  heatmap_cmap: "viridis"
+
+# =============================================================================
+# Output Configuration
+# =============================================================================
+output:
+  # Output directory for comparison results
+  output_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/updated_loss/model_comparison"
+
+  # Whether to append timestamp to output directory
+  timestamp: true
+
+  # Whether to save raw comparison data (CSV, NPZ)
+  save_data: true

@@ -48,6 +48,8 @@ wandb = ["wandb>=0.15.0"]
 jsddpm-train = "src.diffusion.training.runners.train:main"
 jsddpm-generate = "src.diffusion.training.runners.generate:main"
 jsddpm-cache = "src.diffusion.data.caching:main"
+jsddpm-replicas = "src.diffusion.training.runners.generate_replicas:main"
+jsddpm-evaluate = "src.diffusion.model_comparison.runner:main"
 jsddpm-segmentation-kfold = "src.segmentation.cli.kfold_segmentation:main"
 
 [tool.setuptools.packages.find]

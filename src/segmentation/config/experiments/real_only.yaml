@@ -56,7 +56,7 @@ data:
   use_negative_cases: false
 
   # Lesion area filtering (see master.yaml for details)
-  lesions_over_pixel_area: 100
+  lesions_over_pixel_area: 100  # Minimum lesion area in pixels to include slice
 
   # Mask preprocessing
   mask:

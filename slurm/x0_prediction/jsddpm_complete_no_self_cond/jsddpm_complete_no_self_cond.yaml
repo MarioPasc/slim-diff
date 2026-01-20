@@ -150,8 +150,8 @@ scheduler:
 # =============================================================================
 sampler:
   type: "DDIM"
-  num_inference_steps: 200
-  eta: 0.0  # 0.0 = deterministic DDIM, 1.0 = DDPM
+  num_inference_steps: 400
+  eta: 0.2  # 0.0 = deterministic DDIM, 1.0 = DDPM
 
   # Classifier-free guidance scale
   guidance_scale: 1.0
