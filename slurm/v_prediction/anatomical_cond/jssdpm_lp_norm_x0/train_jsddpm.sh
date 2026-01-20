@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J log_jsddpm_complete
+#SBATCH -J log_jssdpm_lp_norm_x0_anatomical_cond
 #SBATCH --time=4-12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
