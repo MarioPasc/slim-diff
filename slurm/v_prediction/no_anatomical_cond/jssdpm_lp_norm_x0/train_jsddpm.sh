@@ -32,7 +32,7 @@ CONDA_ENV_NAME="jsddpm"
 
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
-RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}"
+RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}_no_anatomical_cond"
 CONFIG_FILE="${REPO_SRC}/slurm/v_prediction/no_anatomical_cond/${EXPERIMENT_NAME}/${EXPERIMENT_NAME}.yaml"
 
 # ---------- Load conda module and activate prebuilt env ----------
