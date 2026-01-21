@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.gridspec import GridSpec
+from scipy import stats
 
 # Setup logging
 logging.basicConfig(
@@ -726,15 +727,508 @@ def plot_subject_analysis(
     plt.close()
 
 
+# =============================================================================
+# Statistical Tests for Split Similarity
+# =============================================================================
+
+
+def compute_split_divergence(
+    df: pd.DataFrame,
+    thresholds: Optional[Dict] = None,
+) -> Dict:
+    """Compute statistical divergence metrics between train/val/test splits.
+
+    Args:
+        df: DataFrame with all splits.
+        thresholds: Optional dict with threshold values for warnings.
+
+    Returns:
+        Dictionary with divergence metrics:
+        - lesion_percentage: train/val/test percentages and differences
+        - z_bin_distribution: chi-squared test results
+        - lesion_area: Kolmogorov-Smirnov test results
+    """
+    if thresholds is None:
+        thresholds = {
+            "lesion_percentage_diff": 5.0,
+            "chi_squared_p_value": 0.05,
+            "ks_statistic": 0.1,
+        }
+
+    results = {}
+
+    # Split DataFrames
+    train_df = df[df["split"] == "train"]
+    val_df = df[df["split"] == "val"]
+    test_df = df[df["split"] == "test"]
+
+    # 1. Lesion percentage comparison
+    train_lesion_pct = train_df["has_lesion"].mean() * 100 if len(train_df) > 0 else 0
+    val_lesion_pct = val_df["has_lesion"].mean() * 100 if len(val_df) > 0 else 0
+    test_lesion_pct = test_df["has_lesion"].mean() * 100 if len(test_df) > 0 else 0
+
+    train_val_diff = abs(train_lesion_pct - val_lesion_pct)
+    train_test_diff = abs(train_lesion_pct - test_lesion_pct)
+
+    results["lesion_percentage"] = {
+        "train": train_lesion_pct,
+        "val": val_lesion_pct,
+        "test": test_lesion_pct,
+        "train_val_diff": train_val_diff,
+        "train_test_diff": train_test_diff,
+        "train_val_significant": train_val_diff > thresholds["lesion_percentage_diff"],
+        "train_test_significant": train_test_diff > thresholds["lesion_percentage_diff"],
+    }
+
+    # 2. Z-bin distribution chi-squared test (train vs val)
+    if len(train_df) > 0 and len(val_df) > 0:
+        all_zbins = sorted(set(train_df["z_bin"].unique()) | set(val_df["z_bin"].unique()))
+
+        train_zbin_counts = train_df.groupby("z_bin").size()
+        val_zbin_counts = val_df.groupby("z_bin").size()
+
+        # Align counts to all z-bins
+        train_aligned = np.array([train_zbin_counts.get(z, 0) for z in all_zbins])
+        val_aligned = np.array([val_zbin_counts.get(z, 0) for z in all_zbins])
+
+        # Normalize train to get expected frequencies for val
+        train_freq = train_aligned / train_aligned.sum()
+        val_expected = train_freq * val_aligned.sum()
+
+        # Avoid division by zero - set minimum expected count
+        val_expected = np.maximum(val_expected, 0.5)
+
+        try:
+            chi2_stat, chi2_p = stats.chisquare(val_aligned, val_expected)
+        except Exception:
+            chi2_stat, chi2_p = 0.0, 1.0
+
+        results["z_bin_distribution"] = {
+            "chi2_statistic": float(chi2_stat),
+            "p_value": float(chi2_p),
+            "significant": chi2_p < thresholds["chi_squared_p_value"],
+            "n_zbins": len(all_zbins),
+        }
+    else:
+        results["z_bin_distribution"] = {
+            "chi2_statistic": 0.0,
+            "p_value": 1.0,
+            "significant": False,
+            "n_zbins": 0,
+        }
+
+    # 3. Lesion area distribution (Kolmogorov-Smirnov test)
+    if "lesion_area_px" in df.columns:
+        train_lesion_areas = train_df[train_df["has_lesion"] == True]["lesion_area_px"].dropna()
+        val_lesion_areas = val_df[val_df["has_lesion"] == True]["lesion_area_px"].dropna()
+
+        if len(train_lesion_areas) > 5 and len(val_lesion_areas) > 5:
+            ks_stat, ks_p = stats.ks_2samp(train_lesion_areas, val_lesion_areas)
+
+            results["lesion_area"] = {
+                "ks_statistic": float(ks_stat),
+                "p_value": float(ks_p),
+                "significant": ks_stat > thresholds["ks_statistic"] or ks_p < 0.05,
+                "train_mean": float(train_lesion_areas.mean()),
+                "val_mean": float(val_lesion_areas.mean()),
+                "train_median": float(train_lesion_areas.median()),
+                "val_median": float(val_lesion_areas.median()),
+            }
+        else:
+            results["lesion_area"] = {
+                "ks_statistic": 0.0,
+                "p_value": 1.0,
+                "significant": False,
+                "train_mean": 0.0,
+                "val_mean": 0.0,
+                "train_median": 0.0,
+                "val_median": 0.0,
+            }
+    else:
+        results["lesion_area"] = None
+
+    return results
+
+
+def compute_per_zbin_lesion_comparison(
+    df: pd.DataFrame,
+    significance_threshold: float = 0.05,
+    difference_threshold: float = 10.0,
+) -> pd.DataFrame:
+    """Compare lesion % per z-bin between train and val using Fisher's exact test.
+
+    Args:
+        df: DataFrame with all splits.
+        significance_threshold: P-value threshold for significance.
+        difference_threshold: Minimum % difference to consider significant.
+
+    Returns:
+        DataFrame with columns:
+        - z_bin, train_lesion_pct, val_lesion_pct, difference,
+          fisher_exact_p, significant
+    """
+    train_df = df[df["split"] == "train"]
+    val_df = df[df["split"] == "val"]
+
+    results = []
+
+    for z_bin in sorted(df["z_bin"].unique()):
+        train_zbin = train_df[train_df["z_bin"] == z_bin]
+        val_zbin = val_df[val_df["z_bin"] == z_bin]
+
+        if len(train_zbin) == 0 or len(val_zbin) == 0:
+            continue
+
+        train_lesion = int(train_zbin["has_lesion"].sum())
+        train_total = len(train_zbin)
+        val_lesion = int(val_zbin["has_lesion"].sum())
+        val_total = len(val_zbin)
+
+        train_pct = train_lesion / train_total * 100
+        val_pct = val_lesion / val_total * 100
+        difference = abs(train_pct - val_pct)
+
+        # Fisher's exact test for 2x2 contingency table
+        contingency = [
+            [train_lesion, train_total - train_lesion],
+            [val_lesion, val_total - val_lesion],
+        ]
+
+        try:
+            _, p_value = stats.fisher_exact(contingency)
+        except Exception:
+            p_value = 1.0
+
+        results.append(
+            {
+                "z_bin": z_bin,
+                "train_total": train_total,
+                "train_lesion": train_lesion,
+                "train_lesion_pct": train_pct,
+                "val_total": val_total,
+                "val_lesion": val_lesion,
+                "val_lesion_pct": val_pct,
+                "difference": difference,
+                "fisher_exact_p": p_value,
+                "significant": p_value < significance_threshold and difference > difference_threshold,
+            }
+        )
+
+    return pd.DataFrame(results)
+
+
+def generate_enhanced_warnings(
+    divergence_metrics: Dict,
+    zbin_comparison: pd.DataFrame,
+    thresholds: Optional[Dict] = None,
+) -> List[str]:
+    """Generate actionable warnings based on bias analysis.
+
+    Args:
+        divergence_metrics: Output from compute_split_divergence().
+        zbin_comparison: Output from compute_per_zbin_lesion_comparison().
+        thresholds: Optional dict with threshold values.
+
+    Returns:
+        List of warning strings.
+    """
+    if thresholds is None:
+        thresholds = {
+            "lesion_percentage_diff": 5.0,
+            "chi_squared_p_value": 0.05,
+            "ks_statistic": 0.1,
+            "significant_zbin_count": 3,
+        }
+
+    warnings = []
+
+    # 1. Global lesion percentage
+    lp = divergence_metrics["lesion_percentage"]
+    if lp["train_val_significant"]:
+        warnings.append(
+            f"[BIAS] Val lesion % ({lp['val']:.1f}%) differs from train "
+            f"({lp['train']:.1f}%) by {lp['train_val_diff']:.1f}% "
+            f"(threshold: {thresholds['lesion_percentage_diff']:.1f}%)"
+        )
+
+    # 2. Z-bin distribution
+    zd = divergence_metrics["z_bin_distribution"]
+    if zd["significant"]:
+        warnings.append(
+            f"[BIAS] Z-bin distribution significantly differs between train/val "
+            f"(chi2={zd['chi2_statistic']:.2f}, p={zd['p_value']:.4f})"
+        )
+
+    # 3. Lesion area distribution
+    if divergence_metrics["lesion_area"] is not None:
+        la = divergence_metrics["lesion_area"]
+        if la["significant"]:
+            warnings.append(
+                f"[BIAS] Lesion area distribution differs significantly "
+                f"(KS={la['ks_statistic']:.3f}, p={la['p_value']:.4f}, "
+                f"train_mean={la['train_mean']:.1f}px, val_mean={la['val_mean']:.1f}px)"
+            )
+
+    # 4. Per-z-bin significant differences
+    if len(zbin_comparison) > 0:
+        n_significant = zbin_comparison["significant"].sum()
+        if n_significant >= thresholds["significant_zbin_count"]:
+            sig_zbins = zbin_comparison[zbin_comparison["significant"]]["z_bin"].tolist()
+            warnings.append(
+                f"[BIAS] {n_significant} z-bins have significantly different lesion rates: "
+                f"{sig_zbins}"
+            )
+
+    return warnings
+
+
+def plot_split_statistical_comparison(
+    df: pd.DataFrame,
+    divergence_metrics: Dict,
+    zbin_comparison: pd.DataFrame,
+    output_dir: Path,
+    show: bool = True,
+) -> None:
+    """Create visualization showing statistical comparison between splits.
+
+    Generates a 4-panel figure:
+    1. Bar chart: Lesion % per split with 95% CI
+    2. Heatmap: Z-bin lesion % difference (val - train)
+    3. Box plot: Lesion area distribution comparison
+    4. Text summary of statistical tests
+
+    Args:
+        df: DataFrame with all splits.
+        divergence_metrics: Output from compute_split_divergence().
+        zbin_comparison: Output from compute_per_zbin_lesion_comparison().
+        output_dir: Output directory for plots.
+        show: Whether to display plots.
+    """
+    fig = plt.figure(figsize=(16, 12))
+    gs = GridSpec(2, 2, figure=fig, hspace=0.3, wspace=0.3)
+
+    fig.suptitle(
+        "Statistical Comparison of Train/Val/Test Splits\n"
+        "(Detecting potential biases that affect model evaluation)",
+        fontsize=14,
+        fontweight="bold",
+    )
+
+    splits = ["train", "val", "test"]
+    colors = ["#3498DB", "#E74C3C", "#2ECC71"]
+
+    # 1. Lesion percentage with 95% confidence intervals
+    ax1 = fig.add_subplot(gs[0, 0])
+
+    lesion_pcts = []
+    ci_lower = []
+    ci_upper = []
+
+    for split in splits:
+        split_df = df[df["split"] == split]
+        n = len(split_df)
+        p = split_df["has_lesion"].mean() if n > 0 else 0
+
+        # Wilson score interval for 95% CI
+        if n > 0:
+            z = 1.96
+            denominator = 1 + z**2 / n
+            center = (p + z**2 / (2 * n)) / denominator
+            spread = z * np.sqrt((p * (1 - p) + z**2 / (4 * n)) / n) / denominator
+            ci_low = max(0, center - spread)
+            ci_high = min(1, center + spread)
+        else:
+            ci_low, ci_high = 0, 0
+
+        lesion_pcts.append(p * 100)
+        ci_lower.append(ci_low * 100)
+        ci_upper.append(ci_high * 100)
+
+    x = np.arange(len(splits))
+    bars = ax1.bar(x, lesion_pcts, color=colors, alpha=0.7, edgecolor="black")
+
+    # Add error bars
+    yerr_lower = [lesion_pcts[i] - ci_lower[i] for i in range(len(splits))]
+    yerr_upper = [ci_upper[i] - lesion_pcts[i] for i in range(len(splits))]
+    ax1.errorbar(x, lesion_pcts, yerr=[yerr_lower, yerr_upper], fmt="none", color="black", capsize=5)
+
+    # Add value labels
+    for i, (pct, bar) in enumerate(zip(lesion_pcts, bars)):
+        ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1, f"{pct:.1f}%", ha="center", fontweight="bold")
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(splits)
+    ax1.set_ylabel("Lesion Percentage (%)", fontweight="bold")
+    ax1.set_title("Lesion Percentage by Split (with 95% CI)")
+    ax1.grid(axis="y", alpha=0.3)
+
+    # Add significance annotation
+    lp = divergence_metrics["lesion_percentage"]
+    if lp["train_val_significant"]:
+        ax1.annotate(
+            f"Diff: {lp['train_val_diff']:.1f}%*",
+            xy=(0.5, max(lesion_pcts) * 0.9),
+            fontsize=10,
+            color="red",
+            fontweight="bold",
+        )
+
+    # 2. Z-bin lesion % difference heatmap
+    ax2 = fig.add_subplot(gs[0, 1])
+
+    if len(zbin_comparison) > 0:
+        zbins = zbin_comparison["z_bin"].values
+        diffs = zbin_comparison["val_lesion_pct"].values - zbin_comparison["train_lesion_pct"].values
+
+        # Create heatmap-style bar chart
+        colors_diff = ["#E74C3C" if d > 0 else "#3498DB" for d in diffs]
+        bars = ax2.bar(zbins, diffs, color=colors_diff, alpha=0.7, edgecolor="black")
+
+        # Highlight significant z-bins
+        for i, (zb, sig) in enumerate(zip(zbin_comparison["z_bin"], zbin_comparison["significant"])):
+            if sig:
+                ax2.annotate("*", xy=(zb, diffs[i]), fontsize=14, ha="center", color="red", fontweight="bold")
+
+        ax2.axhline(y=0, color="black", linestyle="-", linewidth=1)
+        ax2.set_xlabel("Z-bin", fontweight="bold")
+        ax2.set_ylabel("Val - Train Lesion % Difference", fontweight="bold")
+        ax2.set_title("Per-Z-bin Lesion Rate Difference\n(* = significant, Fisher's exact p<0.05)")
+        ax2.grid(axis="y", alpha=0.3)
+    else:
+        ax2.text(0.5, 0.5, "Insufficient data", ha="center", va="center", transform=ax2.transAxes)
+        ax2.set_title("Per-Z-bin Lesion Rate Difference")
+
+    # 3. Lesion area distribution comparison
+    ax3 = fig.add_subplot(gs[1, 0])
+
+    if "lesion_area_px" in df.columns:
+        lesion_df = df[df["has_lesion"] == True]
+        data_by_split = []
+        labels = []
+
+        for split in splits:
+            split_areas = lesion_df[lesion_df["split"] == split]["lesion_area_px"].dropna()
+            if len(split_areas) > 0:
+                data_by_split.append(split_areas.values)
+                labels.append(split)
+
+        if data_by_split:
+            bp = ax3.boxplot(data_by_split, labels=labels, patch_artist=True)
+            for patch, color in zip(bp["boxes"], colors[: len(labels)]):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+
+            ax3.set_ylabel("Lesion Area (pixels)", fontweight="bold")
+            ax3.set_title("Lesion Area Distribution by Split")
+            ax3.grid(axis="y", alpha=0.3)
+
+            # Add KS test annotation
+            if divergence_metrics["lesion_area"] is not None:
+                la = divergence_metrics["lesion_area"]
+                sig_marker = "*" if la["significant"] else ""
+                ax3.annotate(
+                    f"KS={la['ks_statistic']:.3f}, p={la['p_value']:.3f}{sig_marker}",
+                    xy=(0.02, 0.98),
+                    xycoords="axes fraction",
+                    fontsize=9,
+                    va="top",
+                    color="red" if la["significant"] else "black",
+                )
+        else:
+            ax3.text(0.5, 0.5, "No lesion data", ha="center", va="center", transform=ax3.transAxes)
+    else:
+        ax3.text(0.5, 0.5, "No lesion_area_px column", ha="center", va="center", transform=ax3.transAxes)
+    ax3.set_title("Lesion Area Distribution by Split")
+
+    # 4. Statistical summary text
+    ax4 = fig.add_subplot(gs[1, 1])
+    ax4.axis("off")
+
+    summary_lines = [
+        "STATISTICAL TEST SUMMARY",
+        "=" * 40,
+        "",
+        "1. LESION PERCENTAGE TEST",
+        f"   Train: {lp['train']:.1f}%",
+        f"   Val:   {lp['val']:.1f}%",
+        f"   Test:  {lp['test']:.1f}%",
+        f"   Train-Val Diff: {lp['train_val_diff']:.1f}% {'[SIGNIFICANT]' if lp['train_val_significant'] else '[OK]'}",
+        "",
+        "2. Z-BIN DISTRIBUTION TEST (Chi-squared)",
+    ]
+
+    zd = divergence_metrics["z_bin_distribution"]
+    summary_lines.extend(
+        [
+            f"   Chi2 statistic: {zd['chi2_statistic']:.2f}",
+            f"   P-value: {zd['p_value']:.4f}",
+            f"   Result: {'[SIGNIFICANT DIFFERENCE]' if zd['significant'] else '[OK - Similar distribution]'}",
+            "",
+            "3. LESION AREA TEST (Kolmogorov-Smirnov)",
+        ]
+    )
+
+    if divergence_metrics["lesion_area"] is not None:
+        la = divergence_metrics["lesion_area"]
+        summary_lines.extend(
+            [
+                f"   KS statistic: {la['ks_statistic']:.3f}",
+                f"   P-value: {la['p_value']:.4f}",
+                f"   Train mean: {la['train_mean']:.1f}px, Val mean: {la['val_mean']:.1f}px",
+                f"   Result: {'[SIGNIFICANT DIFFERENCE]' if la['significant'] else '[OK - Similar distribution]'}",
+            ]
+        )
+    else:
+        summary_lines.append("   [No lesion area data available]")
+
+    # Add per-z-bin summary
+    if len(zbin_comparison) > 0:
+        n_sig = zbin_comparison["significant"].sum()
+        summary_lines.extend(
+            [
+                "",
+                "4. PER-Z-BIN ANALYSIS (Fisher's exact)",
+                f"   Z-bins with significant differences: {n_sig}",
+            ]
+        )
+        if n_sig > 0:
+            sig_zbins = zbin_comparison[zbin_comparison["significant"]]["z_bin"].tolist()
+            summary_lines.append(f"   Affected z-bins: {sig_zbins}")
+
+    summary_text = "\n".join(summary_lines)
+    ax4.text(
+        0.05,
+        0.95,
+        summary_text,
+        transform=ax4.transAxes,
+        fontsize=10,
+        fontfamily="monospace",
+        verticalalignment="top",
+    )
+
+    plt.tight_layout()
+    output_path = output_dir / "split_statistical_comparison.png"
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    logger.info(f"Saved: {output_path}")
+
+    if show:
+        plt.show()
+    plt.close()
+
+
 def generate_summary_report(
     df: pd.DataFrame,
     output_dir: Path,
+    divergence_metrics: Optional[Dict] = None,
+    zbin_comparison: Optional[pd.DataFrame] = None,
 ) -> None:
     """Generate a text summary report of the analysis.
 
     Args:
         df: DataFrame with slice data.
         output_dir: Output directory for the report.
+        divergence_metrics: Optional output from compute_split_divergence().
+        zbin_comparison: Optional output from compute_per_zbin_lesion_comparison().
     """
     report_lines = []
     report_lines.append("=" * 70)
@@ -772,7 +1266,7 @@ def generate_summary_report(
     report_lines.append(f"Total lesion slices: {len(lesion_df)}")
     report_lines.append(f"Lesion percentage: {len(lesion_df)/len(df)*100:.1f}%")
 
-    if "lesion_area_px" in lesion_df.columns:
+    if "lesion_area_px" in lesion_df.columns and len(lesion_df) > 0:
         report_lines.append(f"Mean lesion area: {lesion_df['lesion_area_px'].mean():.1f} px")
         report_lines.append(f"Median lesion area: {lesion_df['lesion_area_px'].median():.1f} px")
         report_lines.append(f"Min lesion area: {lesion_df['lesion_area_px'].min():.0f} px")
@@ -792,54 +1286,107 @@ def generate_summary_report(
         report_lines.append(f"  Z-bin {zbin:2d}: {total:4d} slices, {lesion:3d} lesion ({pct:5.1f}%)")
     report_lines.append("")
 
+    # Statistical Tests Section (NEW)
+    if divergence_metrics is not None:
+        report_lines.append("STATISTICAL TESTS (Train vs Val)")
+        report_lines.append("-" * 40)
+
+        # Lesion percentage test
+        lp = divergence_metrics["lesion_percentage"]
+        report_lines.append("1. Lesion Percentage Comparison:")
+        report_lines.append(f"   Train: {lp['train']:.1f}%, Val: {lp['val']:.1f}%, Test: {lp['test']:.1f}%")
+        report_lines.append(f"   Train-Val difference: {lp['train_val_diff']:.1f}%")
+        status = "SIGNIFICANT" if lp["train_val_significant"] else "OK"
+        report_lines.append(f"   Status: [{status}] (threshold: 5.0%)")
+        report_lines.append("")
+
+        # Z-bin distribution test
+        zd = divergence_metrics["z_bin_distribution"]
+        report_lines.append("2. Z-bin Distribution (Chi-squared test):")
+        report_lines.append(f"   Chi2 statistic: {zd['chi2_statistic']:.2f}")
+        report_lines.append(f"   P-value: {zd['p_value']:.4f}")
+        status = "SIGNIFICANT DIFFERENCE" if zd["significant"] else "OK - Similar distribution"
+        report_lines.append(f"   Status: [{status}]")
+        report_lines.append("")
+
+        # Lesion area test
+        if divergence_metrics["lesion_area"] is not None:
+            la = divergence_metrics["lesion_area"]
+            report_lines.append("3. Lesion Area Distribution (KS test):")
+            report_lines.append(f"   KS statistic: {la['ks_statistic']:.3f}")
+            report_lines.append(f"   P-value: {la['p_value']:.4f}")
+            report_lines.append(f"   Train mean: {la['train_mean']:.1f}px, Val mean: {la['val_mean']:.1f}px")
+            status = "SIGNIFICANT DIFFERENCE" if la["significant"] else "OK - Similar distribution"
+            report_lines.append(f"   Status: [{status}]")
+        report_lines.append("")
+
+        # Per-z-bin analysis
+        if zbin_comparison is not None and len(zbin_comparison) > 0:
+            n_sig = zbin_comparison["significant"].sum()
+            report_lines.append("4. Per-Z-bin Analysis (Fisher's exact test):")
+            report_lines.append(f"   Z-bins with significant differences: {n_sig}")
+            if n_sig > 0:
+                sig_zbins = zbin_comparison[zbin_comparison["significant"]]["z_bin"].tolist()
+                report_lines.append(f"   Affected z-bins: {sig_zbins}")
+            report_lines.append("")
+
     # Potential bias warnings
     report_lines.append("POTENTIAL BIAS WARNINGS")
     report_lines.append("-" * 40)
 
-    # Check for class imbalance
+    warnings_found = False
+
+    # Generate enhanced warnings if statistical data available
+    if divergence_metrics is not None and zbin_comparison is not None:
+        enhanced_warnings = generate_enhanced_warnings(divergence_metrics, zbin_comparison)
+        for warning in enhanced_warnings:
+            report_lines.append(warning)
+            warnings_found = True
+
+    # Check for class imbalance (legacy)
     lesion_pct = len(lesion_df) / len(df) * 100
     if lesion_pct < 10:
         report_lines.append(f"[WARNING] Low lesion percentage ({lesion_pct:.1f}%)")
         report_lines.append("  - Model may underfit lesion generation")
+        warnings_found = True
     elif lesion_pct > 50:
         report_lines.append(f"[WARNING] High lesion percentage ({lesion_pct:.1f}%)")
         report_lines.append("  - Model may overfit lesion patterns")
+        warnings_found = True
 
     # Check for z-bin imbalance
     train_zbin_counts = train_df.groupby("z_bin").size()
-    zbin_ratio = train_zbin_counts.max() / train_zbin_counts.min()
-    if zbin_ratio > 3:
-        report_lines.append(f"[WARNING] Z-bin imbalance ratio: {zbin_ratio:.1f}x")
-        report_lines.append("  - Model may generate better images for certain z-bins")
-
-    # Check for split distribution mismatch
-    for split in ["val", "test"]:
-        split_df = df[df["split"] == split]
-        split_lesion_pct = len(split_df[split_df["has_lesion"] == True]) / len(split_df) * 100
-        train_lesion_pct = len(train_df[train_df["has_lesion"] == True]) / len(train_df) * 100
-        if abs(split_lesion_pct - train_lesion_pct) > 10:
-            report_lines.append(
-                f"[WARNING] {split} lesion % ({split_lesion_pct:.1f}%) differs from "
-                f"train ({train_lesion_pct:.1f}%)"
-            )
+    if len(train_zbin_counts) > 0:
+        zbin_ratio = train_zbin_counts.max() / train_zbin_counts.min()
+        if zbin_ratio > 3:
+            report_lines.append(f"[WARNING] Z-bin imbalance ratio: {zbin_ratio:.1f}x")
+            report_lines.append("  - Model may generate better images for certain z-bins")
+            warnings_found = True
 
     # Check for subject dominance
-    lesion_per_subject = lesion_df.groupby("subject_id").size()
-    top_subject_contribution = lesion_per_subject.max() / len(lesion_df) * 100
-    if top_subject_contribution > 20:
-        report_lines.append(
-            f"[WARNING] Single subject contributes {top_subject_contribution:.1f}% "
-            "of lesion data"
-        )
-        report_lines.append("  - Model may overfit to this subject's lesion patterns")
+    if len(lesion_df) > 0:
+        lesion_per_subject = lesion_df.groupby("subject_id").size()
+        top_subject_contribution = lesion_per_subject.max() / len(lesion_df) * 100
+        if top_subject_contribution > 20:
+            report_lines.append(
+                f"[WARNING] Single subject contributes {top_subject_contribution:.1f}% "
+                "of lesion data"
+            )
+            report_lines.append("  - Model may overfit to this subject's lesion patterns")
+            warnings_found = True
 
-    if "lesion_area_px" in lesion_df.columns:
+    if "lesion_area_px" in lesion_df.columns and len(lesion_df) > 0:
         # Check for lesion area distribution across z-bins
         area_by_zbin = lesion_df.groupby("z_bin")["lesion_area_px"].mean()
-        area_ratio = area_by_zbin.max() / area_by_zbin.min()
-        if area_ratio > 3:
-            report_lines.append(f"[WARNING] Lesion area varies {area_ratio:.1f}x across z-bins")
-            report_lines.append("  - Model may learn z-bin-specific lesion sizes")
+        if len(area_by_zbin) > 0 and area_by_zbin.min() > 0:
+            area_ratio = area_by_zbin.max() / area_by_zbin.min()
+            if area_ratio > 3:
+                report_lines.append(f"[WARNING] Lesion area varies {area_ratio:.1f}x across z-bins")
+                report_lines.append("  - Model may learn z-bin-specific lesion sizes")
+                warnings_found = True
+
+    if not warnings_found:
+        report_lines.append("[OK] No significant biases detected")
 
     report_lines.append("")
     report_lines.append("=" * 70)
@@ -852,6 +1399,427 @@ def generate_summary_report(
     logger.info(f"Saved: {report_path}")
 
     # Also print to console
+    print(report_text)
+
+
+# =============================================================================
+# Reusable Workflow Functions
+# =============================================================================
+
+
+def run_all_visualizations(
+    df: pd.DataFrame,
+    output_dir: Path,
+    show: bool = True,
+) -> Tuple[Dict, pd.DataFrame]:
+    """Run all bias visualizations and return metrics.
+
+    This is the main reusable function for generating all bias analysis
+    visualizations. Can be called programmatically from the cache builder.
+
+    Args:
+        df: DataFrame with all splits (train, val, test).
+        output_dir: Directory to save visualizations.
+        show: Whether to display plots interactively.
+
+    Returns:
+        Tuple of (divergence_metrics, zbin_comparison_df)
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Generating visualizations...")
+
+    # Generate all standard visualizations
+    plot_lesion_area_by_zbin(df, output_dir, show)
+    plot_lesion_count_by_zbin(df, output_dir, show)
+    plot_split_comparison(df, output_dir, show)
+    plot_domain_analysis(df, output_dir, show)
+    plot_token_distribution(df, output_dir, show)
+    plot_subject_analysis(df, output_dir, show)
+
+    # Run statistical tests
+    logger.info("Running statistical tests...")
+    divergence_metrics = compute_split_divergence(df)
+    zbin_comparison = compute_per_zbin_lesion_comparison(df)
+
+    # Generate statistical comparison visualization
+    plot_split_statistical_comparison(df, divergence_metrics, zbin_comparison, output_dir, show)
+
+    # Generate summary report
+    generate_summary_report(df, output_dir, divergence_metrics, zbin_comparison)
+
+    logger.info(f"Visualizations saved to: {output_dir}")
+
+    return divergence_metrics, zbin_comparison
+
+
+def generate_comparison_visualizations(
+    df_pre: pd.DataFrame,
+    df_post: pd.DataFrame,
+    output_dir: Path,
+    show: bool = False,
+) -> None:
+    """Generate visualizations comparing pre and post stratification.
+
+    Creates:
+    1. Side-by-side lesion % comparison (grouped bar chart)
+    2. Z-bin distribution improvement heatmap
+    3. Statistical test improvement table
+    4. Summary text report with improvement metrics
+
+    Args:
+        df_pre: DataFrame with pre-stratification splits.
+        df_post: DataFrame with post-stratification splits.
+        output_dir: Directory to save comparison visualizations.
+        show: Whether to display plots interactively.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Generating stratification comparison visualizations...")
+
+    # Compute metrics for both
+    pre_metrics = compute_split_divergence(df_pre)
+    post_metrics = compute_split_divergence(df_post)
+
+    pre_zbin = compute_per_zbin_lesion_comparison(df_pre)
+    post_zbin = compute_per_zbin_lesion_comparison(df_post)
+
+    # Generate comparison figure
+    plot_stratification_comparison(
+        df_pre, df_post,
+        pre_metrics, post_metrics,
+        pre_zbin, post_zbin,
+        output_dir, show
+    )
+
+    # Generate comparison report
+    generate_comparison_report(
+        pre_metrics, post_metrics,
+        pre_zbin, post_zbin,
+        output_dir
+    )
+
+    logger.info(f"Comparison visualizations saved to: {output_dir}")
+
+
+def plot_stratification_comparison(
+    df_pre: pd.DataFrame,
+    df_post: pd.DataFrame,
+    pre_metrics: Dict,
+    post_metrics: Dict,
+    pre_zbin: pd.DataFrame,
+    post_zbin: pd.DataFrame,
+    output_dir: Path,
+    show: bool = False,
+) -> None:
+    """Create 6-panel stratification comparison figure.
+
+    Layout (2x3 grid):
+    [1] Pre/Post Lesion % by Split (grouped bar)
+    [2] Train-Val Difference Improvement (bar)
+    [3] Z-bin Distribution Pre (line)
+    [4] Z-bin Distribution Post (line)
+    [5] Statistical Test Comparison (table-like)
+    [6] Improvement Summary (text)
+    """
+    fig = plt.figure(figsize=(18, 12))
+    gs = GridSpec(2, 3, figure=fig, hspace=0.3, wspace=0.3)
+
+    fig.suptitle(
+        "Stratification Comparison: Pre vs Post\n"
+        "(Evaluating improvement in train/val balance)",
+        fontsize=14,
+        fontweight="bold",
+    )
+
+    splits = ["train", "val", "test"]
+    colors_pre = ["#3498DB", "#E74C3C", "#2ECC71"]
+    colors_post = ["#1A5276", "#922B21", "#1D8348"]
+
+    # Panel 1: Pre/Post Lesion % by Split (grouped bar)
+    ax1 = fig.add_subplot(gs[0, 0])
+
+    pre_pcts = [pre_metrics["lesion_percentage"][s] for s in splits]
+    post_pcts = [post_metrics["lesion_percentage"][s] for s in splits]
+
+    x = np.arange(len(splits))
+    width = 0.35
+
+    bars1 = ax1.bar(x - width / 2, pre_pcts, width, label="Pre-stratification", color=colors_pre, alpha=0.7)
+    bars2 = ax1.bar(x + width / 2, post_pcts, width, label="Post-stratification", color=colors_post, alpha=0.7)
+
+    ax1.set_ylabel("Lesion %", fontweight="bold")
+    ax1.set_title("Lesion % by Split")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(splits)
+    ax1.legend(loc="upper right")
+    ax1.grid(axis="y", alpha=0.3)
+
+    # Add value labels
+    for bars in [bars1, bars2]:
+        for bar in bars:
+            height = bar.get_height()
+            ax1.annotate(f"{height:.1f}%",
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points",
+                        ha="center", va="bottom", fontsize=8)
+
+    # Panel 2: Train-Val Difference Improvement
+    ax2 = fig.add_subplot(gs[0, 1])
+
+    pre_diff = pre_metrics["lesion_percentage"]["train_val_diff"]
+    post_diff = post_metrics["lesion_percentage"]["train_val_diff"]
+    improvement = pre_diff - post_diff
+
+    bars = ax2.bar(["Pre", "Post"], [pre_diff, post_diff],
+                   color=["#E74C3C", "#27AE60"], alpha=0.7, edgecolor="black")
+
+    ax2.set_ylabel("Train-Val Difference (%)", fontweight="bold")
+    ax2.set_title(f"Train-Val Difference\n(Improvement: {improvement:.1f}%)")
+    ax2.axhline(y=5.0, color="orange", linestyle="--", label="Threshold (5%)")
+    ax2.legend()
+    ax2.grid(axis="y", alpha=0.3)
+
+    for bar in bars:
+        height = bar.get_height()
+        ax2.annotate(f"{height:.1f}%",
+                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 3), textcoords="offset points",
+                    ha="center", va="bottom", fontweight="bold")
+
+    # Panel 3: Z-bin Distribution Pre
+    ax3 = fig.add_subplot(gs[0, 2])
+
+    if len(pre_zbin) > 0:
+        ax3.plot(pre_zbin["z_bin"], pre_zbin["train_lesion_pct"], "b-o", label="Train", markersize=4)
+        ax3.plot(pre_zbin["z_bin"], pre_zbin["val_lesion_pct"], "r-s", label="Val", markersize=4)
+        ax3.fill_between(pre_zbin["z_bin"], pre_zbin["train_lesion_pct"], pre_zbin["val_lesion_pct"],
+                        alpha=0.2, color="gray")
+
+    ax3.set_xlabel("Z-bin", fontweight="bold")
+    ax3.set_ylabel("Lesion %", fontweight="bold")
+    ax3.set_title("Z-bin Distribution (PRE)")
+    ax3.legend()
+    ax3.grid(alpha=0.3)
+
+    # Panel 4: Z-bin Distribution Post
+    ax4 = fig.add_subplot(gs[1, 0])
+
+    if len(post_zbin) > 0:
+        ax4.plot(post_zbin["z_bin"], post_zbin["train_lesion_pct"], "b-o", label="Train", markersize=4)
+        ax4.plot(post_zbin["z_bin"], post_zbin["val_lesion_pct"], "r-s", label="Val", markersize=4)
+        ax4.fill_between(post_zbin["z_bin"], post_zbin["train_lesion_pct"], post_zbin["val_lesion_pct"],
+                        alpha=0.2, color="gray")
+
+    ax4.set_xlabel("Z-bin", fontweight="bold")
+    ax4.set_ylabel("Lesion %", fontweight="bold")
+    ax4.set_title("Z-bin Distribution (POST)")
+    ax4.legend()
+    ax4.grid(alpha=0.3)
+
+    # Panel 5: Statistical Test Comparison
+    ax5 = fig.add_subplot(gs[1, 1])
+    ax5.axis("off")
+
+    # Build comparison table
+    table_data = [
+        ["Metric", "Pre", "Post", "Improved?"],
+        ["─" * 12, "─" * 10, "─" * 10, "─" * 10],
+        [
+            "Lesion % Diff",
+            f"{pre_metrics['lesion_percentage']['train_val_diff']:.1f}%",
+            f"{post_metrics['lesion_percentage']['train_val_diff']:.1f}%",
+            "YES" if post_metrics['lesion_percentage']['train_val_diff'] < pre_metrics['lesion_percentage']['train_val_diff'] else "NO"
+        ],
+        [
+            "Chi² p-value",
+            f"{pre_metrics['z_bin_distribution']['p_value']:.4f}",
+            f"{post_metrics['z_bin_distribution']['p_value']:.4f}",
+            "YES" if post_metrics['z_bin_distribution']['p_value'] > pre_metrics['z_bin_distribution']['p_value'] else "NO"
+        ],
+    ]
+
+    if pre_metrics["lesion_area"] is not None and post_metrics["lesion_area"] is not None:
+        table_data.append([
+            "KS statistic",
+            f"{pre_metrics['lesion_area']['ks_statistic']:.3f}",
+            f"{post_metrics['lesion_area']['ks_statistic']:.3f}",
+            "YES" if post_metrics['lesion_area']['ks_statistic'] < pre_metrics['lesion_area']['ks_statistic'] else "NO"
+        ])
+
+    # Add significant z-bins count
+    pre_sig = pre_zbin["significant"].sum() if len(pre_zbin) > 0 else 0
+    post_sig = post_zbin["significant"].sum() if len(post_zbin) > 0 else 0
+    table_data.append([
+        "Sig. Z-bins",
+        str(pre_sig),
+        str(post_sig),
+        "YES" if post_sig < pre_sig else "NO" if post_sig > pre_sig else "SAME"
+    ])
+
+    table_text = "\n".join([f"{row[0]:<15} {row[1]:<12} {row[2]:<12} {row[3]}" for row in table_data])
+
+    ax5.text(0.1, 0.9, "STATISTICAL TEST COMPARISON",
+            fontsize=11, fontweight="bold", transform=ax5.transAxes, va="top")
+    ax5.text(0.1, 0.8, table_text,
+            fontsize=10, fontfamily="monospace", transform=ax5.transAxes, va="top")
+
+    # Panel 6: Improvement Summary
+    ax6 = fig.add_subplot(gs[1, 2])
+    ax6.axis("off")
+
+    # Compute overall improvement score
+    improvements = []
+    if post_metrics['lesion_percentage']['train_val_diff'] < pre_metrics['lesion_percentage']['train_val_diff']:
+        improvements.append("Lesion % balance")
+    if post_metrics['z_bin_distribution']['p_value'] > pre_metrics['z_bin_distribution']['p_value']:
+        improvements.append("Z-bin distribution")
+    if pre_metrics["lesion_area"] is not None and post_metrics["lesion_area"] is not None:
+        if post_metrics['lesion_area']['ks_statistic'] < pre_metrics['lesion_area']['ks_statistic']:
+            improvements.append("Lesion area distribution")
+    if post_sig < pre_sig:
+        improvements.append("Per-z-bin significance")
+
+    summary_lines = [
+        "IMPROVEMENT SUMMARY",
+        "=" * 40,
+        "",
+        f"Areas improved: {len(improvements)}/4",
+        "",
+    ]
+
+    if improvements:
+        summary_lines.append("Improvements achieved:")
+        for imp in improvements:
+            summary_lines.append(f"  + {imp}")
+    else:
+        summary_lines.append("No significant improvements detected.")
+        summary_lines.append("Consider adjusting stratification parameters.")
+
+    summary_lines.extend([
+        "",
+        "Key metrics:",
+        f"  Train-Val diff: {pre_diff:.1f}% -> {post_diff:.1f}%",
+        f"  Reduction: {improvement:.1f}%",
+    ])
+
+    summary_text = "\n".join(summary_lines)
+    ax6.text(0.1, 0.9, summary_text,
+            fontsize=10, fontfamily="monospace", transform=ax6.transAxes, va="top")
+
+    plt.tight_layout()
+    output_path = output_dir / "stratification_comparison.png"
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    logger.info(f"Saved: {output_path}")
+
+    if show:
+        plt.show()
+    plt.close()
+
+
+def generate_comparison_report(
+    pre_metrics: Dict,
+    post_metrics: Dict,
+    pre_zbin: pd.DataFrame,
+    post_zbin: pd.DataFrame,
+    output_dir: Path,
+) -> None:
+    """Generate text report comparing pre/post stratification."""
+
+    pre_lp = pre_metrics["lesion_percentage"]
+    post_lp = post_metrics["lesion_percentage"]
+    pre_zd = pre_metrics["z_bin_distribution"]
+    post_zd = post_metrics["z_bin_distribution"]
+
+    report_lines = [
+        "=" * 70,
+        "STRATIFICATION IMPROVEMENT REPORT",
+        "=" * 70,
+        "",
+        "LESION PERCENTAGE COMPARISON",
+        "-" * 40,
+        f"  PRE:  Train={pre_lp['train']:.1f}%, Val={pre_lp['val']:.1f}%, "
+        f"Test={pre_lp['test']:.1f}%",
+        f"        Train-Val Diff: {pre_lp['train_val_diff']:.1f}%",
+        "",
+        f"  POST: Train={post_lp['train']:.1f}%, Val={post_lp['val']:.1f}%, "
+        f"Test={post_lp['test']:.1f}%",
+        f"        Train-Val Diff: {post_lp['train_val_diff']:.1f}%",
+        "",
+        f"  IMPROVEMENT: {pre_lp['train_val_diff'] - post_lp['train_val_diff']:.1f}% reduction",
+        f"  STATUS: {'PASS' if post_lp['train_val_diff'] <= 5.0 else 'NEEDS ATTENTION'} (threshold: 5%)",
+        "",
+        "Z-BIN DISTRIBUTION TEST (Chi-squared)",
+        "-" * 40,
+        f"  PRE:  Chi2={pre_zd['chi2_statistic']:.2f}, p-value={pre_zd['p_value']:.4f}",
+        f"        {'SIGNIFICANT DIFFERENCE' if pre_zd['significant'] else 'OK'}",
+        "",
+        f"  POST: Chi2={post_zd['chi2_statistic']:.2f}, p-value={post_zd['p_value']:.4f}",
+        f"        {'SIGNIFICANT DIFFERENCE' if post_zd['significant'] else 'OK'}",
+        "",
+        f"  IMPROVEMENT: p-value {'increased' if post_zd['p_value'] > pre_zd['p_value'] else 'decreased'}",
+        "",
+    ]
+
+    # Lesion area comparison
+    if pre_metrics["lesion_area"] is not None and post_metrics["lesion_area"] is not None:
+        pre_la = pre_metrics["lesion_area"]
+        post_la = post_metrics["lesion_area"]
+        report_lines.extend([
+            "LESION AREA DISTRIBUTION (KS test)",
+            "-" * 40,
+            f"  PRE:  KS={pre_la['ks_statistic']:.3f}, p-value={pre_la['p_value']:.4f}",
+            f"        Train mean: {pre_la['train_mean']:.1f}px, Val mean: {pre_la['val_mean']:.1f}px",
+            "",
+            f"  POST: KS={post_la['ks_statistic']:.3f}, p-value={post_la['p_value']:.4f}",
+            f"        Train mean: {post_la['train_mean']:.1f}px, Val mean: {post_la['val_mean']:.1f}px",
+            "",
+        ])
+
+    # Per-z-bin comparison
+    pre_sig = pre_zbin["significant"].sum() if len(pre_zbin) > 0 else 0
+    post_sig = post_zbin["significant"].sum() if len(post_zbin) > 0 else 0
+    report_lines.extend([
+        "PER-Z-BIN ANALYSIS (Fisher's exact)",
+        "-" * 40,
+        f"  PRE:  {pre_sig} z-bins with significant differences",
+        f"  POST: {post_sig} z-bins with significant differences",
+        f"  CHANGE: {pre_sig - post_sig:+d} z-bins",
+        "",
+    ])
+
+    # Overall assessment
+    improvements = 0
+    total_metrics = 4
+
+    if post_lp['train_val_diff'] < pre_lp['train_val_diff']:
+        improvements += 1
+    if post_zd['p_value'] > pre_zd['p_value']:
+        improvements += 1
+    if pre_metrics["lesion_area"] is not None and post_metrics["lesion_area"] is not None:
+        if post_metrics["lesion_area"]["ks_statistic"] < pre_metrics["lesion_area"]["ks_statistic"]:
+            improvements += 1
+    if post_sig <= pre_sig:
+        improvements += 1
+
+    report_lines.extend([
+        "OVERALL ASSESSMENT",
+        "-" * 40,
+        f"  Metrics improved: {improvements}/{total_metrics}",
+        "",
+        f"  {'STRATIFICATION SUCCESSFUL' if improvements >= 2 else 'STRATIFICATION NEEDS REVIEW'}",
+        "",
+        "=" * 70,
+    ])
+
+    # Save report
+    report_text = "\n".join(report_lines)
+    report_path = output_dir / "improvement_report.txt"
+    with open(report_path, "w") as f:
+        f.write(report_text)
+    logger.info(f"Saved: {report_path}")
+
+    # Print to console
     print(report_text)
 
 
@@ -885,20 +1853,8 @@ def main() -> None:
     # Create output directory
     output_dir = create_output_dir(cache_dir)
 
-    # Generate visualizations
-    show = not args.no_show
-
-    logger.info("Generating visualizations...")
-
-    plot_lesion_area_by_zbin(df, output_dir, show)
-    plot_lesion_count_by_zbin(df, output_dir, show)
-    plot_split_comparison(df, output_dir, show)
-    plot_domain_analysis(df, output_dir, show)
-    plot_token_distribution(df, output_dir, show)
-    plot_subject_analysis(df, output_dir, show)
-
-    # Generate summary report
-    generate_summary_report(df, output_dir)
+    # Use the refactored function to run all visualizations
+    run_all_visualizations(df, output_dir, show=not args.no_show)
 
     logger.info(f"All visualizations saved to: {output_dir}")
 

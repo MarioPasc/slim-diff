@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-#SBATCH -J log_jssdpm_lp_ffl_anatomical_cond
+#SBATCH -J log_jssdpm_lp_ffl_anatomical_cond_ddp
 #SBATCH --time=4-12:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=8G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
 #SBATCH --constraint=dgx
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 #SBATCH --output=%x.%j.out
 #SBATCH --error=%x.%j.err
 
@@ -32,8 +32,8 @@ CONDA_ENV_NAME="jsddpm"
 
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
-RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}_anatomical_cond"
-CONFIG_FILE="${REPO_SRC}/slurm/v_prediction/anatomical_cond/${EXPERIMENT_NAME}/${EXPERIMENT_NAME}.yaml"
+RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}_anatomical_cond_concat"
+CONFIG_FILE="${REPO_SRC}/slurm/v_prediction/anatomical_cond_concat/${EXPERIMENT_NAME}/${EXPERIMENT_NAME}.yaml"
 
 # ---------- Load conda module and activate prebuilt env ----------
 module_loaded=0
@@ -61,6 +61,18 @@ python -c "import sys; print('Python', sys.version.split()[0])"
 python -c "import torch, os; print('CUDA', torch.cuda.is_available())"
 echo "[torch] $(python -c 'import torch; print(torch.__version__)')"
 echo "[cuda devices] $(python -c 'import torch; print(torch.cuda.device_count())')"
+
+# ========================================================================
+# DDP VERIFICATION
+# ========================================================================
+GPU_COUNT=$(python -c 'import torch; print(torch.cuda.device_count())')
+echo "[ddp] Available GPUs: ${GPU_COUNT}"
+echo "[ddp] CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
+
+if [ "$GPU_COUNT" -lt 2 ]; then
+    echo "WARNING: Requested 2 GPUs but only ${GPU_COUNT} available"
+    echo "Training will proceed but may not use DDP as expected"
+fi
 
 # ========================================================================
 # EXPERIMENT EXECUTION
@@ -104,7 +116,8 @@ else
     echo "   To rebuild cache, delete this directory and re-run."
 fi
 
-echo "Starting training with config: ${MODIFIED_CONFIG}"
+echo "Starting DDP training with config: ${MODIFIED_CONFIG}"
+echo "Using ${GPU_COUNT} GPUs with DDP strategy"
 
 jsddpm-train --config "${MODIFIED_CONFIG}"
 

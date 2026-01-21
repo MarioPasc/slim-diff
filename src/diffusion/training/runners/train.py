@@ -324,10 +324,35 @@ def train(cfg: DictConfig) -> None:
     logger.info(f"Starting training: {cfg.experiment.name}")
     logger.info(f"Output directory: {output_dir}")
 
-    # Create dataloaders
+    # Distributed training configuration
+    # Read from config with backward-compatible defaults
+    strategy = cfg.training.get("strategy", "auto")
+    devices = cfg.training.get("devices", "auto")
+    accelerator = cfg.training.get("accelerator", "auto")
+
+    # Determine if running distributed based on config
+    distributed = False
+    if strategy in ("ddp", "ddp_spawn"):
+        distributed = True
+    elif strategy == "auto":
+        # Check if multiple devices are explicitly requested
+        if devices not in ("auto", 1, [0], "1"):
+            distributed = True
+        # Check if auto devices with multiple GPUs available
+        elif devices == "auto":
+            import torch
+            if torch.cuda.device_count() > 1:
+                distributed = True
+
+    logger.info(
+        f"Distributed training: {distributed}, "
+        f"strategy={strategy}, devices={devices}, accelerator={accelerator}"
+    )
+
+    # Create dataloaders with distributed flag
     logger.info("Creating dataloaders...")
-    train_loader = create_dataloader(cfg, split="train")
-    val_loader = create_dataloader(cfg, split="val", shuffle=False)
+    train_loader = create_dataloader(cfg, split="train", distributed=distributed)
+    val_loader = create_dataloader(cfg, split="val", shuffle=False, distributed=False)
 
     # Create model
     logger.info("Creating model...")
@@ -337,7 +362,7 @@ def train(cfg: DictConfig) -> None:
     callbacks = build_callbacks(cfg)
     training_logger = build_logger(cfg)
 
-    # Create trainer
+    # Create trainer with configurable distributed settings
     trainer = pl.Trainer(
         default_root_dir=output_dir,
         max_epochs=cfg.training.max_epochs,
@@ -352,9 +377,21 @@ def train(cfg: DictConfig) -> None:
         callbacks=callbacks,
         logger=training_logger,
         enable_progress_bar=False,  # Disabled for supercomputer (tqdm misleading in cluster)
-        accelerator="auto",
-        devices="auto",
-        strategy="auto",
+        accelerator=accelerator,
+        devices=devices,
+        strategy=strategy,
+        use_distributed_sampler=False,  # We handle distributed sampling ourselves
+    )
+
+    # Log effective batch size for DDP
+    world_size = trainer.world_size if hasattr(trainer, "world_size") else 1
+    effective_batch_size = (
+        cfg.training.batch_size * world_size * cfg.training.accumulate_grad_batches
+    )
+    logger.info(
+        f"Effective batch size: {effective_batch_size} "
+        f"(per_gpu={cfg.training.batch_size}, world_size={world_size}, "
+        f"accumulate_grad_batches={cfg.training.accumulate_grad_batches})"
     )
 
     # Train

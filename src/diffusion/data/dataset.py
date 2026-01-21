@@ -15,9 +15,85 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 from omegaconf import DictConfig
-from torch.utils.data import Dataset, WeightedRandomSampler
+from torch.utils.data import Dataset, DistributedSampler, WeightedRandomSampler
 
 from src.diffusion.utils.io import load_sample_npz
+
+
+class DistributedWeightedRandomSampler(DistributedSampler):
+    """Weighted random sampler with distributed support for DDP training.
+
+    Combines WeightedRandomSampler behavior with DistributedSampler for DDP training.
+    Each rank samples from its own partition using the same weighting scheme.
+
+    This ensures:
+    1. Each GPU sees different samples (distributed partitioning)
+    2. Lesion/non-lesion balance is maintained per GPU (weighted sampling)
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        weights: "torch.Tensor",
+        num_samples: int,
+        replacement: bool = True,
+        num_replicas: int | None = None,
+        rank: int | None = None,
+        shuffle: bool = True,
+        seed: int = 0,
+        drop_last: bool = False,
+    ) -> None:
+        """Initialize the distributed weighted sampler.
+
+        Args:
+            dataset: The dataset to sample from.
+            weights: Per-sample weights (same length as dataset).
+            num_samples: Total number of samples to draw per epoch.
+            replacement: Sample with replacement.
+            num_replicas: Number of distributed processes (auto-detected if None).
+            rank: Rank of the current process (auto-detected if None).
+            shuffle: Whether to shuffle indices.
+            seed: Random seed for reproducibility.
+            drop_last: Drop last incomplete batch.
+        """
+        super().__init__(
+            dataset,
+            num_replicas=num_replicas,
+            rank=rank,
+            shuffle=shuffle,
+            seed=seed,
+            drop_last=drop_last,
+        )
+
+        self.weights = weights
+        self.num_samples_total = num_samples
+        self.replacement = replacement
+
+        # Calculate samples per rank
+        self.num_samples_per_rank = self.num_samples_total // self.num_replicas
+
+    def __iter__(self):
+        """Generate indices for this rank using weighted sampling."""
+        # Create generator with epoch-based seed for reproducibility
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+
+        # Weighted sampling from all indices
+        all_indices = torch.multinomial(
+            self.weights,
+            self.num_samples_total,
+            replacement=self.replacement,
+            generator=g,
+        ).tolist()
+
+        # Partition indices by rank
+        # Each rank gets every num_replicas-th sample starting from its rank
+        indices = all_indices[self.rank :: self.num_replicas]
+
+        return iter(indices)
+
+    def __len__(self) -> int:
+        return self.num_samples_per_rank
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +218,8 @@ def get_weighted_sampler(
     dataset: SliceDataset,
     mode: str = "balance",
     lesion_weight: float = 5.0,
-) -> WeightedRandomSampler:
+    distributed: bool = False,
+) -> WeightedRandomSampler | DistributedWeightedRandomSampler:
     """Create a weighted random sampler for class balancing.
 
     Args:
@@ -152,9 +229,10 @@ def get_weighted_sampler(
               sampling. This ensures the model sees both classes at the same rate.
             - "weight": Use the provided lesion_weight as a fixed multiplier.
         lesion_weight: Weight multiplier for lesion slices (only used when mode="weight").
+        distributed: Whether to use distributed sampling (DDP mode).
 
     Returns:
-        WeightedRandomSampler for the dataloader.
+        WeightedRandomSampler or DistributedWeightedRandomSampler for the dataloader.
     """
     # Count lesion and non-lesion samples
     n_lesion = sum(1 for s in dataset.samples if s["has_lesion"])
@@ -198,11 +276,20 @@ def get_weighted_sampler(
     # Normalize weights (optional, but helps with interpretation)
     weights = weights / weights.sum() * len(weights)
 
-    return WeightedRandomSampler(
-        weights=weights,
-        num_samples=len(weights),
-        replacement=True,
-    )
+    if distributed:
+        logger.info("Using DistributedWeightedRandomSampler for DDP training")
+        return DistributedWeightedRandomSampler(
+            dataset=dataset,
+            weights=weights,
+            num_samples=len(weights),
+            replacement=True,
+        )
+    else:
+        return WeightedRandomSampler(
+            weights=weights,
+            num_samples=len(weights),
+            replacement=True,
+        )
 
 
 def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
@@ -242,6 +329,7 @@ def create_dataloader(
     split: str = "train",
     shuffle: bool | None = None,
     use_weighted_sampler: bool | None = None,
+    distributed: bool = False,
 ) -> torch.utils.data.DataLoader:
     """Create a dataloader for the specified split.
 
@@ -251,6 +339,7 @@ def create_dataloader(
         shuffle: Whether to shuffle (default: True for train).
         use_weighted_sampler: Whether to use lesion oversampling
             (default: from config for train, False otherwise).
+        distributed: Whether running in DDP mode (enables distributed sampling).
 
     Returns:
         Configured DataLoader instance.
@@ -279,8 +368,14 @@ def create_dataloader(
             dataset,
             mode=mode,
             lesion_weight=cfg.data.lesion_oversampling.weight,
+            distributed=distributed,
         )
         shuffle = False  # Sampler handles randomization
+    elif distributed and split == "train":
+        # For training without weighted sampling in DDP mode
+        sampler = DistributedSampler(dataset, shuffle=True)
+        shuffle = False
+        logger.info("Using DistributedSampler for DDP training (no weighted sampling)")
 
     # Create dataloader
     dataloader = torch.utils.data.DataLoader(
@@ -298,7 +393,8 @@ def create_dataloader(
         f"Created {split} dataloader: "
         f"{len(dataset)} samples, "
         f"batch_size={cfg.training.batch_size}, "
-        f"weighted_sampler={use_weighted_sampler}"
+        f"weighted_sampler={use_weighted_sampler}, "
+        f"distributed={distributed}"
     )
 
     return dataloader

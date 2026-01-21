@@ -86,9 +86,13 @@ class SliceCacheBuilder(ABC):
         if isinstance(z_range, str) and z_range.lower() == "auto":
             logger.info("Auto-detecting z-range from dataset...")
             self.z_range = self.auto_detect_z_range()
+            self._z_range_auto_detected = True
+            self._z_range_offset = cache_config.slice_sampling.get("auto_z_range_offset", 0)
             logger.info(f"Auto-detected z-range: {self.z_range}")
         else:
             self.z_range = tuple(z_range)
+            self._z_range_auto_detected = False
+            self._z_range_offset = 0
 
         # Optional parameters
         self.lesion_area_min_pixels = cache_config.get("lesion_area_min_pixels", 0)
@@ -239,6 +243,9 @@ class SliceCacheBuilder(ABC):
         slices_dir = self.cache_dir / "slices"
         slices_dir.mkdir(parents=True, exist_ok=True)
 
+        # Save z-range info (critical for model training)
+        self._save_z_range_info()
+
         # Track statistics
         stats = {
             "total_slices": 0,
@@ -316,6 +323,11 @@ class SliceCacheBuilder(ABC):
             # Create visualization of z-bin priors alignment
             logger.info("\nCreating z-bin prior visualization...")
             self._create_zbin_prior_visualization()
+
+        # Run automated stratification workflow if enabled
+        stratification_cfg = self.cache_cfg.get("stratification", {})
+        if stratification_cfg.get("enabled", False):
+            self._run_stratification_workflow(stratification_cfg)
 
     def _discover_all_subjects_for_split(self, split: str) -> list[SubjectInfo]:
         """Discover all subjects for a split across all configured datasets.
@@ -659,3 +671,290 @@ class SliceCacheBuilder(ABC):
         except Exception as e:
             logger.warning(f"Failed to create z-bin prior visualization: {e}")
             logger.warning("Continuing with cache build...")
+
+    def _save_z_range_info(self) -> None:
+        """Save z-range information to a text file in the cache directory.
+
+        This is critical for model training as it documents:
+        - The z-range used for slicing (min_z, max_z)
+        - Whether it was auto-detected or manually specified
+        - The offset used if auto-detected
+        - The number of z-bins
+
+        The file is saved as 'z_range_info.txt' in the cache directory.
+        """
+        info_path = self.cache_dir / "z_range_info.txt"
+
+        lines = [
+            "=" * 60,
+            "Z-RANGE CONFIGURATION",
+            "=" * 60,
+            "",
+            "CRITICAL: Use these values for model training!",
+            "",
+            "-" * 40,
+            f"Z-Range (min, max): {self.z_range}",
+            f"  Min Z-index: {self.z_range[0]}",
+            f"  Max Z-index: {self.z_range[1]}",
+            f"  Total slices per volume: {self.z_range[1] - self.z_range[0] + 1}",
+            "",
+            f"Z-Bins: {self.z_bins}",
+            "",
+            "-" * 40,
+            "Detection Method:",
+        ]
+
+        if self._z_range_auto_detected:
+            lines.extend([
+                "  Mode: AUTO-DETECTED",
+                f"  Offset applied: {self._z_range_offset} slices removed from each side",
+                "",
+                "  The z-range was automatically detected by scanning the dataset",
+                "  for lesion presence and then tightening by the offset value.",
+            ])
+        else:
+            lines.extend([
+                "  Mode: MANUALLY SPECIFIED",
+                "  The z-range was explicitly set in the configuration file.",
+            ])
+
+        lines.extend([
+            "",
+            "=" * 60,
+            "",
+            "For model training, use:",
+            f"  z_range: [{self.z_range[0]}, {self.z_range[1]}]",
+            f"  z_bins: {self.z_bins}",
+            "",
+        ])
+
+        with open(info_path, "w") as f:
+            f.write("\n".join(lines))
+
+        logger.info(f"Saved z-range info to {info_path}")
+
+    def resplit_cache(
+        self,
+        stratify_by: list[str] = None,
+        n_bins: int = 4,
+        min_subjects_per_bin: int = 2,
+        seed: int = 42,
+    ) -> None:
+        """Re-split the cache using stratified splitting based on subject characteristics.
+
+        This method can be called after the initial cache build to create a more
+        balanced train/val split based on computed subject characteristics.
+
+        The method:
+        1. Loads all slice data from train.csv and val.csv
+        2. Computes subject characteristics (lesion %, area, z-bin coverage)
+        3. Re-assigns subjects to train/val using stratified splitting
+        4. Writes new train.csv and val.csv files
+
+        Note: Test set is NOT modified as it's typically predefined.
+
+        Args:
+            stratify_by: Features to stratify on. Options: "lesion_percentage", "lesion_area".
+                         Defaults to ["lesion_percentage"].
+            n_bins: Number of bins for discretizing continuous features.
+            min_subjects_per_bin: Minimum subjects per bin before falling back.
+            seed: Random seed for reproducibility.
+        """
+        from src.diffusion.data.splits import (
+            compute_subject_characteristics_from_csv,
+            stratified_split_subjects,
+        )
+
+        if stratify_by is None:
+            stratify_by = ["lesion_percentage"]
+
+        logger.info("=" * 80)
+        logger.info("Re-splitting cache with stratified sampling")
+        logger.info("=" * 80)
+
+        # Check if CSVs exist
+        train_csv = self.cache_dir / "train.csv"
+        val_csv = self.cache_dir / "val.csv"
+
+        if not train_csv.exists() or not val_csv.exists():
+            raise FileNotFoundError(
+                f"Cache CSVs not found. Run build_cache() first.\n"
+                f"  Expected: {train_csv} and {val_csv}"
+            )
+
+        # Load all slice metadata from train and val
+        import pandas as pd
+
+        train_df = pd.read_csv(train_csv)
+        val_df = pd.read_csv(val_csv)
+
+        # Combine into single dataframe
+        combined_df = pd.concat([train_df, val_df], ignore_index=True)
+
+        logger.info(f"Loaded {len(train_df)} train + {len(val_df)} val = {len(combined_df)} slices")
+
+        # Get unique subjects from train+val pool
+        all_subjects = list(combined_df["subject_id"].unique())
+        logger.info(f"Found {len(all_subjects)} unique subjects in train+val pool")
+
+        # Compute subject characteristics
+        # Create a temporary combined CSV for characteristics computation
+        temp_csv = self.cache_dir / "_temp_combined.csv"
+        combined_df.to_csv(temp_csv, index=False)
+
+        characteristics = compute_subject_characteristics_from_csv(
+            temp_csv, subjects=all_subjects
+        )
+
+        # Clean up temp file
+        temp_csv.unlink()
+
+        # Compute original val fraction
+        original_train_subjects = train_df["subject_id"].nunique()
+        original_val_subjects = val_df["subject_id"].nunique()
+        val_fraction = original_val_subjects / (original_train_subjects + original_val_subjects)
+
+        logger.info(f"Original split: train={original_train_subjects}, val={original_val_subjects}")
+        logger.info(f"Inferred val_fraction: {val_fraction:.2f}")
+
+        # Perform stratified split
+        train_subjects, val_subjects, _ = stratified_split_subjects(
+            subjects=all_subjects,
+            characteristics=characteristics,
+            val_fraction=val_fraction,
+            test_fraction=0.0,  # Don't touch test set
+            seed=seed,
+            stratify_by=stratify_by,
+            n_stratification_bins=n_bins,
+            min_subjects_per_bin=min_subjects_per_bin,
+        )
+
+        logger.info(f"New stratified split: train={len(train_subjects)}, val={len(val_subjects)}")
+
+        # Assign new split labels
+        train_set = set(train_subjects)
+        val_set = set(val_subjects)
+
+        new_train_rows = []
+        new_val_rows = []
+
+        for _, row in combined_df.iterrows():
+            row_dict = row.to_dict()
+            subject_id = row_dict["subject_id"]
+
+            if subject_id in train_set:
+                row_dict["split"] = "train"
+                new_train_rows.append(row_dict)
+            elif subject_id in val_set:
+                row_dict["split"] = "val"
+                new_val_rows.append(row_dict)
+            else:
+                logger.warning(f"Subject {subject_id} not assigned to any split!")
+
+        # Write new CSVs
+        fieldnames = list(combined_df.columns)
+
+        with open(train_csv, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(new_train_rows)
+
+        with open(val_csv, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(new_val_rows)
+
+        logger.info(f"Wrote {len(new_train_rows)} slices to {train_csv}")
+        logger.info(f"Wrote {len(new_val_rows)} slices to {val_csv}")
+
+        # Log statistics comparison
+        new_train_df = pd.DataFrame(new_train_rows)
+        new_val_df = pd.DataFrame(new_val_rows)
+
+        old_train_lesion_pct = train_df["has_lesion"].mean() * 100
+        old_val_lesion_pct = val_df["has_lesion"].mean() * 100
+        new_train_lesion_pct = new_train_df["has_lesion"].mean() * 100
+        new_val_lesion_pct = new_val_df["has_lesion"].mean() * 100
+
+        logger.info("")
+        logger.info("Lesion percentage comparison:")
+        logger.info(f"  Before: train={old_train_lesion_pct:.1f}%, val={old_val_lesion_pct:.1f}% "
+                   f"(diff={abs(old_train_lesion_pct - old_val_lesion_pct):.1f}%)")
+        logger.info(f"  After:  train={new_train_lesion_pct:.1f}%, val={new_val_lesion_pct:.1f}% "
+                   f"(diff={abs(new_train_lesion_pct - new_val_lesion_pct):.1f}%)")
+
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("Re-split complete. Run visualize_cache_bias.py to verify improvement.")
+        logger.info("=" * 80)
+
+    def _run_stratification_workflow(self, stratification_cfg: dict) -> None:
+        """Run full stratification workflow with pre/post visualization.
+
+        This method is called automatically at the end of build_cache() when
+        stratification is enabled in the config. It performs:
+
+        1. Generate pre-stratification visualizations
+        2. Run stratified re-splitting
+        3. Generate post-stratification visualizations
+        4. Generate comparison visualizations
+
+        Args:
+            stratification_cfg: Stratification configuration dict with keys:
+                - stratify_by: List of features to stratify on
+                - n_bins: Number of bins for discretizing features
+                - min_subjects_per_bin: Minimum subjects per bin
+                - seed: Random seed
+        """
+        from src.diffusion.scripts.visualize_cache_bias import (
+            load_all_splits,
+            run_all_visualizations,
+            generate_comparison_visualizations,
+        )
+
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("Running automated stratification workflow")
+        logger.info("=" * 80)
+
+        # Step 1: Pre-stratification visualizations
+        logger.info("\nStep 1/4: Generating pre-stratification visualizations...")
+        pre_viz_dir = self.cache_dir / "visualizations" / "pre_stratification"
+        pre_viz_dir.mkdir(parents=True, exist_ok=True)
+
+        df_pre = load_all_splits(self.cache_dir)
+        # Save a copy of pre-stratification data for comparison
+        df_pre_copy = df_pre.copy()
+        run_all_visualizations(df_pre, pre_viz_dir, show=False)
+
+        # Step 2: Stratified re-splitting
+        logger.info("\nStep 2/4: Running stratified re-splitting...")
+        self.resplit_cache(
+            stratify_by=stratification_cfg.get("stratify_by", ["lesion_percentage"]),
+            n_bins=stratification_cfg.get("n_bins", 4),
+            min_subjects_per_bin=stratification_cfg.get("min_subjects_per_bin", 2),
+            seed=stratification_cfg.get("seed", 42),
+        )
+
+        # Step 3: Post-stratification visualizations
+        logger.info("\nStep 3/4: Generating post-stratification visualizations...")
+        post_viz_dir = self.cache_dir / "visualizations" / "post_stratification"
+        post_viz_dir.mkdir(parents=True, exist_ok=True)
+
+        df_post = load_all_splits(self.cache_dir)
+        run_all_visualizations(df_post, post_viz_dir, show=False)
+
+        # Step 4: Comparison visualizations
+        logger.info("\nStep 4/4: Generating comparison visualizations...")
+        comparison_dir = self.cache_dir / "visualizations" / "pre_post_comparison"
+        comparison_dir.mkdir(parents=True, exist_ok=True)
+
+        generate_comparison_visualizations(df_pre_copy, df_post, comparison_dir, show=False)
+
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("Stratification workflow complete!")
+        logger.info("=" * 80)
+        logger.info(f"  Pre-stratification:  {pre_viz_dir}")
+        logger.info(f"  Post-stratification: {post_viz_dir}")
+        logger.info(f"  Comparison:          {comparison_dir}")

@@ -70,11 +70,27 @@ datasets:
       seed: 42              # Random seed for reproducible splits
 
 # =============================================================================
+# Stratification Settings
+# =============================================================================
+# When enabled, the cache builder will automatically:
+# 1. Generate pre-stratification visualizations
+# 2. Re-split train/val using stratified sampling based on subject characteristics
+# 3. Generate post-stratification visualizations
+# 4. Generate pre/post comparison visualizations
+stratification:
+  enabled: true  # Set to true to enable automatic stratification workflow
+  stratify_by:
+    - "lesion_percentage"  # Primary: ensures similar lesion prevalence in train/val
+  n_bins: 4
+  min_subjects_per_bin: 2
+  seed: 42
+
+# =============================================================================
 # Preprocessing Configuration
 # =============================================================================
 transforms:
-  target_spacing: [1.875, 1.875, 1.875]  # mm
-  roi_size: [128, 128, 128]
+  target_spacing: [1.25, 1.25, 1.25]  
+  roi_size: [160, 160, 160]
 
   intensity_norm:
     type: "percentile"

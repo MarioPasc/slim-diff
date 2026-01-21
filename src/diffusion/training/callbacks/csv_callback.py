@@ -50,16 +50,11 @@ class CSVLoggingCallback(Callback):
         super().__init__()
         self.cfg = cfg
 
-        # Create output directory
-        self.output_dir = Path(cfg.experiment.output_dir) / "csv_logs"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Histogram directory
-        self.histogram_dir = self.output_dir / "histograms"
-        self.histogram_dir.mkdir(parents=True, exist_ok=True)
-
-        # CSV file path (renamed to performance.csv)
-        self.csv_path = self.output_dir / "performance.csv"
+        # Defer directory creation to ensure rank-zero only in DDP
+        self._dirs_created = False
+        self.output_dir: Path | None = None
+        self.histogram_dir: Path | None = None
+        self.csv_path: Path | None = None
 
         # Track if we've written the header
         self._header_written = False
@@ -77,6 +72,31 @@ class CSVLoggingCallback(Callback):
         # Cache for training metrics (to be written with validation metrics)
         self._cached_train_metrics: dict[str, float] = {}
 
+    def _ensure_dirs(self, trainer: pl.Trainer) -> None:
+        """Create output directories (rank 0 only in DDP).
+
+        Args:
+            trainer: Lightning trainer (used to check global_rank).
+        """
+        if self._dirs_created:
+            return
+
+        # Only create directories on rank 0
+        if trainer.global_rank != 0:
+            return
+
+        # Create output directory
+        self.output_dir = Path(self.cfg.experiment.output_dir) / "csv_logs"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Histogram directory
+        self.histogram_dir = self.output_dir / "histograms"
+        self.histogram_dir.mkdir(parents=True, exist_ok=True)
+
+        # CSV file path
+        self.csv_path = self.output_dir / "performance.csv"
+
+        self._dirs_created = True
         logger.info(f"CSVLoggingCallback initialized, will write to {self.csv_path}")
         logger.info(f"Histograms will be saved to {self.histogram_dir}")
 
@@ -88,11 +108,19 @@ class CSVLoggingCallback(Callback):
         """Called at the end of each training epoch.
 
         Caches training metrics to be written with validation metrics.
+        Only runs on rank 0 in DDP mode.
 
         Args:
             trainer: Lightning trainer.
             pl_module: Lightning module.
         """
+        # Only run on rank 0 in DDP mode
+        if trainer.global_rank != 0:
+            return
+
+        # Ensure directories are created
+        self._ensure_dirs(trainer)
+
         # Get current epoch
         current_epoch = trainer.current_epoch
 
@@ -154,11 +182,19 @@ class CSVLoggingCallback(Callback):
 
         Collects all logged metrics (train + val + diagnostics) and writes them to CSV.
         Also checks for histogram data logged to wandb and saves to npz.
+        Only runs on rank 0 in DDP mode.
 
         Args:
             trainer: Lightning trainer.
             pl_module: Lightning module.
         """
+        # Only run on rank 0 in DDP mode
+        if trainer.global_rank != 0:
+            return
+
+        # Ensure directories are created
+        self._ensure_dirs(trainer)
+
         # Get current epoch and step
         current_epoch = trainer.current_epoch
         global_step = trainer.global_step

@@ -12,8 +12,8 @@
 # Experiment Metadata
 # =============================================================================
 experiment:
-  name: "jssdpm_lp_ffl"
-  output_dir: "./outputs/jssdpm_lp_ffl"
+  name: "jssdpm_lp_norm_x0"
+  output_dir: "./outputs/jssdpm_lp_norm_x0"
   seed: 33
 
 # =============================================================================
@@ -81,8 +81,8 @@ model:
   # Method options:
   #   - "concat": Concatenate prior as input channel (+1 channel)
   #   - "cross_attention": Encode prior via CNN, use cross-attention in UNet
-  anatomical_conditioning: true
-  anatomical_conditioning_method: "cross_attention"  # "concat" or "cross_attention"
+  anatomical_conditioning: false
+  anatomical_conditioning_method: "concat"  # "concat" or "cross_attention"
 
   # Cross-attention dimension (only used when method is "cross_attention")
   # Defaults to channels[-1] if not specified
@@ -144,8 +144,8 @@ scheduler:
 # =============================================================================
 sampler:
   type: "DDIM"
-  num_inference_steps: 400
-  eta: 0.2  # 0.0 = deterministic DDIM, 1.0 = DDPM
+  num_inference_steps: 350
+  eta: 0.25  # 0.0 = deterministic DDIM, 1.0 = DDPM
 
   # Classifier-free guidance scale
   guidance_scale: 1.0
@@ -155,9 +155,16 @@ sampler:
 # =============================================================================
 training:
   # Batch size and workers
-  batch_size: 32
+  batch_size: 16
   num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
   pin_memory: true
+
+  # Distributed training settings (leverages PyTorch Lightning's built-in DDP)
+  # For single GPU: set devices=1, strategy="auto"
+  # For multi-GPU DDP: set devices=2 (or more), strategy="ddp"
+  accelerator: "gpu"   # "auto", "gpu", "cpu"
+  devices: 2           # Number of GPUs (1 for single, 2+ for DDP)
+  strategy: "ddp"      # "auto", "ddp", "ddp_spawn"
 
   # Self conditioning
   self_conditioning:
@@ -231,7 +238,7 @@ training:
 # =============================================================================
 loss:
   # Enable Lp norm + FFL mode with group uncertainty weighting
-  mode: "mse_lp_norm_ffl_groups"
+  mode: "mse_lp_norm"
 
   # Lp norm configuration - balances outlier sensitivity with edge emphasis
   # p=2: MSE (standard), p=1: MAE (robust to outliers)
@@ -262,12 +269,12 @@ loss:
   # Forces model to learn hard-to-synthesize high-frequency components (edges, lesion boundaries)
   # Tuned for epilepsy lesion synthesis with edge sharpness focus
   ffl:
-    enabled: true
+    enabled: false
     loss_weight: 1.0  # Base scaling factor (uncertainty weighting handles balancing)
-    alpha: 1.2  # Focal exponent: moderate emphasis on hard frequencies
+    alpha: 1.35  # Focal exponent: moderate emphasis on hard frequencies
                # Compromise between 1.0 (linear) and 1.75 (aggressive)
                # Helps with edge sharpness while avoiding high-frequency noise artifacts
-    patch_factor: 2  # Local frequency analysis: 4 patches of 64x64 from 128x128
+    patch_factor: 2  # Local frequency analysis: 4 patches of 80x80 from 160x160
                      # Captures lesion-specific texture signatures and regional edge characteristics
                      # Better for detecting subtle GM-WM boundary blur in FCD
     ave_spectrum: false  # Per-sample spectrum weighting (not batch average)
@@ -278,14 +285,15 @@ loss:
 
   # Lesion pixel overweighting for Lp norm loss
   # Upweights lesion pixels to improve lesion reconstruction
+  # Note: With ~5% lesion pixels, weight=3.0 gives ~14% gradient contribution (vs ~1.5% unweighted)
   lesion_weighted_image:
     enabled: true  # ENABLED: Upweight lesions in FLAIR channel for better lesion synthesis
-    lesion_weight: 2.0  # 2x weight for lesion pixels in image channel
+    lesion_weight: 3.0  # 3x weight for lesion pixels in image channel
     background_weight: 1.0
 
   lesion_weighted_mask:
     enabled: true  # ENABLED: Improves lesion detection by upweighting lesion pixels
-    lesion_weight: 2.0  # 2.0x weight for lesion pixels in mask channel (higher since mask is critical)
+    lesion_weight: 4.0  # 4x weight for lesion pixels in mask channel (higher since mask is critical)
     background_weight: 1.0
 
 # =============================================================================
@@ -381,3 +389,4 @@ generation:
   output_format: "npz"
   save_individual: true
   create_index_csv: true
+
