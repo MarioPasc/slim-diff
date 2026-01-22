@@ -418,3 +418,195 @@ def build_anatomical_encoder(
     )
 
     return encoder
+
+
+# =============================================================================
+# Enhanced Anatomical Prior Encoder
+# =============================================================================
+
+
+class EnhancedAnatomicalPriorEncoder(nn.Module):
+    """Enhanced encoder with FPN backbone and 2D RoPE.
+
+    This enhanced version of the anatomical encoder provides:
+    1. **Multi-scale features**: FPN backbone with lateral connections
+    2. **Better position encoding**: 2D Rotary Position Embedding (RoPE)
+    3. **Flexible channels**: Support for arbitrary tissue label maps
+    4. **Higher resolution**: Reduced downsampling (4x instead of 8x)
+
+    Compared to the original AnatomicalPriorEncoder:
+    - Original: 8x downsample, simple CNN, 400 tokens, sinusoidal PE
+    - Enhanced: 4x downsample, FPN backbone, 1600 tokens, RoPE
+
+    Args:
+        in_channels: Number of input channels (1 for binary, C for tissue maps).
+        embed_dim: Output embedding dimension (must match cross_attention_dim).
+        hidden_dims: Tuple of hidden dimensions for FPN/CNN stages.
+        downsample_factor: Spatial downsampling factor (default 4 for 1600 tokens).
+        positional_encoding: Type ("rope", "sinusoidal", "learned").
+        use_fpn: If True, use FPN backbone; else use simple CNN.
+        input_size: Expected input spatial size (H, W).
+        norm_num_groups: Number of groups for GroupNorm.
+        rope_base: Base frequency for RoPE (default 10000.0).
+
+    Example:
+        >>> encoder = EnhancedAnatomicalPriorEncoder(
+        ...     in_channels=5,  # tissue channels
+        ...     embed_dim=256,
+        ...     downsample_factor=4,
+        ...     positional_encoding="rope",
+        ...     use_fpn=True,
+        ... )
+        >>> tissue_maps = torch.randn(4, 5, 160, 160)
+        >>> context = encoder(tissue_maps)
+        >>> context.shape
+        torch.Size([4, 1600, 256])  # (B, 40*40, embed_dim)
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 1,
+        embed_dim: int = 256,
+        hidden_dims: tuple[int, ...] = (64, 128),
+        downsample_factor: int = 4,
+        positional_encoding: Literal["rope", "sinusoidal", "learned"] = "rope",
+        use_fpn: bool = True,
+        input_size: tuple[int, int] = (160, 160),
+        norm_num_groups: int = 8,
+        rope_base: float = 10000.0,
+    ) -> None:
+        """Initialize the enhanced encoder."""
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.embed_dim = embed_dim
+        self.hidden_dims = hidden_dims
+        self.downsample_factor = downsample_factor
+        self.use_fpn = use_fpn
+        self.input_size = input_size
+        self.positional_encoding_type = positional_encoding
+
+        # Calculate output spatial dimensions
+        self.output_h = input_size[0] // downsample_factor
+        self.output_w = input_size[1] // downsample_factor
+        self.seq_len = self.output_h * self.output_w
+
+        # Build backbone
+        from .fpn_backbone import FPNBackbone, SimpleCNNBackbone
+
+        if use_fpn:
+            self.backbone = FPNBackbone(
+                in_channels=in_channels,
+                hidden_dims=hidden_dims,
+                out_channels=embed_dim,
+                downsample_factor=downsample_factor,
+                norm_num_groups=norm_num_groups,
+            )
+        else:
+            self.backbone = SimpleCNNBackbone(
+                in_channels=in_channels,
+                hidden_dims=hidden_dims,
+                out_channels=embed_dim,
+                downsample_factor=downsample_factor,
+                norm_num_groups=norm_num_groups,
+            )
+
+        # Build positional encoding
+        from .rotary_embedding import build_position_embedding_2d
+
+        self.pos_encoding = build_position_embedding_2d(
+            pos_type=positional_encoding,
+            embed_dim=embed_dim,
+            max_h=self.output_h,
+            max_w=self.output_w,
+            base=rope_base,
+        )
+
+        # Store whether positional encoding is multiplicative (RoPE) or additive
+        self._is_rope = positional_encoding == "rope"
+
+        # Log encoder configuration
+        n_params = sum(p.numel() for p in self.parameters())
+        logger.info(
+            f"EnhancedAnatomicalPriorEncoder: {n_params:,} params, "
+            f"in_channels={in_channels}, "
+            f"output shape (B, {self.seq_len}, {embed_dim}), "
+            f"backbone={'FPN' if use_fpn else 'SimpleCNN'}, "
+            f"positional_encoding={positional_encoding}"
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Encode anatomical prior maps into cross-attention context.
+
+        Args:
+            x: Anatomical prior maps, shape (B, C, H, W) with values in [-1, 1].
+               C can be 1 (binary brain mask) or more (tissue probability maps).
+
+        Returns:
+            Context embeddings for cross-attention, shape (B, seq_len, embed_dim).
+            seq_len = (H/downsample_factor) * (W/downsample_factor).
+        """
+        B = x.shape[0]
+
+        # Backbone: (B, C, H, W) -> (B, embed_dim, H', W')
+        features = self.backbone(x)
+
+        # Get actual spatial dimensions
+        _, _, h, w = features.shape
+
+        # Flatten spatial dimensions: (B, embed_dim, H', W') -> (B, H'*W', embed_dim)
+        features = features.flatten(2).transpose(1, 2)  # (B, seq_len, embed_dim)
+
+        # Apply positional encoding
+        if self._is_rope:
+            # RoPE is multiplicative (applied directly to features)
+            features = self.pos_encoding(features, h, w)
+        else:
+            # Additive positional encodings (sinusoidal or learned)
+            features = self.pos_encoding(features, h, w)
+
+        return features
+
+
+def build_enhanced_anatomical_encoder(
+    encoder_cfg,
+    cross_attention_dim: int,
+    input_size: tuple[int, int] = (160, 160),
+) -> EnhancedAnatomicalPriorEncoder:
+    """Factory function to build EnhancedAnatomicalPriorEncoder from config.
+
+    Args:
+        encoder_cfg: Encoder configuration (from anatomical_encoder.yaml).
+        cross_attention_dim: The cross_attention_dim from the UNet.
+        input_size: Input spatial size (H, W).
+
+    Returns:
+        Configured EnhancedAnatomicalPriorEncoder instance.
+    """
+    # Get architecture config
+    arch_cfg = encoder_cfg.get("architecture", {})
+
+    # Determine number of input channels from channel_mapping
+    channel_mapping = encoder_cfg.get("channel_mapping", {0: "brain"})
+    in_channels = len(channel_mapping)
+
+    # Get positional encoding type
+    pos_encoding = arch_cfg.get("positional_encoding", "rope")
+
+    # Get RoPE base frequency if applicable
+    rope_cfg = arch_cfg.get("rope", {})
+    rope_base = rope_cfg.get("base", 10000.0)
+
+    encoder = EnhancedAnatomicalPriorEncoder(
+        in_channels=in_channels,
+        embed_dim=arch_cfg.get("embed_dim", cross_attention_dim),
+        hidden_dims=tuple(arch_cfg.get("hidden_dims", (64, 128))),
+        downsample_factor=arch_cfg.get("downsample_factor", 4),
+        positional_encoding=pos_encoding,
+        use_fpn=arch_cfg.get("use_fpn", True),
+        input_size=tuple(arch_cfg.get("input_size", input_size)),
+        norm_num_groups=arch_cfg.get("norm_num_groups", 8),
+        rope_base=rope_base,
+    )
+
+    return encoder

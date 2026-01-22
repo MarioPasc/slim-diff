@@ -170,6 +170,9 @@ def generate_samples(
                         zbin_cfg.get("fallback", "prior"),
                         zbin_cfg.get("n_first_bins", 0),
                         zbin_cfg.get("max_components_for_first_bins", 1),
+                        zbin_cfg.get("relaxed_threshold_factor", 0.1),
+                        zbin_cfg.get("background_value", -1.0),
+                        zbin_cfg.get("use_prior_directly", False),
                     )
 
                 # Create metadata

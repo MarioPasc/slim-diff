@@ -33,6 +33,9 @@ from src.diffusion.training.callbacks.epoch_callbacks import (
     EMACallback,
     VisualizationCallback,
 )
+from src.diffusion.training.callbacks.encoder_monitoring_callback import (
+    build_encoder_monitoring_callback,
+)
 from src.diffusion.training.callbacks.step_callbacks import GradientNormCallback
 from src.diffusion.training.lit_modules import JSDDPMLightningModule
 from src.diffusion.utils.logging import setup_logger
@@ -141,6 +144,11 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
             f"EMA enabled: decay={ema_cfg.decay}, "
             f"update_every={ema_cfg.get('update_every', 1)}"
         )
+
+    # Anatomical encoder monitoring callback (if using cross_attention method)
+    encoder_callback = build_encoder_monitoring_callback(cfg)
+    if encoder_callback is not None:
+        callbacks.append(encoder_callback)
 
     return callbacks
 

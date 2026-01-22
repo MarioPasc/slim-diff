@@ -482,6 +482,9 @@ class VisualizationCallback(Callback):
                     pp_cfg.fallback,
                     pp_cfg.get("n_first_bins", 0),
                     pp_cfg.get("max_components_for_first_bins", 1),
+                    pp_cfg.get("relaxed_threshold_factor", 0.1),
+                    pp_cfg.get("background_value", -1.0),
+                    pp_cfg.get("use_prior_directly", True),
                 )
 
                 # Convert back to tensor

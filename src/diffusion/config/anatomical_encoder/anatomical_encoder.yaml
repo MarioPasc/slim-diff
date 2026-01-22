@@ -1,0 +1,143 @@
+# =============================================================================
+# Anatomical Prior Encoder Configuration
+# =============================================================================
+# This file configures the AnatomicalPriorEncoder for spatial conditioning.
+# Referenced from main jsddpm.yaml via: model.anatomical_encoder_config
+#
+# The encoder transforms anatomical prior maps into cross-attention context
+# for the diffusion UNet. It supports both legacy binary brain/background
+# masks and multi-channel tissue probability maps.
+#
+# Key features:
+#   - Flexible channel support (arbitrary number of tissue classes)
+#   - FPN backbone for multi-scale feature extraction
+#   - 2D RoPE for relative position encoding
+#   - Reduced downsampling (4x instead of 8x) for finer spatial resolution
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Encoder Version
+# -----------------------------------------------------------------------------
+# - "legacy": Original AnatomicalPriorEncoder (downsample 8x, simple CNN, 1 channel)
+# - "enhanced": EnhancedAnatomicalPriorEncoder (FPN + RoPE, flexible channels)
+version: "enhanced"
+
+# -----------------------------------------------------------------------------
+# Prior Channel Mapping
+# -----------------------------------------------------------------------------
+# Defines what each channel represents. Number of input channels is inferred
+# from the length of this mapping.
+#
+# The loader will expect NPZ files with:
+#   - Multi-channel format: prior_{z_bin} with shape (C, H, W)
+#   - OR binary format: bin_{z_bin} with shape (H, W), auto-expanded to C channels
+#
+# Examples:
+#   Single channel (binary brain mask):
+#     channel_mapping:
+#       0: "brain"
+#
+#   Two channels (background + brain):
+#     channel_mapping:
+#       0: "background"
+#       1: "brain"
+#
+#   Five channels (full tissue segmentation):
+#     channel_mapping:
+#       0: "background"
+#       1: "csf"
+#       2: "gm"
+#       3: "wm"
+#       4: "ventricles"
+#
+channel_mapping:
+  0: "background"
+  1: "brain"
+
+# -----------------------------------------------------------------------------
+# Prior File Configuration
+# -----------------------------------------------------------------------------
+priors:
+  # Name of the NPZ file in cache_dir containing z-bin priors
+  filename: "zbin_priors_brain_roi.npz"
+
+  # If multi-channel priors not found, attempt to load binary format
+  # and expand to the number of channels specified in channel_mapping
+  fallback_to_binary: true
+
+  # Normalization range for prior values
+  # Model expects inputs in [-1, 1], so priors are scaled to this range
+  normalize_range: [-1.0, 1.0]
+
+# -----------------------------------------------------------------------------
+# Architecture Configuration
+# -----------------------------------------------------------------------------
+architecture:
+  # Spatial downsampling factor (must be power of 2)
+  # - 4: 160x160 -> 40x40 = 1600 spatial tokens (finer resolution)
+  # - 8: 160x160 -> 20x20 = 400 spatial tokens (original)
+  # Lower = more spatial tokens = finer detail but more memory
+  downsample_factor: 4
+
+  # Backbone type
+  # - "fpn": Feature Pyramid Network with multi-scale fusion (recommended)
+  # - "simple": Simple strided CNN without skip connections
+  use_fpn: true
+
+  # Hidden dimensions for FPN/CNN stages
+  # For FPN with downsample_factor=4: 2 stages, so need at least 2 values
+  # For downsample_factor=8: 3 stages, need at least 3 values
+  # Channels increase with depth for richer feature extraction
+  hidden_dims: [64, 128]
+
+  # Output embedding dimension
+  # Should match model.cross_attention_dim in jsddpm.yaml
+  embed_dim: 256
+
+  # Positional encoding type
+  # - "rope": Rotary Position Embedding (multiplicative, relative positions)
+  #           Better generalization to different spatial sizes
+  # - "sinusoidal": Fixed sinusoidal encoding (additive, absolute positions)
+  #                 Classic Transformer-style, good baseline
+  # - "learned": Learnable embeddings (additive)
+  #              Most flexible but may overfit
+  positional_encoding: "rope"
+
+  # RoPE-specific settings
+  rope:
+    # Base frequency for rotation (default from original paper)
+    base: 10000.0
+
+  # GroupNorm configuration
+  # Number of groups for GroupNorm layers in backbone
+  # Should divide all hidden_dims values
+  norm_num_groups: 8
+
+  # Input spatial size (for precomputing position embeddings)
+  # Should match the slice resolution after preprocessing
+  input_size: [160, 160]
+
+# -----------------------------------------------------------------------------
+# Logging & Monitoring
+# -----------------------------------------------------------------------------
+# These settings control the AnatomicalEncoderMonitoringCallback
+logging:
+  # Enable encoder monitoring during training
+  enabled: true
+
+  # Log encoder statistics every N epochs
+  log_every_n_epochs: 5
+
+  # Log activation statistics (mean, std, sparsity) from backbone stages
+  log_feature_stats: true
+
+  # Log per-channel activation statistics
+  # Useful for understanding which tissue channels are most informative
+  log_channel_stats: true
+
+  # Generate and log feature map visualizations to WandB
+  # Creates 2D visualizations of encoder activations
+  visualize_features: true
+
+  # Number of samples to use for visualization (per z-bin)
+  n_visualization_samples: 4

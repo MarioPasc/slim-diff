@@ -30,7 +30,12 @@ from src.diffusion.model.factory import (
     DiffusionSampler,
     AnatomicalConditioningMethod,
 )
-from src.diffusion.model.components.anatomical_encoder import AnatomicalPriorEncoder
+from src.diffusion.model.components.anatomical_encoder import (
+    AnatomicalPriorEncoder,
+    EnhancedAnatomicalPriorEncoder,
+)
+from src.diffusion.model.components.prior_map_loader import PriorMapLoader
+from src.diffusion.model.factory import load_encoder_config
 from src.diffusion.training.metrics import MetricsCalculator
 from src.diffusion.training.lesion_metrics import LesionQualityMetrics
 from src.diffusion.utils.zbin_priors import (
@@ -102,6 +107,7 @@ class JSDDPMLightningModule(pl.LightningModule):
 
         # Z-bin priors for validation post-processing
         self._zbin_priors: dict[int, NDArray[np.bool_]] | None = None
+        self._prior_map_loader: PriorMapLoader | None = None
         pp_cfg = cfg.get("postprocessing", {})
         zbin_cfg = pp_cfg.get("zbin_priors", {})
         self._use_zbin_priors = (
@@ -113,6 +119,11 @@ class JSDDPMLightningModule(pl.LightningModule):
         self._use_anatomical_conditioning = cfg.model.get("anatomical_conditioning", False)
         self._anatomical_method: AnatomicalConditioningMethod = cfg.model.get(
             "anatomical_conditioning_method", "concat"
+        )
+
+        # Detect if using enhanced encoder (for multi-channel prior support)
+        self._use_enhanced_encoder = isinstance(
+            self._anatomical_encoder, EnhancedAnatomicalPriorEncoder
         )
 
         # Self-conditioning settings (Chen et al., 2022)
@@ -192,20 +203,101 @@ class JSDDPMLightningModule(pl.LightningModule):
         )
 
     def _load_zbin_priors(self) -> None:
-        """Load z-bin priors from cache for post-processing."""
+        """Load z-bin priors from cache for post-processing and anatomical conditioning.
+
+        When using the enhanced encoder with cross_attention method, creates a
+        PriorMapLoader for flexible multi-channel support.
+        """
         pp_cfg = self.cfg.postprocessing.zbin_priors
         cache_dir = Path(self.cfg.data.cache_dir)
         z_bins = self.cfg.conditioning.z_bins
 
         try:
+            # Always load legacy priors for post-processing
             self._zbin_priors = load_zbin_priors(
                 cache_dir, pp_cfg.priors_filename, z_bins
             )
             logger.info(f"Loaded z-bin priors for {len(self._zbin_priors)} bins")
+
+            # Create PriorMapLoader for enhanced encoder (if using cross_attention)
+            if (
+                self._use_enhanced_encoder
+                and self._use_anatomical_conditioning
+                and self._anatomical_method == "cross_attention"
+            ):
+                try:
+                    # Load encoder config to get channel mapping
+                    encoder_cfg = load_encoder_config(self.cfg)
+                    channel_mapping = encoder_cfg.get(
+                        "channel_mapping", {0: "brain"}
+                    )
+                    priors_cfg = encoder_cfg.get("priors", {})
+                    priors_filename = priors_cfg.get(
+                        "filename", pp_cfg.priors_filename
+                    )
+
+                    self._prior_map_loader = PriorMapLoader(
+                        cache_dir=cache_dir,
+                        filename=priors_filename,
+                        n_bins=z_bins,
+                        channel_mapping=channel_mapping,
+                        fallback_to_binary=priors_cfg.get("fallback_to_binary", True),
+                        normalize_range=tuple(priors_cfg.get("normalize_range", (-1.0, 1.0))),
+                    )
+                    logger.info(
+                        f"Created PriorMapLoader for enhanced encoder: "
+                        f"{self._prior_map_loader.n_channels} channels, "
+                        f"format={self._prior_map_loader.format}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to create PriorMapLoader: {e}. "
+                        f"Falling back to legacy prior loading."
+                    )
+                    self._prior_map_loader = None
+
         except Exception as e:
             logger.warning(f"Failed to load z-bin priors: {e}. Post-processing disabled.")
             self._use_zbin_priors = False
             self._zbin_priors = None
+            self._prior_map_loader = None
+
+    def _get_anatomical_priors(
+        self,
+        z_bins: list[int],
+        device: torch.device | str,
+    ) -> torch.Tensor | None:
+        """Get anatomical priors as tensors for the given z-bins.
+
+        Uses PriorMapLoader when available (enhanced encoder), otherwise
+        falls back to legacy get_anatomical_priors_as_input.
+
+        Args:
+            z_bins: List of z-bin indices.
+            device: Device to place tensors on.
+
+        Returns:
+            Prior tensors of shape (B, C, H, W), or None if priors not available.
+        """
+        if not self._use_anatomical_conditioning:
+            return None
+
+        # Use PriorMapLoader for enhanced encoder (multi-channel support)
+        if self._prior_map_loader is not None:
+            try:
+                return self._prior_map_loader.get_tensor(
+                    z_bins, device=device, normalize=True
+                )
+            except Exception as e:
+                logger.warning(f"PriorMapLoader failed: {e}. Falling back to legacy.")
+
+        # Legacy fallback: single-channel binary priors
+        if self._zbin_priors is not None:
+            return get_anatomical_priors_as_input(
+                z_bins, self._zbin_priors, device=device
+            )
+
+        return None
 
     def _get_val_sampler(self) -> DiffusionSampler:
         """Get or create the diffusion sampler for validation metrics.
@@ -446,16 +538,18 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get anatomical priors and context early (needed for both methods and self-cond bootstrap)
         anatomical_priors = None
         anatomical_context = None
-        if self._use_anatomical_conditioning and self._zbin_priors is not None:
+        if self._use_anatomical_conditioning:
             z_bins_batch = batch["metadata"]["z_bin"]  # list[int] of length B
-            anatomical_priors = get_anatomical_priors_as_input(
-                z_bins_batch,
-                self._zbin_priors,
-                device=x_t.device,
-            )  # (B, 1, H, W)
+            anatomical_priors = self._get_anatomical_priors(
+                z_bins_batch, device=x_t.device
+            )  # (B, C, H, W) where C depends on encoder config
 
             # For cross_attention method, encode priors into context
-            if self._anatomical_method == "cross_attention" and self._anatomical_encoder is not None:
+            if (
+                anatomical_priors is not None
+                and self._anatomical_method == "cross_attention"
+                and self._anatomical_encoder is not None
+            ):
                 anatomical_context = self._anatomical_encoder(anatomical_priors)  # (B, seq_len, embed_dim)
 
         # Self-conditioning: Optionally concatenate predicted x0 from previous step
@@ -750,16 +844,18 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get anatomical priors and context for both methods
         anatomical_priors = None
         anatomical_context = None
-        if self._use_anatomical_conditioning and self._zbin_priors is not None:
+        if self._use_anatomical_conditioning:
             z_bins_batch = batch["metadata"]["z_bin"]
-            anatomical_priors = get_anatomical_priors_as_input(
-                z_bins_batch,
-                self._zbin_priors,
-                device=x_t.device,
+            anatomical_priors = self._get_anatomical_priors(
+                z_bins_batch, device=x_t.device
             )
 
             # For cross_attention method, encode priors into context
-            if self._anatomical_method == "cross_attention" and self._anatomical_encoder is not None:
+            if (
+                anatomical_priors is not None
+                and self._anatomical_method == "cross_attention"
+                and self._anatomical_encoder is not None
+            ):
                 anatomical_context = self._anatomical_encoder(anatomical_priors)
 
         # Prepare model input based on conditioning method

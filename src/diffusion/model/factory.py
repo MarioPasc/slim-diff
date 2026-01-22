@@ -17,24 +17,42 @@ The factory supports two methods for incorporating anatomical z-bin priors:
    - More expressive: learned, selective, multi-scale spatial guidance
    - Input channels: base + self_cond (no +1)
    - Requires AnatomicalPriorEncoder module
+
+Encoder Versions:
+-----------------
+When using cross_attention method, two encoder versions are available:
+
+1. "legacy" (original):
+   - Simple CNN backbone, 8x downsampling, 400 tokens
+   - Sinusoidal or learned positional encoding
+   - Single-channel binary input only
+
+2. "enhanced":
+   - FPN backbone with multi-scale feature fusion
+   - 4x downsampling for 1600 tokens (finer resolution)
+   - 2D RoPE for better relative position encoding
+   - Flexible multi-channel input (tissue probability maps)
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Union
 
 import torch
 import torch.nn as nn
 from monai.networks.nets.diffusion_model_unet import DiffusionModelUNet
 from monai.networks.schedulers.ddim import DDIMScheduler
 from monai.networks.schedulers.ddpm import DDPMScheduler
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from src.diffusion.model.embeddings import ConditionalEmbeddingWithSinusoidal
 from src.diffusion.model.components.anatomical_encoder import (
     AnatomicalPriorEncoder,
+    EnhancedAnatomicalPriorEncoder,
     build_anatomical_encoder,
+    build_enhanced_anatomical_encoder,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,15 +60,60 @@ logger = logging.getLogger(__name__)
 # Type alias for conditioning methods
 AnatomicalConditioningMethod = Literal["concat", "cross_attention"]
 
+# Type alias for encoder types
+EncoderType = Union[AnatomicalPriorEncoder, EnhancedAnatomicalPriorEncoder]
+
+
+def load_encoder_config(cfg: DictConfig) -> DictConfig:
+    """Load anatomical encoder configuration from separate YAML file.
+
+    If model.anatomical_encoder_config is specified, loads that file.
+    Otherwise, falls back to inline config in model.anatomical_encoder
+    for backward compatibility.
+
+    Args:
+        cfg: Main configuration object.
+
+    Returns:
+        Encoder configuration (from file or inline).
+    """
+    encoder_config_path = cfg.model.get("anatomical_encoder_config")
+
+    if encoder_config_path:
+        # Load from separate file
+        path = Path(encoder_config_path)
+        if not path.is_absolute():
+            # Resolve relative to current working directory
+            path = Path.cwd() / path
+
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Anatomical encoder config not found: {path}"
+            )
+
+        encoder_cfg = OmegaConf.load(path)
+        logger.info(f"Loaded encoder config from: {path}")
+        return encoder_cfg
+
+    # Fallback to inline config for backward compatibility
+    inline_cfg = cfg.model.get("anatomical_encoder", {})
+    if inline_cfg:
+        logger.info("Using inline encoder config (legacy mode)")
+    return OmegaConf.create(inline_cfg)
+
 
 def build_model(
     cfg: DictConfig,
-) -> tuple[DiffusionModelUNet, AnatomicalPriorEncoder | None]:
+) -> tuple[DiffusionModelUNet, EncoderType | None]:
     """Build the DiffusionModelUNet and optional AnatomicalPriorEncoder from config.
 
     Handles two anatomical conditioning methods:
     - "concat": Adds +1 input channel for the prior mask (default)
     - "cross_attention": Enables cross-attention with a separate encoder
+
+    When using cross_attention, supports two encoder versions:
+    - "legacy": Original AnatomicalPriorEncoder (simple CNN, 8x downsample)
+    - "enhanced": EnhancedAnatomicalPriorEncoder (FPN, RoPE, 4x downsample)
 
     Args:
         cfg: Configuration object.
@@ -169,9 +232,29 @@ def build_model(
 
     # 5. Build AnatomicalPriorEncoder if using cross-attention method
     if use_cross_attention_anatomical:
-        anatomical_encoder = build_anatomical_encoder(cfg, cross_attention_dim)
+        # Load encoder config (from separate file or inline)
+        encoder_cfg = load_encoder_config(cfg)
+
+        # Determine encoder version
+        encoder_version = encoder_cfg.get("version", "legacy")
+
+        if encoder_version == "enhanced":
+            # Build enhanced encoder with FPN and RoPE
+            input_size = tuple(cfg.data.transforms.roi_size[:2])
+            anatomical_encoder = build_enhanced_anatomical_encoder(
+                encoder_cfg, cross_attention_dim, input_size
+            )
+            logger.info(
+                f"Built EnhancedAnatomicalPriorEncoder: "
+                f"in_channels={anatomical_encoder.in_channels}, "
+                f"seq_len={anatomical_encoder.seq_len}"
+            )
+        else:
+            # Build legacy encoder (default for backward compatibility)
+            anatomical_encoder = build_anatomical_encoder(cfg, cross_attention_dim)
+
         encoder_params = sum(p.numel() for p in anatomical_encoder.parameters())
-        logger.info(f"Built AnatomicalPriorEncoder: {encoder_params:,} params")
+        logger.info(f"Built AnatomicalPriorEncoder ({encoder_version}): {encoder_params:,} params")
 
     # Log model info
     n_params = sum(p.numel() for p in model.parameters())
@@ -295,6 +378,10 @@ class DiffusionSampler:
     Supports two anatomical conditioning methods:
     - "concat": Concatenates prior mask as input channel
     - "cross_attention": Encodes prior via AnatomicalPriorEncoder and uses cross-attention
+
+    When using cross_attention, supports both legacy and enhanced encoders:
+    - Legacy: AnatomicalPriorEncoder (simple CNN, single-channel input)
+    - Enhanced: EnhancedAnatomicalPriorEncoder (FPN, RoPE, multi-channel input)
     """
 
     def __init__(
@@ -303,7 +390,7 @@ class DiffusionSampler:
         scheduler: DDIMScheduler | DDPMScheduler,
         cfg: DictConfig,
         device: torch.device | str = "cuda",
-        anatomical_encoder: AnatomicalPriorEncoder | None = None,
+        anatomical_encoder: EncoderType | None = None,
     ) -> None:
         """Initialize the sampler.
 
@@ -314,6 +401,8 @@ class DiffusionSampler:
             device: Target device for sampling.
             anatomical_encoder: Optional encoder for cross-attention anatomical conditioning.
                 Required if anatomical_conditioning_method is "cross_attention".
+                Can be either AnatomicalPriorEncoder (legacy) or
+                EnhancedAnatomicalPriorEncoder (enhanced).
         """
         self.model = model
         self.scheduler = scheduler

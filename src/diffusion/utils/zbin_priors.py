@@ -586,31 +586,42 @@ def apply_zbin_prior_postprocess(
     max_components_for_first_bins: int = 1,
     relaxed_threshold_factor: float = 0.1,
     background_value: float = 0.0,
+    use_prior_directly: bool = False,
 ) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     """Apply z-bin prior post-processing to a generated sample.
 
-    Algorithm:
-    1. Get prior ROI for z_bin
-    2. Robust scaling within prior region
-    3. Gaussian smoothing
-    4. Otsu threshold within prior
-    5. Top N largest connected components (N=3 for first bins, 1 for others)
-    6. Enforce min_component_px (fallback if too small)
-    7. Fill holes -> final brain mask B
-    8. Apply: img_out = img * B, lesion_out = lesion * B
+    Two modes of operation:
+
+    **Mode 1: use_prior_directly=True** (recommended for visualizations)
+    - Simply uses the prior mask directly as the brain mask
+    - No Otsu thresholding or connected component analysis
+    - Faster and more consistent
+
+    **Mode 2: use_prior_directly=False** (default, for generation)
+    - Uses Otsu algorithm to find brain mask within prior region:
+      1. Get prior ROI for z_bin
+      2. Robust scaling within prior region
+      3. Gaussian smoothing
+      4. Otsu threshold within prior
+      5. Top N largest connected components
+      6. Enforce min_component_px (fallback if too small)
+      7. Fill holes -> final brain mask B
+
+    Final step (both modes): Apply: img_out = img * B, lesion_out = lesion * B
 
     Args:
         img: Generated image (H, W).
         lesion: Generated lesion mask (H, W).
         z_bin: Z-bin index for this slice.
         priors: Dict of z-bin -> ROI arrays.
-        gaussian_sigma_px: Smoothing sigma.
-        min_component_px: Minimum component size.
-        fallback: "prior" or "empty".
+        gaussian_sigma_px: Smoothing sigma (only used when use_prior_directly=False).
+        min_component_px: Minimum component size (only used when use_prior_directly=False).
+        fallback: "prior" or "empty" (only used when use_prior_directly=False).
         n_first_bins: Number of low z-bins for multi-component handling (default: 0).
         max_components_for_first_bins: Keep top N components for first bins (default: 1).
         relaxed_threshold_factor: Factor for relaxed threshold on smaller components.
         background_value: Value to use for out-of-brain regions (default: 0.0).
+        use_prior_directly: If True, use prior mask directly without Otsu algorithm.
 
     Returns:
         Tuple of (cleaned_img, cleaned_lesion).
@@ -629,9 +640,25 @@ def apply_zbin_prior_postprocess(
     # Check if prior is empty
     if not prior.any():
         if fallback == "empty":
-            return np.zeros_like(img), np.zeros_like(lesion)
+            bg_img = np.full_like(img, background_value)
+            bg_lesion = np.full_like(lesion, background_value)
+            return bg_img, bg_lesion
         else:
             return img, lesion
+
+    # Fast path: use prior mask directly without Otsu algorithm
+    if use_prior_directly:
+        brain_mask = prior.astype(np.bool_)
+        img_out = np.where(brain_mask, img_2d, background_value).astype(img_2d.dtype)
+        lesion_out = np.where(brain_mask, lesion_2d, background_value).astype(lesion_2d.dtype)
+
+        # Restore original shape if needed
+        if img.ndim == 3:
+            img_out = img_out[np.newaxis]
+        if lesion.ndim == 3:
+            lesion_out = lesion_out[np.newaxis]
+
+        return img_out.astype(np.float32), lesion_out.astype(np.float32)
 
     # Robust scaling within prior region only
     vals = img_2d[prior]
@@ -777,6 +804,7 @@ def apply_postprocess_batch(
             pp_cfg.get("max_components_for_first_bins", 1),
             pp_cfg.get("relaxed_threshold_factor", 0.1),
             pp_cfg.get("background_value", 0.0),
+            pp_cfg.get("use_prior_directly", False),
         )
 
         cleaned_images.append(torch.from_numpy(img_clean))
