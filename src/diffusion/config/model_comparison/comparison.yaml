@@ -19,16 +19,12 @@ root_results_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/u
 #   - csv_logs/histograms/ (timestep/token distributions)
 #   - checkpoints/*.ckpt (model checkpoint, for reconstruction comparison)
 models:
-  "JS-DDPM Complete - Conditioned": "anatomical_conditioning/jsddpm_complete"
-  "JS-DDPM Complete - Not Conditioned": "no_anatomical_conditioning/jsddpm_complete"
+  "e-Pred + Lp + FFL": "noise_prediction/no_anatomical_conditioning/jsddpm_complete"
+  "v-Pred + Lp + FFL": "v_prediction/jssdpm_lp_ffl_no_anatomical_cond"
 
-  "JS-DDPM FFL - Conditioned": "anatomical_conditioning/jsddpm_ffl"
-  "JS-DDPM FFL - Not Conditioned": "no_anatomical_conditioning/jsddpm_ffl"
+  "e-Pred + MSE + FFL": "noise_prediction/no_anatomical_conditioning/jsddpm_ffl"
+  "v-Pred + MSE + FFL": "v_prediction/jssdpm_mse_ffl_x0_no_anatomical_cond"
 
-  "JS-DDPM No Self-Cond - Conditioned": "anatomical_conditioning/jsddpm_complete_no_self_cond"
-  "JS-DDPM No Self-Cond - Not Conditioned": "no_anatomical_conditioning/jsddpm_complete_no_self_cond"
-
-  "JS-DDPM Lp Norm - Not Conditioned": "no_anatomical_conditioning/jssdpm_lp_norm_only"
 # =============================================================================
 # Visualization Settings
 # =============================================================================
@@ -38,7 +34,7 @@ visualizations:
     - loss_curves
     - uncertainty_evolution
     - timestep_mse_heatmap
-    - reconstruction_comparison  # MANDATORY
+    - reconstruction_comparison  
     - summary_table
     - publication_panel  # Publication-ready 3-panel figure
 
