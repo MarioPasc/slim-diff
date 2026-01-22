@@ -1,0 +1,373 @@
+# JS-DDPM Configuration: Epsilon Prediction + MSE Loss
+# Joint-Synthesis DDPM for paired FLAIR/lesion mask generation
+#
+# ICIP 2026 Experiment: Baseline MSE with epsilon prediction
+# Part of ablation study: {epsilon, x0, v} × {MSE, MSE+FFL}
+
+
+# =============================================================================
+# Experiment Metadata
+# =============================================================================
+experiment:
+  name: "epsilon_mse"
+  output_dir: "./outputs/epsilon_mse"
+  seed: 33
+
+# =============================================================================
+# Data Configuration (DATASET-AGNOSTIC)
+# =============================================================================
+data:
+  # Path to pre-built slice cache (generated via jsddpm-cache command)
+  cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
+
+  # Data loader settings (dataset-agnostic)
+  batch_size: 32
+  num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
+  pin_memory: true
+
+  transforms:
+    target_spacing: [1.25, 1.25, 1.25]  # mm - yields ~128^3 from ~188x232x196
+    roi_size: [160, 160, 160]
+    intensity_norm:
+      type: "percentile"  # Options: "percentile", "minmax"
+      lower: 0.5
+      upper: 99.5
+      b_min: -1.0
+      b_max: 1.0
+      clip: true
+      
+  # Needed for ConditionalEmbeddingWithSinusoidal
+  slice_sampling:
+    z_range: [34, 115]  # Valid z indices after resampling [min_z, max_z] (inclusive)
+    filter_empty_brain: true
+    brain_threshold: -0.9  # Threshold for considering pixel as brain in [-1,1] space
+    brain_min_fraction: 0.05  # Minimum fraction of brain pixels to keep slice
+
+  # Lesion oversampling strategy (dataset-agnostic)
+  lesion_oversampling:
+    enabled: true
+    mode: "balance"  # "balance" for 50/50 lesion/non-lesion sampling, "weight" for manual weight
+    weight: 3.0  # Weight multiplier for lesion slices (only used when mode="weight")
+
+# =============================================================================
+# Conditioning Configuration
+# =============================================================================
+conditioning:
+  z_bins: 30  # Number of bins for z-position quantization
+
+  # Z-position encoding options
+  use_sinusoidal: true  # Use sinusoidal position encoding for z-position
+  max_z: 159  # Maximum z-index for sinusoidal encoding (0-indexed for 160 slices)
+
+  # Classifier-free guidance (CFG)
+  cfg:
+    enabled: false  # Enable/disable CFG
+    null_token: 60  # Special token for unconditional generation (2*z_bins)
+    dropout_prob: 0.1  # Probability of dropping condition during training
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+model:
+  type: "DiffusionModelUNet"
+  spatial_dims: 2
+  in_channels: 2   # [image, mask] - factory.py auto-increases when conditioning is enabled
+  out_channels: 2  # [image, mask]
+
+  # Anatomical conditioning: use z-bin priors for spatial guidance
+  # Method options:
+  #   - "concat": Concatenate prior as input channel (+1 channel)
+  #   - "cross_attention": Encode prior via CNN, use cross-attention in UNet
+  anatomical_conditioning: false
+  anatomical_conditioning_method: "concat"  # "concat" or "cross_attention"
+
+  # Cross-attention dimension (only used when method is "cross_attention")
+  # Defaults to channels[-1] if not specified
+  cross_attention_dim: 256
+
+  # Anatomical encoder configuration (only used when method is "cross_attention")
+  anatomical_encoder:
+    hidden_dims: [32, 64, 128]  # CNN encoder hidden channels
+    downsample_factor: 8        # Spatial downsampling (160x160 -> 20x20 = 400 tokens)
+    positional_encoding: "sinusoidal"  # "sinusoidal" or "learned"
+    norm_num_groups: 8
+
+  # UNet architecture
+  channels: [64, 128, 256, 256]
+  attention_levels: [false, false, true, true]
+  num_res_blocks: 2
+  num_head_channels: 32
+
+  # Normalization
+  norm_name: "GROUP"
+  norm_num_groups: 32
+
+  # Conditioning via class embeddings
+  use_class_embedding: true
+
+  # Dropout for regularization
+  dropout: 0.0
+
+  # Resblock updown
+  resblock_updown: false
+
+  # Cross-attention (auto-enabled when anatomical_conditioning_method is "cross_attention")
+  with_conditioning: false
+
+# =============================================================================
+# Diffusion Scheduler Configuration
+# =============================================================================
+scheduler:
+  type: "DDPM"
+  num_train_timesteps: 1000
+
+  # Beta schedule
+  schedule: "cosine"
+
+  # Used for linear and scaled_linear schedules
+  beta_start: 0.0015
+  beta_end: 0.0195
+  sig_range: 6.0
+
+  # Prediction type
+  prediction_type: "epsilon"  # "epsilon", "v_prediction", or "sample"
+  # Clip sample during sampling
+  clip_sample: true
+  clip_sample_range: 1.0
+
+# =============================================================================
+# Sampler Configuration (for generation/visualization)
+# =============================================================================
+sampler:
+  type: "DDIM"
+  num_inference_steps: 300
+  eta: 0.2  # 0.0 = deterministic DDIM, 1.0 = DDPM
+
+  # Classifier-free guidance scale
+  guidance_scale: 1.0
+
+# =============================================================================
+# Training Configuration
+# =============================================================================
+training:
+  # Batch size and workers
+  batch_size: 32
+  num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
+  pin_memory: true
+
+  # Distributed training settings (leverages PyTorch Lightning's built-in DDP)
+  # For single GPU: set devices=1, strategy="auto"
+  # For multi-GPU DDP: set devices=2 (or more), strategy="ddp"
+  accelerator: "gpu"   # "auto", "gpu", "cpu"
+  devices: 1           # Number of GPUs (1 for single, 2+ for DDP)
+  strategy: "auto"      # "auto", "ddp", "ddp_spawn"
+
+  # Self conditioning
+  self_conditioning:
+    enabled: true
+    probability: 0.5
+
+  # Optimizer
+  optimizer:
+    type: "AdamW"
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+
+  # Learning rate scheduler
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: null  # Set to max_epochs if null
+    eta_min: 1.0e-6
+
+  # Training duration
+  max_epochs: 1000
+  max_steps: null  # Override epochs if set
+
+  # Precision and gradient handling
+  precision: "16-mixed"
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: "norm"
+  accumulate_grad_batches: 1
+
+  # Validation frequency
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+
+  # Early stopping (optional)
+  early_stopping:
+    enabled: true
+    monitor: "val/loss"
+    patience: 25
+    mode: "min"
+
+  # Exponential Moving Average (EMA)
+  ema:
+    enabled: true
+    decay: 0.999
+    update_every: 1
+    update_start_step: 0
+    store_on_cpu: true
+    use_buffers: true
+    use_for_validation: true
+    export_to_checkpoint: true
+
+loss:
+  # Enable Lp norm + FFL mode with group uncertainty weighting
+  mode: "mse_channels"
+
+  # Lp norm configuration - balances outlier sensitivity with edge emphasis
+  # p=2: MSE (standard), p=1: MAE (robust to outliers)
+  # p > 2: More sensitive to large errors (useful for lesion boundaries)
+  # p=2.25: Compromise - moderate emphasis on large errors without extreme amplification
+  lp_norm:
+    p: 2.0  
+
+  # Uncertainty weighting (Kendall et al.) - NOT used in mse_lp_norm_ffl_groups mode
+  uncertainty_weighting:
+    enabled: false  # Disabled - using group_uncertainty_weighting instead
+    initial_log_vars: [0.0, 0.0]
+    learnable: true
+    clamp_range: [-5.0, 5.0]
+
+  # Group uncertainty weighting (Kendall et al.) - ACTIVE in mse_lp_norm_ffl_groups mode
+  # Groups Lp norm losses (image + mask) as Group 0, FFL as Group 1
+  # Learns optimal weighting automatically during training
+  group_uncertainty_weighting:
+    enabled: false
+    initial_log_vars: [0.0, 0.5]  # [lp_norm_group, ffl_group] - FFL starts with lower precision (~0.6)
+                                   # Allows Lp norm to dominate early training for stability
+    learnable: true
+    clamp_range: [-5.0, 5.0]
+    intra_group_weights: [1.0, 1.0, 1.0]  # [lp_img, lp_mask, ffl]
+
+  # Focal Frequency Loss (Jiang et al., ICCV 2021) [1]
+  # Forces model to learn hard-to-synthesize high-frequency components (edges, lesion boundaries)
+  # Tuned for epilepsy lesion synthesis with edge sharpness focus
+  ffl:
+    enabled: false
+    loss_weight: 1.0  # Base scaling factor (uncertainty weighting handles balancing)
+    alpha: 1.35  # Focal exponent: moderate emphasis on hard frequencies
+               # Compromise between 1.0 (linear) and 1.75 (aggressive)
+               # Helps with edge sharpness while avoiding high-frequency noise artifacts
+    patch_factor: 2  # Local frequency analysis: 4 patches of 80x80 from 160x160
+                     # Captures lesion-specific texture signatures and regional edge characteristics
+                     # Better for detecting subtle GM-WM boundary blur in FCD
+    ave_spectrum: false  # Per-sample spectrum weighting (not batch average)
+    log_matrix: true  # ENABLED: log(1+x) for numerical stability
+                      # FLAIR MRI has wide dynamic range in frequency domain
+                      # Prevents dominant low-frequencies from overshadowing high-frequency learning
+    batch_matrix: false  # Per-sample weight matrix (not batch statistics)
+
+  # Lesion pixel weighting (uniform for fair ablation)
+  # Set to 1.0 for all configs to isolate FFL effect
+  lesion_weighted_image:
+    enabled: true
+    lesion_weight: 1.0
+    background_weight: 1.0
+
+  lesion_weighted_mask:
+    enabled: true
+    lesion_weight: 1.0
+    background_weight: 1.0
+
+# =============================================================================
+# Postprocessing Configuration
+# =============================================================================
+postprocessing:
+  zbin_priors:
+    enabled: true
+    priors_filename: "zbin_priors_brain_roi.npz"
+    prob_threshold: 0.20
+    dilate_radius_px: 1
+    gaussian_sigma_px: 0.7
+    min_component_px: 500
+    n_first_bins: 5
+    max_components_for_first_bins: 3
+    relaxed_threshold_factor: 0.1
+    fallback: "prior"
+    apply_to: ["validation", "visualization", "generation"]
+    # Background value for out-of-brain pixels (-1.0 matches model input range)
+    background_value: -1.0
+    # Use prior mask directly (True) or run Otsu algorithm (False)
+    # True is faster and more consistent, recommended for visualizations
+    use_prior_directly: true
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  log_every_n_steps: 50
+
+  # Logger type - USE WANDB FOR SLURM
+  logger:
+    type: "wandb"
+    wandb:
+      project: "jsddpm-epilepsy"
+      entity: "mario-pg02-icai-org"
+      name: "epsilon_mse"
+      tags: ["epilepsy", "diffusion", "jsddpm", "icip2026", "epsilon", "mse"]
+      notes: "ICIP2026 ablation: epsilon prediction + MSE loss"
+      offline: true
+
+  # Checkpointing
+  checkpointing:
+    save_top_k: 1
+    monitor: "val/loss"
+    mode: "min"
+    save_last: false
+    every_n_epochs: 1
+    filename: "jsddpm-{epoch:04d}-{val_loss:.4f}"
+
+  # Callback Configuration
+  callbacks:
+    # Gradient norm monitoring
+    gradient_norm:
+      enabled: true
+      log_every_n_steps: 100
+
+    # SNR monitoring
+    snr:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+
+    # Prediction quality monitoring
+    prediction_quality:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+      timestep_bins: 10
+
+# =============================================================================
+# Visualization Configuration
+# =============================================================================
+visualization:
+  enabled: true
+  every_n_epochs: 1
+
+  z_bins_to_show: null  # Auto-select bins matching z_range
+
+  n_samples_per_condition: 1
+
+  overlay:
+    enabled: true
+    alpha: 0.5
+    color: [255, 0, 0]
+    threshold: 0.3  # Increased from 0.0 to filter mask noise and show only confident predictions
+
+  save_png: true
+  save_npz: false
+
+# =============================================================================
+# Generation Configuration (for runners/generate.py)
+# =============================================================================
+generation:
+  n_per_condition: 100
+  z_bins: null
+  classes: [0, 1]
+  output_format: "npz"
+  save_individual: true
+  create_index_csv: true
+
