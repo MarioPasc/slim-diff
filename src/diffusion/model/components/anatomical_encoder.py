@@ -246,7 +246,7 @@ class AnatomicalPriorEncoder(nn.Module):
         hidden_dims: tuple[int, ...] = (32, 64, 128),
         downsample_factor: int = 8,
         positional_encoding: Literal["sinusoidal", "learned"] = "sinusoidal",
-        input_size: tuple[int, int] = (128, 128),
+        input_size: tuple[int, int] = (160, 160),
         norm_num_groups: int = 8,
     ) -> None:
         """Initialize the encoder."""

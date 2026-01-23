@@ -29,7 +29,7 @@ data:
   pin_memory: true
 
   transforms:
-    target_spacing: [1.25, 1.25, 1.25]  # mm - yields ~128^3 from ~188x232x196
+    target_spacing: [1.25, 1.25, 1.25]  # mm - resampled volume cropped to 160^3 via roi_size
     roi_size: [160, 160, 160]
     intensity_norm:
       type: "percentile"  # Options: "percentile", "minmax"
@@ -273,7 +273,7 @@ loss:
     alpha: 1.2  # Focal exponent: moderate emphasis on hard frequencies
                # Compromise between 1.0 (linear) and 1.75 (aggressive)
                # Helps with edge sharpness while avoiding high-frequency noise artifacts
-    patch_factor: 2  # Local frequency analysis: 4 patches of 64x64 from 128x128
+    patch_factor: 2  # Local frequency analysis: 4 patches of 80x80 from 160x160
                      # Captures lesion-specific texture signatures and regional edge characteristics
                      # Better for detecting subtle GM-WM boundary blur in FCD
     ave_spectrum: false  # Per-sample spectrum weighting (not batch average)

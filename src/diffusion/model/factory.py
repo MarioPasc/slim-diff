@@ -438,11 +438,15 @@ class DiffusionSampler:
         self.guidance_scale = self.sampler_cfg.guidance_scale
         self.null_token = self.cond_cfg.z_bins * 2 if self.cond_cfg.cfg.enabled else None
 
+        # Spatial size from config (roi_size is [H, W, D] for 3D volumes, use H, W for 2D slices)
+        roi_size = cfg.data.transforms.roi_size
+        self.spatial_size: tuple[int, int] = (int(roi_size[0]), int(roi_size[1]))
+
     @torch.no_grad()
     def sample(
         self,
         tokens: torch.Tensor,
-        shape: tuple[int, ...] = (1, 2, 128, 128),
+        shape: tuple[int, ...] | None = None,
         guidance_scale: float | None = None,
         generator: torch.Generator | None = None,
         anatomical_mask: torch.Tensor | None = None,
@@ -467,6 +471,10 @@ class DiffusionSampler:
         """
         if guidance_scale is None:
             guidance_scale = self.guidance_scale
+
+        if shape is None:
+            H, W = self.spatial_size
+            shape = (tokens.shape[0], 2, H, W)
 
         B = tokens.shape[0]
         if shape[0] != B:
@@ -590,9 +598,10 @@ class DiffusionSampler:
         if anatomical_mask is not None and anatomical_mask.dim() == 3:
             anatomical_mask = anatomical_mask.unsqueeze(0)
 
+        H, W = self.spatial_size
         sample = self.sample(
             tokens,
-            (1, 2, 128, 128),
+            (1, 2, H, W),
             guidance_scale,
             generator,
             anatomical_mask=anatomical_mask,

@@ -1461,7 +1461,7 @@ def main() -> None:
                     embed_dim=cross_attention_dim,
                     hidden_dims=tuple(encoder_cfg.get("hidden_dims", [32, 64, 128])),
                     downsample_factor=encoder_cfg.get("downsample_factor", 8),
-                    input_size=(128, 128),
+                    input_size=tuple(cfg.data.transforms.roi_size[:2]),
                     positional_encoding=encoder_cfg.get("positional_encoding", "sinusoidal"),
                     norm_num_groups=encoder_cfg.get("norm_num_groups", 8),
                 )

@@ -27,7 +27,7 @@ data:
   pin_memory: true
 
   transforms:
-    target_spacing: [1.25, 1.25, 1.25]  # mm - yields ~128^3 from ~188x232x196
+    target_spacing: [1.25, 1.25, 1.25]  # mm - resampled volume cropped to 160^3 via roi_size
     roi_size: [160, 160, 160]
     intensity_norm:
       type: "percentile"  # Options: "percentile", "minmax"
