@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-#SBATCH -J log_x0_mse
-#SBATCH --time=5-00:00:00
+#SBATCH -J log_velocity_lp_2.0
+#SBATCH --time=3-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
@@ -17,26 +17,21 @@ echo "Job started at: $(date)"
 # ========================================================================
 # DISTRIBUTED TRAINING CONFIGURATION
 # ========================================================================
-EXPERIMENT_NAME="x0_mse"
+EXPERIMENT_NAME="velocity_lp_2.0"
 CONDA_ENV_NAME="jsddpm"
 
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
-RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}_no_anatomical_cond"
-CONFIG_FILE="${REPO_SRC}/slurm/icip2026/x0/mse/${EXPERIMENT_NAME}.yaml"
+RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}"
+CONFIG_FILE="${REPO_SRC}/slurm/icip2026/velocity/lp_2.0/${EXPERIMENT_NAME}.yaml"
 
 # ========================================================================
 # GENERATION CONFIGURATION (after training)
 # ========================================================================
-# Number of replicas to generate sequentially
 NUM_REPLICAS=5
-# Number of samples per (zbin, domain) pair in UNIFORM mode
 N_SAMPLES_PER_MODE=50
-# Generation batch size (adjust based on GPU memory)
 GEN_BATCH_SIZE=32
-# Base seed for reproducibility
 SEED_BASE=42
-# Output dtype for generation
 GEN_DTYPE="float16"
 
 # ---------- Load conda module and activate prebuilt env ----------
@@ -82,7 +77,7 @@ fi
 # EXPERIMENT EXECUTION
 # ========================================================================
 
-# 1. Create the results directory (execution folder)
+# 1. Create the results directory
 if [ ! -d "${RESULTS_DST}" ]; then
     echo "Creating results directory: ${RESULTS_DST}"
     mkdir -p "${RESULTS_DST}"
@@ -112,7 +107,6 @@ echo "Cache directory: ${CACHE_DIR}"
 # Only run caching if cache directory doesn't exist
 if [ ! -d "${CACHE_DIR}" ]; then
     echo "Cache directory not found. Running caching step..."
-    # Use the dedicated cache config (training config lacks dataset_type field)
     CACHE_CONFIG_SRC="${REPO_SRC}/src/diffusion/config/cache/epilepsy.yaml"
     CACHE_CONFIG="${RESULTS_DST}/cache_epilepsy.yaml"
     cp "${CACHE_CONFIG_SRC}" "${CACHE_CONFIG}"
@@ -156,7 +150,6 @@ if [ ! -d "${CKPT_DIR}" ]; then
     exit 1
 fi
 
-# Find the single .ckpt file (there should be only one with save_top_k=1 and save_last=false)
 CHECKPOINT=$(find "${CKPT_DIR}" -name "*.ckpt" -type f | head -n 1)
 
 if [ -z "${CHECKPOINT}" ]; then
