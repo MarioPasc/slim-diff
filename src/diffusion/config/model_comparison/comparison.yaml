@@ -8,7 +8,7 @@
 # Root Results Directory
 # =============================================================================
 # Base path where all model results are stored
-root_results_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/updated_loss"
+root_results_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/runs"
 
 # =============================================================================
 # Models to Compare
@@ -19,11 +19,14 @@ root_results_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/u
 #   - csv_logs/histograms/ (timestep/token distributions)
 #   - checkpoints/*.ckpt (model checkpoint, for reconstruction comparison)
 models:
-  "e-Pred + Lp + FFL": "noise_prediction/no_anatomical_conditioning/jsddpm_complete"
-  "v-Pred + Lp + FFL": "v_prediction/jssdpm_lp_ffl_no_anatomical_cond"
+  "e-Pred+Lp+FFL": "noise_prediction/no_anatomical_conditioning/jsddpm_complete"
+  "v-Pred+Lp+FFL": "v_prediction/jssdpm_lp_ffl_no_anatomical_cond"
 
-  "e-Pred + MSE + FFL": "noise_prediction/no_anatomical_conditioning/jsddpm_ffl"
-  "v-Pred + MSE + FFL": "v_prediction/jssdpm_mse_ffl_x0_no_anatomical_cond"
+  "e-Pred+MSE+FFL": "noise_prediction/no_anatomical_conditioning/jsddpm_ffl"
+  "v-Pred+MSE+FFL": "v_prediction/jssdpm_mse_ffl_x0_no_anatomical_cond"
+
+  "e-Pred+Lp=2.25": "noise_prediction/no_anatomical_conditioning/jsddpm_lp_norm_only"
+  "v-Pred+Lp=2.25": "v_prediction/jssdpm_lp_norm_x0_no_anatomical_cond"
 
 # =============================================================================
 # Visualization Settings
@@ -104,7 +107,7 @@ reconstruction_comparison:
   cache_config_path: "src/diffusion/config/cache/epilepsy.yaml"
 
   # Timestep for noise addition (t=100 recommended)
-  timestep: 100
+  timestep: 1000
 
   # Number of representative z-bins to display
   n_zbins: 5
@@ -178,7 +181,7 @@ publication_panel:
 # =============================================================================
 output:
   # Output directory for comparison results
-  output_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/updated_loss/model_comparison"
+  output_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/runs/model_comparison"
 
   # Whether to append timestamp to output directory
   timestamp: true

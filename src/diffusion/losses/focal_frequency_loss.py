@@ -87,7 +87,9 @@ class FocalFrequencyLoss(nn.Module):
             contains [real, imag] components.
         """
         # 2D FFT with orthonormal normalization
-        freq = torch.fft.fft2(x, norm="ortho")
+        # Cast to float32: cuFFT only supports power-of-2 dims in half precision,
+        # and FP32 is more numerically stable for frequency domain operations
+        freq = torch.fft.fft2(x.float(), norm="ortho")
         # Stack real and imaginary parts
         freq = torch.stack([freq.real, freq.imag], dim=-1)
         return freq
