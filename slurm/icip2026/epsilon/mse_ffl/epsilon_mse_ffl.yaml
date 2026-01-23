@@ -22,7 +22,7 @@ data:
   cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
 
   # Data loader settings (dataset-agnostic)
-  batch_size: 32
+  batch_size: 16
   num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
   pin_memory: true
 
@@ -152,7 +152,7 @@ sampler:
 # =============================================================================
 training:
   # Batch size and workers
-  batch_size: 32
+  batch_size: 16
   num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
   pin_memory: true
 
