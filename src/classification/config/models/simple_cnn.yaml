@@ -1,0 +1,11 @@
+# Simple CNN Classifier Configuration
+# =====================================
+# Intentionally simple architecture to measure inherent distinguishability
+# rather than classifier power. Lower AUC = better synthetic quality.
+
+model:
+  type: "simple_cnn"
+  channels: [32, 64, 128]
+  fc_dim: 256
+  dropout: 0.3
+  use_batch_norm: true
