@@ -112,7 +112,13 @@ echo "Cache directory: ${CACHE_DIR}"
 # Only run caching if cache directory doesn't exist
 if [ ! -d "${CACHE_DIR}" ]; then
     echo "Cache directory not found. Running caching step..."
-    jsddpm-cache --config "${MODIFIED_CONFIG}"
+    # Use the dedicated cache config (training config lacks dataset_type field)
+    CACHE_CONFIG_SRC="${REPO_SRC}/src/diffusion/config/cache/epilepsy.yaml"
+    CACHE_CONFIG="${RESULTS_DST}/cache_epilepsy.yaml"
+    cp "${CACHE_CONFIG_SRC}" "${CACHE_CONFIG}"
+    sed -i "s|cache_dir: .*|cache_dir: \"${CACHE_DIR}\"|" "${CACHE_CONFIG}"
+    sed -i "s|root_dir: .*|root_dir: \"${DATA_SRC}\"|" "${CACHE_CONFIG}"
+    jsddpm-cache --config "${CACHE_CONFIG}"
     echo "Caching completed."
 else
     echo "Cache directory exists. Skipping caching step."
