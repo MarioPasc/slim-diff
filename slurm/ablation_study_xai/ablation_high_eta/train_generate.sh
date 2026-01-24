@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J ablation_step1_ffl
+#SBATCH -J xai_ablation_high_eta
 #SBATCH --time=4-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -17,13 +17,13 @@ echo "Job started at: $(date)"
 # ========================================================================
 # EXPERIMENT CONFIGURATION
 # ========================================================================
-EXPERIMENT_NAME="ablation_step1_x0_ffl"
+EXPERIMENT_NAME="xai_ablation_high_eta"
 CONDA_ENV_NAME="jsddpm"
 
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
 RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/${EXPERIMENT_NAME}"
-CONFIG_FILE="${REPO_SRC}/slurm/ablation_study_hf/proposal.yaml"
+CONFIG_FILE="${REPO_SRC}/slurm/ablation_study_xai/ablation_high_eta/ablation_high_eta.yaml"
 
 # ========================================================================
 # GENERATION CONFIGURATION
@@ -32,8 +32,6 @@ NUM_REPLICAS=5
 N_SAMPLES_PER_MODE=50
 GEN_BATCH_SIZE=32
 SEED_BASE=42
-# CRITICAL: Use float32 to avoid quantization artifacts that trivially
-# separate real from synthetic in downstream classification (AUC=1.0 artifact).
 GEN_DTYPE="float32"
 
 # ========================================================================
@@ -54,46 +52,32 @@ if [ "$module_loaded" -eq 0 ]; then
   echo "[env] no conda module loaded; assuming conda already in PATH."
 fi
 
-# Activate your existing env named ${CONDA_ENV_NAME}
 if command -v conda >/dev/null 2>&1; then
-  # shellcheck disable=SC1091
   source "$(conda info --base)/etc/profile.d/conda.sh" || true
   conda activate "${CONDA_ENV_NAME}" 2>/dev/null || source activate "${CONDA_ENV_NAME}"
 else
   source activate "${CONDA_ENV_NAME}"
 fi
 
-# Verify
 echo "[python] $(which python || true)"
 python -c "import sys; print('Python', sys.version.split()[0])"
 python -c "import torch, os; print('CUDA', torch.cuda.is_available())"
 echo "[torch] $(python -c 'import torch; print(torch.__version__)')"
 echo "[cuda devices] $(python -c 'import torch; print(torch.cuda.device_count())')"
 
-# ========================================================================
-# DDP VERIFICATION
-# ========================================================================
 GPU_COUNT=$(python -c 'import torch; print(torch.cuda.device_count())')
-echo "[ddp] Available GPUs: ${GPU_COUNT}"
-echo "[ddp] CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
-
-if [ "$GPU_COUNT" -lt 2 ]; then
-    echo "WARNING: Requested 2 GPUs but only ${GPU_COUNT} available"
-    echo "Training will proceed but may not use DDP as expected"
-fi
+echo "[gpu] Available GPUs: ${GPU_COUNT}"
 
 # ========================================================================
 # PHASE 1: TRAINING
 # ========================================================================
 echo ""
 echo "=========================================================================="
-echo "PHASE 1: Training"
+echo "PHASE 1: Training — ${EXPERIMENT_NAME}"
 echo "=========================================================================="
 
-# 1. Create the results directory
 mkdir -p "${RESULTS_DST}"
 
-# 2. Copy and modify the configuration file
 CONFIG_BASENAME=$(basename "${CONFIG_FILE}")
 MODIFIED_CONFIG="${RESULTS_DST}/${CONFIG_BASENAME}"
 
@@ -104,7 +88,6 @@ echo "Modifying configuration file paths for cluster..."
 sed -i "s|  cache_dir: .*|  cache_dir: \"${DATA_SRC}/slice_cache\"|" "${MODIFIED_CONFIG}"
 sed -i "s|  output_dir: .*|  output_dir: \"${RESULTS_DST}\"|" "${MODIFIED_CONFIG}"
 
-# 3. Handle data caching
 cd "${REPO_SRC}"
 echo "Working directory: $(pwd)"
 
@@ -124,18 +107,12 @@ else
     echo "Cache directory exists. Skipping caching step."
 fi
 
-# 4. Run training
-echo "Starting DDP training with config: ${MODIFIED_CONFIG}"
-echo "Using ${GPU_COUNT} GPUs with DDP strategy"
-
+echo "Starting training with config: ${MODIFIED_CONFIG}"
 jsddpm-train --config "${MODIFIED_CONFIG}"
 
 TRAIN_END_TIME=$(date +%s)
 TRAIN_ELAPSED=$((TRAIN_END_TIME - START_TIME))
-echo "=========================================================================="
-echo "Training completed at: $(date)"
-echo "Training time: $(($TRAIN_ELAPSED / 3600))h $((($TRAIN_ELAPSED / 60) % 60))m $(($TRAIN_ELAPSED % 60))s"
-echo "=========================================================================="
+echo "Training completed in $(($TRAIN_ELAPSED / 3600))h $((($TRAIN_ELAPSED / 60) % 60))m $(($TRAIN_ELAPSED % 60))s"
 
 # ========================================================================
 # PHASE 2: GENERATION
@@ -145,7 +122,6 @@ echo "==========================================================================
 echo "PHASE 2: Replica Generation"
 echo "=========================================================================="
 
-# Find the checkpoint
 CKPT_DIR="${RESULTS_DST}/checkpoints"
 echo "Looking for checkpoint in: ${CKPT_DIR}"
 
@@ -163,18 +139,8 @@ fi
 
 echo "Found checkpoint: ${CHECKPOINT}"
 
-# Create replicas directory
 REPLICAS_OUT_DIR="${RESULTS_DST}/replicas"
 mkdir -p "${REPLICAS_OUT_DIR}"
-
-echo ""
-echo "Generation Configuration:"
-echo "  - Number of replicas: ${NUM_REPLICAS}"
-echo "  - Samples per (zbin, domain): ${N_SAMPLES_PER_MODE}"
-echo "  - Batch size: ${GEN_BATCH_SIZE}"
-echo "  - Seed base: ${SEED_BASE}"
-echo "  - Output dtype: ${GEN_DTYPE}"
-echo ""
 
 GEN_START_TIME=$(date +%s)
 
@@ -210,17 +176,14 @@ echo "==========================================================================
 echo "PHASE 3: Patch Extraction & Classification"
 echo "=========================================================================="
 
-# Build replica_ids list for YAML: [0, 1, 2, 3, 4]
 REPLICA_IDS_YAML="[$(seq -s ', ' 0 $((NUM_REPLICAS - 1)))]"
 
-# Generate classification config on the fly
 CLASS_CONFIG="${RESULTS_DST}/classification_task.yaml"
 mkdir -p "${CLASSIFICATION_DIR}"
 
-echo "Generating classification config: ${CLASS_CONFIG}"
 cat > "${CLASS_CONFIG}" << CLASSEOF
 experiment:
-  name: "ablation_classification"
+  name: "${EXPERIMENT_NAME}_classification"
   seed: 42
 
 data:
@@ -305,7 +268,6 @@ output:
   tables_subdir: "tables"
 CLASSEOF
 
-# 3a. Extract patches
 echo "Extracting patches..."
 EXTRACT_START=$(date +%s)
 
@@ -316,7 +278,6 @@ python -m src.classification extract \
 EXTRACT_END=$(date +%s)
 echo "Patch extraction done in $(( (EXTRACT_END - EXTRACT_START) / 60 ))m $(( (EXTRACT_END - EXTRACT_START) % 60 ))s"
 
-# 3b. Run classification (k-fold)
 echo "Running classification (real vs synthetic)..."
 CLASS_START=$(date +%s)
 
@@ -337,11 +298,9 @@ echo "==========================================================================
 echo "PHASE 4: Diagnostics"
 echo "=========================================================================="
 
-# Generate diagnostics config on the fly
 DIAG_CONFIG="${RESULTS_DST}/diagnostics.yaml"
 mkdir -p "${DIAGNOSTICS_DIR}"
 
-echo "Generating diagnostics config: ${DIAG_CONFIG}"
 cat > "${DIAG_CONFIG}" << DIAGEOF
 data:
   patches_base_dir: "${CLASSIFICATION_DIR}/patches"
@@ -417,6 +376,22 @@ full_image:
   global_frequency:
     channels: [0]
 
+xai:
+  channel_decomposition:
+    ablation_baseline: -1.0
+  spectral_attribution:
+    source: "gradcam"
+    n_bands: 5
+  feature_space:
+    pca_components: 10
+    tsne_perplexity: 30
+    tsne_seed: 42
+    top_features: 5
+  integrated_gradients:
+    n_steps: 50
+    baseline: "zeros"
+    max_samples: 100
+
 output:
   base_dir: "${DIAGNOSTICS_DIR}"
   plot_format: ["png"]
@@ -428,7 +403,6 @@ experiment:
   device: "cuda"
 DIAGEOF
 
-# 4a. Run full diagnostics
 echo "Running diagnostic analyses..."
 DIAG_START=$(date +%s)
 
@@ -441,7 +415,6 @@ DIAG_END=$(date +%s)
 DIAG_ELAPSED=$((DIAG_END - DIAG_START))
 echo "Diagnostics done in $(($DIAG_ELAPSED / 60))m $(($DIAG_ELAPSED % 60))s"
 
-# 4b. Run aggregate (cross-experiment report)
 echo "Running aggregate report..."
 python -m src.classification.diagnostics aggregate --config "${DIAG_CONFIG}"
 
@@ -453,9 +426,8 @@ TOTAL_ELAPSED=$((END_TIME - START_TIME))
 
 echo ""
 echo "=========================================================================="
-echo "=========================================================================="
-echo "  ABLATION STEP 1: x0_lp_1.5 + FFL  —  COMPLETE"
-echo "=========================================================================="
+echo "  XAI ABLATION: ${EXPERIMENT_NAME} — COMPLETE"
+echo "  (Proposal with eta=0.2 — tests LF texture via sampling stochasticity)"
 echo "=========================================================================="
 echo ""
 echo "Timing:"
@@ -466,21 +438,15 @@ echo "  Diagnostics:    $(($DIAG_ELAPSED / 60))m $(($DIAG_ELAPSED % 60))s"
 echo "  Total:          $(($TOTAL_ELAPSED / 3600))h $((($TOTAL_ELAPSED / 60) % 60))m $(($TOTAL_ELAPSED % 60))s"
 echo ""
 echo "Outputs:"
-echo "  Config:         ${MODIFIED_CONFIG}"
 echo "  Checkpoint:     ${CHECKPOINT}"
-echo "  Replicas:       ${REPLICAS_OUT_DIR}/"
-echo "  Patches:        ${CLASSIFICATION_DIR}/patches/${EXPERIMENT_NAME}/"
-echo "  Classification: ${CLASSIFICATION_DIR}/results/${EXPERIMENT_NAME}/"
 echo "  Diagnostics:    ${DIAGNOSTICS_DIR}/${EXPERIMENT_NAME}/"
 echo ""
 
-# Print diagnostic summary if CSV exists
 DIAG_CSV="${DIAGNOSTICS_DIR}/cross_experiment/diagnostic_report.csv"
 if [ -f "${DIAG_CSV}" ]; then
     echo "=========================================================================="
     echo "  DIAGNOSTIC RESULTS"
     echo "=========================================================================="
-    echo ""
     python -c "
 import csv
 with open('${DIAG_CSV}') as f:
@@ -488,86 +454,21 @@ with open('${DIAG_CSV}') as f:
     for row in reader:
         if row['experiment'] == '${EXPERIMENT_NAME}':
             print(f\"  Experiment: {row['experiment']}\")
-            print(f\"  Prediction type: {row['prediction_type']}\")
-            print(f\"  Lp norm: {row['lp_norm']}\")
-            print()
             print(f\"  Overall Artifact Severity: {float(row['overall_artifact_severity']):.4f}\")
             print(f\"    (baseline x0_lp_1.5: 0.0253)\")
             print()
             print('  Key Metrics:')
-            print(f\"    High-freq excess:        {float(row['high_freq_excess']):.4f}  (norm: {float(row['high_freq_excess_norm']):.4f})\")
-            print(f\"    Wavelet energy dev:      {float(row['wavelet_energy_deviation']):.4f}  (norm: {float(row['wavelet_energy_deviation_norm']):.4f})\")
-            print(f\"    Spectral JS divergence:  {float(row['spectral_js_div']):.6f}  (norm: {float(row['spectral_js_div_norm']):.4f})\")
-            print(f\"    Spectral slope diff:     {float(row['spectral_slope_diff']):.4f}  (norm: {float(row['spectral_slope_diff_norm']):.4f})\")
-            print(f\"    Texture mean KS:         {float(row['texture_mean_ks']):.4f}  (norm: {float(row['texture_mean_ks_norm']):.4f})\")
-            print(f\"    Boundary sharpness:      {float(row['boundary_sharpness_deficit']):.4f}  (norm: {float(row['boundary_sharpness_deficit_norm']):.4f})\")
-            print(f\"    Background noise:        {float(row['background_noise']):.6f}  (norm: {float(row['background_noise_norm']):.4f})\")
-            print()
+            for k in ['high_freq_excess','wavelet_energy_deviation','spectral_js_div',
+                      'spectral_slope_diff','texture_mean_ks','boundary_sharpness_deficit',
+                      'background_noise','xai_fisher_separability','xai_tsne_silhouette',
+                      'xai_attribution_hf_fraction','xai_ig_concentration']:
+                if k in row and row[k]:
+                    print(f'    {k:30s}: {float(row[k]):.6f}')
             break
-    else:
-        print(f'  WARNING: Experiment ${EXPERIMENT_NAME} not found in diagnostic report.')
-        print(f'  Available experiments:')
-        f.seek(0)
-        reader = csv.DictReader(f)
-        for row in reader:
-            print(f\"    - {row['experiment']}\")
 "
-    echo ""
-else
-    echo "  NOTE: Diagnostic CSV not found at ${DIAG_CSV}"
-    echo "  Individual results available in: ${DIAGNOSTICS_DIR}/${EXPERIMENT_NAME}/"
 fi
 
-# Print classification AUC if results exist
-CLASS_RESULTS="${CLASSIFICATION_DIR}/results/${EXPERIMENT_NAME}"
-if [ -d "${CLASS_RESULTS}" ]; then
-    echo "=========================================================================="
-    echo "  CLASSIFICATION RESULTS (Real vs. Synthetic)"
-    echo "=========================================================================="
-    echo ""
-    python -c "
-import json, glob, os
-results_dir = '${CLASS_RESULTS}'
-json_files = sorted(glob.glob(os.path.join(results_dir, '**/results.json'), recursive=True))
-if not json_files:
-    json_files = sorted(glob.glob(os.path.join(results_dir, '**/*.json'), recursive=True))
-
-aucs = []
-for jf in json_files:
-    try:
-        with open(jf) as f:
-            data = json.load(f)
-        if 'auc' in data:
-            aucs.append(data['auc'])
-        elif 'test_auc' in data:
-            aucs.append(data['test_auc'])
-        elif 'mean_auc' in data:
-            aucs.append(data['mean_auc'])
-    except:
-        pass
-
-if aucs:
-    import statistics
-    mean_auc = statistics.mean(aucs)
-    print(f'  Mean AUC: {mean_auc:.4f} (across {len(aucs)} folds)')
-    print(f'  Individual fold AUCs: {[round(a, 4) for a in aucs]}')
-    print()
-    if mean_auc > 0.9:
-        print('  --> Classifier easily distinguishes real from synthetic.')
-        print('      Significant model-level artifacts likely remain.')
-    elif mean_auc > 0.7:
-        print('  --> Moderate distinguishability. Some artifacts present.')
-    elif mean_auc > 0.6:
-        print('  --> Low distinguishability. Minor artifacts.')
-    else:
-        print('  --> Near-chance performance. Synthetic quality is high.')
-else:
-    print('  Could not parse AUC from classification results.')
-    print(f'  Check results in: {results_dir}')
-"
-    echo ""
-fi
-
+echo ""
 echo "=========================================================================="
-echo "Experiment completed successfully at: $(date)"
+echo "Experiment completed at: $(date)"
 echo "=========================================================================="
