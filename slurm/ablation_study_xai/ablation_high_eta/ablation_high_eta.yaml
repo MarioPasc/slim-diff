@@ -23,7 +23,7 @@
 #   [KEPT] group_uncertainty_weighting: enabled
 #   [KEPT] self_conditioning.probability: 0.8
 #   [KEPT] ema.decay: 0.9995
-#   [KEPT] batch_size: 32, dropout: 0.05, max_epochs: 1000, patience: 100
+#   [KEPT] batch_size: 16, dropout: 0.05, max_epochs: 1000, patience: 100
 
 
 # =============================================================================
@@ -40,7 +40,7 @@ experiment:
 data:
   cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
 
-  batch_size: 32
+  batch_size: 16
   num_workers: 0
   pin_memory: true
 
@@ -144,7 +144,7 @@ sampler:
 # Training Configuration
 # =============================================================================
 training:
-  batch_size: 32
+  batch_size: 16
   num_workers: 0
   pin_memory: true
 

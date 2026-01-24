@@ -47,7 +47,7 @@ data:
   # [C5] Increased batch size for stable frequency-domain gradients.
   # FFL computes per-sample FFT — larger batches average out individual
   # spectrum noise, providing smoother gradient updates.
-  batch_size: 32
+  batch_size: 16
   num_workers: 0  # Keep 0: known CUDA multiprocessing issues
   pin_memory: true
 
@@ -166,7 +166,7 @@ sampler:
 # Training Configuration
 # =============================================================================
 training:
-  batch_size: 32
+  batch_size: 16
   num_workers: 0
   pin_memory: true
 
