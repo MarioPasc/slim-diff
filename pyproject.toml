@@ -33,6 +33,7 @@ dependencies = [
     "scikit-learn>=1.2.0",
     "seaborn>=0.12.0",
     "scikit-image>=0.20.0",
+    "PyWavelets>=1.4.0"
 ]
 
 [project.optional-dependencies]
@@ -50,6 +51,8 @@ jsddpm-generate = "src.diffusion.training.runners.generate:main"
 jsddpm-cache = "src.diffusion.data.caching:main"
 jsddpm-replicas = "src.diffusion.training.runners.generate_replicas:main"
 jsddpm-evaluate = "src.diffusion.model_comparison.runner:main"
+jsddpm-classification-task = "src.classification.__main__:main"
+jsddpm-diagnostics = "src.classification.diagnostics.cli:main"
 jsddpm-segmentation-kfold = "src.segmentation.cli.kfold_segmentation:main"
 
 [tool.setuptools.packages.find]

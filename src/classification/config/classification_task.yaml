@@ -20,7 +20,7 @@ data:
   # Synthetic data
   # Expected structure: {results_base_dir}/{experiment_name}/{replicas_subdir}/replica_NNN.npz
   synthetic:
-    results_base_dir: "/path/to/results"
+    results_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs"
     experiments:
       - name: "epsilon_lp_1.5"
         replicas_subdir: "replicas"
@@ -133,7 +133,7 @@ evaluation:
 # Output
 # ---------------------------------------------------------------------------
 output:
-  base_dir: "/path/to/results/classification"
+  base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/classification"
   patches_subdir: "patches"
   results_subdir: "results"
   checkpoints_subdir: "checkpoints"

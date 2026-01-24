@@ -43,6 +43,16 @@ def main() -> None:
     p_report.add_argument("--config", required=True, help="Path to classification_task.yaml")
     p_report.add_argument("--format", default="latex", choices=["latex", "markdown", "csv"])
 
+    # --- diagnose ---
+    p_diag = subparsers.add_parser("diagnose", help="Run diagnostic analyses on real vs. synthetic.")
+    p_diag.add_argument("--config", required=True, help="Path to diagnostics.yaml")
+    p_diag.add_argument("--experiment", required=True, help="Experiment name")
+    p_diag.add_argument(
+        "--component", default="all",
+        choices=["all", "dither", "gradcam", "spectral", "texture", "stats", "full-image", "report"],
+    )
+    p_diag.add_argument("--gpu", type=int, default=0, help="GPU device index")
+
     args = parser.parse_args()
 
     if args.command == "extract":
@@ -57,6 +67,9 @@ def main() -> None:
     elif args.command == "report":
         from src.classification.scripts.run_all_experiments import generate_report
         generate_report(args)
+    elif args.command == "diagnose":
+        from src.classification.diagnostics.cli import run_from_args
+        run_from_args(args)
     else:
         parser.print_help()
         sys.exit(1)
