@@ -1,0 +1,374 @@
+# =============================================================================
+# JS-DDPM Proposal: Ablation Step 1 — FFL on top of x0_lp_1.5
+# =============================================================================
+#
+# ABLATION PLAN:
+#   Step 0: x0_lp_1.5 (existing baseline, severity=0.025)
+#   Step 1: + FFL + Kendall weighting  <--- THIS CONFIG
+#   Step 2: + anatomical conditioning (cross_attention)
+#   Step 3: + architecture (channels 512, attention level 2)
+#   Step 4: + training dynamics (self_cond 0.7, EMA 0.9995, epochs 1000)
+#
+# WHAT THIS STEP TESTS:
+#   Does adding frequency-domain loss correct the 32% HF deficit?
+#   Measured by: wavelet HH L1 energy ratio (baseline: 0.68, target: >0.85)
+#
+# CHANGES FROM x0_lp_1.5:
+#   [C1] loss.mode: mse_lp_norm -> mse_lp_norm_ffl_groups
+#   [C2] ffl: enabled with alpha=1.0, patch_factor=2, log_matrix=true
+#   [C3] group_uncertainty_weighting: enabled (auto-balances Lp vs FFL)
+#   [C4] lesion_weight: 1.0 -> 1.5 (moderate focus on lesion quality)
+#   [C5] batch_size: 16 -> 32 (more stable frequency-domain gradients)
+#   [C6] max_epochs: 500 -> 800 (FFL needs longer convergence)
+#   [C7] patience: 25 -> 50 (dual-loss converges more slowly)
+#   [C8] dropout: 0.0 -> 0.05 (regularization for combined loss)
+
+
+# =============================================================================
+# Experiment Metadata
+# =============================================================================
+experiment:
+  name: "ablation_step1_x0_ffl"
+  output_dir: "./outputs/ablation_step1_x0_ffl"
+  seed: 33
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
+
+  # [C5] Increased batch size for stable frequency-domain gradients.
+  # FFL computes per-sample FFT — larger batches average out individual
+  # spectrum noise, providing smoother gradient updates.
+  batch_size: 32
+  num_workers: 0  # Keep 0: known CUDA multiprocessing issues
+  pin_memory: true
+
+  transforms:
+    target_spacing: [1.25, 1.25, 1.25]
+    roi_size: [160, 160, 160]
+    intensity_norm:
+      type: "percentile"
+      lower: 0.5
+      upper: 99.5
+      b_min: -1.0
+      b_max: 1.0
+      clip: true
+
+  slice_sampling:
+    z_range: [34, 115]
+    filter_empty_brain: true
+    brain_threshold: -0.9
+    brain_min_fraction: 0.05
+
+  lesion_oversampling:
+    enabled: true
+    mode: "balance"
+    weight: 3.0
+
+# =============================================================================
+# Conditioning Configuration
+# =============================================================================
+conditioning:
+  z_bins: 30
+  use_sinusoidal: true
+  max_z: 159
+
+  cfg:
+    enabled: false
+    null_token: 60
+    dropout_prob: 0.1
+
+# =============================================================================
+# Model Configuration — UNCHANGED from x0_lp_1.5
+# =============================================================================
+model:
+  type: "DiffusionModelUNet"
+  spatial_dims: 2
+  in_channels: 2
+  out_channels: 2
+
+  # Anatomical conditioning: OFF for this step (tested in step 2)
+  anatomical_conditioning: false
+  anatomical_conditioning_method: "concat"
+  cross_attention_dim: 256
+
+  anatomical_encoder:
+    hidden_dims: [32, 64, 128]
+    downsample_factor: 8
+    positional_encoding: "sinusoidal"
+    norm_num_groups: 8
+
+  # Architecture: UNCHANGED (tested in step 3)
+  channels: [64, 128, 256, 256]
+  attention_levels: [false, false, true, true]
+  num_res_blocks: 2
+  num_head_channels: 32
+
+  norm_name: "GROUP"
+  norm_num_groups: 32
+  use_class_embedding: true
+
+  # [C8] Small dropout for regularization with combined loss.
+  # With two loss components (spatial + frequency), the model has more
+  # degrees of freedom and mild regularization helps generalization.
+  dropout: 0.05
+
+  resblock_updown: false
+  with_conditioning: false
+
+# =============================================================================
+# Scheduler Configuration — UNCHANGED
+# =============================================================================
+scheduler:
+  type: "DDPM"
+  num_train_timesteps: 1000
+  schedule: "cosine"
+  beta_start: 0.0015
+  beta_end: 0.0195
+  sig_range: 6.0
+
+  # x0 prediction: confirmed best by diagnostic data.
+  prediction_type: "sample"
+
+  # KEEP clip_sample=true for x0 prediction.
+  # With prediction_type="sample", the model output IS the predicted x0.
+  # Clipping to [-1, 1] is a VALID physical constraint (normalized MRI range).
+  # Without clipping, predicted values outside [-1, 1] are physically meaningless
+  # and would corrupt the FFT computation in FFL.
+  clip_sample: true
+  clip_sample_range: 1.0
+
+# =============================================================================
+# Sampler Configuration — UNCHANGED for fair comparison
+# =============================================================================
+sampler:
+  type: "DDIM"
+  num_inference_steps: 300  # Keep same as baseline for fair comparison
+  eta: 0.2  # Keep same as baseline for fair comparison
+  guidance_scale: 1.0
+
+# =============================================================================
+# Training Configuration
+# =============================================================================
+training:
+  batch_size: 32
+  num_workers: 0
+  pin_memory: true
+
+  accelerator: "gpu"
+  devices: 1
+  strategy: "auto"
+
+  # Self-conditioning: UNCHANGED for this step (tested in step 4)
+  self_conditioning:
+    enabled: true
+    probability: 0.5
+
+  optimizer:
+    type: "AdamW"
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: null
+    eta_min: 1.0e-6
+
+  # [C6] Longer training for FFL convergence.
+  # FFL introduces a secondary optimization landscape in frequency domain.
+  # The model must first learn spatial structure (Lp norm), then refine
+  # spectral content (FFL). This sequential convergence needs more epochs.
+  max_epochs: 1000
+  max_steps: null
+
+  precision: "16-mixed"
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: "norm"
+  accumulate_grad_batches: 1
+
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+
+  # [C7] More patience for dual-loss convergence.
+  early_stopping:
+    enabled: true
+    monitor: "val/loss"
+    patience: 50
+    mode: "min"
+
+  # EMA: UNCHANGED for this step (tested in step 4)
+  ema:
+    enabled: true
+    decay: 0.999
+    update_every: 1
+    update_start_step: 0
+    store_on_cpu: true
+    use_buffers: true
+    use_for_validation: true
+    export_to_checkpoint: true
+
+# =============================================================================
+# Loss Configuration — THE KEY CHANGE
+# =============================================================================
+loss:
+  # [C1] Combined Lp norm + FFL with group uncertainty weighting.
+  # This is the ONLY structural change from x0_lp_1.5 in this ablation step.
+  mode: "mse_lp_norm_ffl_groups"
+
+  # Lp norm p=1.5: UNCHANGED (confirmed best by data)
+  lp_norm:
+    p: 1.5
+
+  uncertainty_weighting:
+    enabled: false
+    initial_log_vars: [0.0, 0.0]
+    learnable: true
+    clamp_range: [-5.0, 5.0]
+
+  # [C3] Kendall group uncertainty weighting.
+  # Learns optimal balance between:
+  #   Group 0: Lp norm image + Lp norm mask (spatial quality)
+  #   Group 1: FFL (spectral quality)
+  #
+  # Initial log_vars [0.0, 1.5]:
+  #   Group 0 precision: exp(-0) = 1.0 (full weight)
+  #   Group 1 precision: exp(-1.5) = 0.22 (low initial weight)
+  #   This ensures the model first learns spatial structure with Lp,
+  #   then the learned sigma_2 decreases to bring FFL online.
+  group_uncertainty_weighting:
+    enabled: true
+    initial_log_vars: [0.0, 1.5]
+    learnable: true
+    clamp_range: [-5.0, 5.0]
+    intra_group_weights: [1.0, 1.0, 1.0]
+
+  # [C2] Focal Frequency Loss.
+  #
+  # Parameters chosen conservatively for a first ablation:
+  #
+  # alpha=1.0: Linear focal weighting.
+  #   Proportional emphasis on hard frequencies. Avoids the 39x HF excess
+  #   seen in epsilon experiments (which had aggressive optimization).
+  #
+  # patch_factor=2: 4 patches of 80x80 from 160x160.
+  #   Provides local frequency analysis while maintaining sufficient
+  #   frequency resolution (80 bins from DC to Nyquist).
+  #   More stable than patch_factor=4 (which gives only 40 bins).
+  #
+  # log_matrix=true: Numerical stability.
+  #   MRI frequency content spans 4+ orders of magnitude.
+  #   log(1+x) normalizes the weight matrix to prevent DC dominance.
+  ffl:
+    enabled: true
+    loss_weight: 1.0
+    alpha: 1.0
+    patch_factor: 2
+    ave_spectrum: false
+    log_matrix: true
+    batch_matrix: false
+
+  # [C4] Moderate lesion weighting.
+  # 1.5x is conservative: enough to focus attention on lesion synthesis,
+  # not so aggressive as to distort the frequency-domain loss.
+  lesion_weighted_image:
+    enabled: true
+    lesion_weight: 1.5
+    background_weight: 1.0
+
+  lesion_weighted_mask:
+    enabled: true
+    lesion_weight: 1.5
+    background_weight: 1.0
+
+# =============================================================================
+# Postprocessing Configuration — UNCHANGED
+# =============================================================================
+postprocessing:
+  zbin_priors:
+    enabled: true
+    priors_filename: "zbin_priors_brain_roi.npz"
+    prob_threshold: 0.20
+    dilate_radius_px: 1
+    gaussian_sigma_px: 0.7
+    min_component_px: 500
+    n_first_bins: 5
+    max_components_for_first_bins: 3
+    relaxed_threshold_factor: 0.1
+    fallback: "prior"
+    apply_to: ["visualization"]
+    background_value: -1.0
+    use_prior_directly: true
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  log_every_n_steps: 50
+
+  logger:
+    type: "wandb"
+    wandb:
+      project: "jsddpm-epilepsy"
+      entity: "mario-pg02-icai-org"
+      name: "ablation_step1_x0_ffl"
+      tags: ["epilepsy", "diffusion", "jsddpm", "ablation", "x0", "ffl", "lp_1.5"]
+      notes: "Ablation step 1: x0_lp_1.5 baseline + FFL (alpha=1.0, pf=2) + Kendall uncertainty"
+      offline: true
+
+  checkpointing:
+    save_top_k: 1
+    monitor: "val/loss"
+    mode: "min"
+    save_last: false
+    every_n_epochs: 1
+    filename: "jsddpm-{epoch:04d}-{val_loss:.4f}"
+
+  callbacks:
+    gradient_norm:
+      enabled: true
+      log_every_n_steps: 100
+
+    snr:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+
+    prediction_quality:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+      timestep_bins: 10
+
+# =============================================================================
+# Visualization Configuration
+# =============================================================================
+visualization:
+  enabled: true
+  every_n_epochs: 1
+
+  z_bins_to_show: null
+  n_samples_per_condition: 1
+
+  overlay:
+    enabled: true
+    alpha: 0.5
+    color: [255, 0, 0]
+    threshold: 0.3
+
+  save_png: true
+  save_npz: false
+
+# =============================================================================
+# Generation Configuration
+# =============================================================================
+generation:
+  n_per_condition: 100
+  z_bins: null
+  classes: [0, 1]
+  output_format: "npz"
+  save_individual: true
+  create_index_csv: true
