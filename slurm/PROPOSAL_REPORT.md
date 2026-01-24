@@ -5,9 +5,17 @@
 Across 9 experiments (3 prediction types x 3 Lp norms), the dominant source of
 real-vs-synthetic distinguishability is the **prediction type parameterization**.
 The x0 (sample) prediction type produces images nearly indistinguishable from real
-data, while epsilon prediction generates catastrophic spectral artifacts. The
-remaining deficit in x0 prediction is a **moderate high-frequency energy shortage**
-(32% at the finest wavelet scale), addressable via Focal Frequency Loss.
+data, while epsilon prediction generates catastrophic spectral artifacts.
+
+**Updated finding from XAI analysis**: The remaining x0 deficit has **two
+components**: (1) a measurable HF energy deficit (wavelet HH ratio=0.68,
+addressable via FFL) and (2) subtle LF texture anomalies that the classifier
+actually exploits (spectral attribution concordance=-0.9, classifier focuses
+69.6% of attention on lowest-frequency band). The LF anomalies represent
+distributed per-pixel texture incoherence (IG-GradCAM correlation=-0.04,
+Fisher max ratio only 3.49) that requires **iterative refinement via
+self-conditioning (80%) and near-deterministic sampling (eta=0.05)** in addition
+to FFL.
 
 ---
 
@@ -103,28 +111,183 @@ This is the well-documented **spectral bias of neural networks** (Rahaman et al.
 inherit this tendency. The UNet architecture compounds it through upsampling
 layers that struggle to generate high-frequency content (Durall et al., 2020).
 
+
+### 6. XAI Evidence: The Classifier Uses Image Channel, Not Mask
+
+Channel decomposition analysis reveals the decisive role of each input channel
+in the classifier's decision:
+
+| Experiment | Image Fraction | Ablation Ratio (img/mask) | Dominant |
+|-----------|---------------|---------------------------|----------|
+| x0_lp_1.5 | 0.586 | **8.87** | image |
+| velocity_lp_2.0 | 0.419 | 0.36 | mask |
+| epsilon_lp_1.5 | 0.510 | 0.41 | image (barely) |
+
+For x0_lp_1.5, ablating the image channel causes 8.87x more logit change than
+ablating the mask channel (delta 5.96 vs 0.67). This means:
+
+1. **The mask is already near-perfect for x0** — ablating it barely affects
+   classification. The joint synthesis correctly couples mask and image.
+2. **Image texture is the sole remaining distinguishing factor** — all remaining
+   artifacts are in the FLAIR channel, not the lesion segmentation.
+3. **Velocity/epsilon have primarily mask artifacts** — ablation ratio 0.26-0.49
+   and mask_ablation_delta 4.0-4.4 (vs x0's 0.67). Their masks are trivially
+   distinguishable from real masks.
+
+Per-class breakdown for x0_lp_1.5:
+- Real images: ablation delta 8.86 (image), 0.56 (mask)
+- Synthetic images: ablation delta 3.06 (image), 0.78 (mask)
+
+The asymmetry (8.86 vs 3.06) indicates the classifier relies more on image-channel
+cues when classifying real images correctly than when classifying synthetic ones.
+
+
+### 7. XAI Evidence: The Classifier Focuses on LOW Frequencies (Not HF)
+
+This is the most critical new finding. Spectral attribution measures which
+frequency bands the classifier uses for its decision:
+
+| Experiment | Band 0 (LF) | Band 1 | Band 2 | Band 3 | Band 4 (HF) | Concordance |
+|-----------|-------------|--------|--------|--------|-------------|-------------|
+| x0_lp_1.5 | **69.6%** | 23.8% | 6.2% | 0.3% | 0.05% | **-0.9** |
+| velocity_lp_2.0 | 49.8% | 36.3% | 13.1% | 0.7% | 0.07% | +0.9 |
+| epsilon_lp_1.5 | 61.9% | 24.9% | 12.3% | 0.9% | 0.04% | 0.0 |
+
+The **concordance** between "where the classifier pays attention" and "where the
+real-synthetic power ratios differ from 1.0":
+- **x0: concordance = -0.9** (strongly anti-correlated!)
+- **velocity: concordance = +0.9** (positively correlated)
+- **epsilon: concordance = 0.0** (no alignment — everything is wrong)
+
+**Interpretation for x0_lp_1.5**: The classifier pays 69.6% of its attribution
+to band 0 (lowest frequencies, f < 0.036), yet the statistical power ratios at
+those frequencies are near-perfect (band 0 ratio = 0.994, band 1 = 1.023).
+The classifier is detecting **structural/textural anomalies in low-frequency
+content that are invisible to simple energy metrics**.
+
+This means the remaining x0 deficit has two components:
+1. **HF energy deficit** (wavelet HH=0.68) — detectable by energy statistics
+   but NOT what the classifier uses
+2. **LF texture anomalies** — undetectable by energy statistics but IS what the
+   classifier exploits (phase structure, local GLCM-type patterns, spatial
+   correlations at coarse scales)
+
+**Consequence**: FFL will correct the HF energy deficit (component 1) but likely
+will NOT eliminate classifier discriminability (component 2). The LF anomalies
+require a different approach: perceptual losses, self-conditioning refinement,
+or architectural changes that improve local texture coherence.
+
+For velocity models, the positive concordance (+0.9) means the classifier uses
+exactly the frequency bands where power differs — a simpler pattern where
+spectral correction would be directly beneficial.
+
+
+### 8. XAI Evidence: Feature Space Separability Quantifies the Gap
+
+The classifier's 128-dimensional GAP features reveal how easily real and
+synthetic samples are separated:
+
+| Experiment | Fisher Max | Fisher Mean | Silhouette | Cosine Distance |
+|-----------|-----------|-------------|------------|-----------------|
+| x0_lp_1.5 | **3.49** | **1.08** | **0.356** | **0.035** |
+| velocity_lp_2.0 | 139.7 | 35.3 | 0.492 | 0.323 |
+| epsilon_lp_1.5 | 341.5 | 56.3 | 0.509 | 0.358 |
+
+The x0 model achieves **100x less separability** than epsilon. Key observations:
+
+1. **Fisher ratio max 3.49** — only 5 of 128 dimensions have Fisher ratio > 3.0.
+   For epsilon, ALL 128 dimensions have Fisher ratio > 20. This means x0's
+   artifacts occupy a tiny subspace of the representation.
+
+2. **Cosine distance 0.035** — real and synthetic feature vectors point in nearly
+   identical directions (angle ~ 2 degrees). For epsilon the angle is ~21 degrees.
+
+3. **PCA structure differs fundamentally**:
+   - x0: PC1=74.9%, PC2=19.4% — the representation has rich structure but the
+     classes aren't separated along principal directions
+   - epsilon: PC1=97.0% — nearly all variance is in one discriminative direction
+
+4. **Fraction significant features: 99.2% for ALL experiments** — even x0 has
+   127/128 features significantly different between classes (FDR-corrected).
+   The separation is real but minute in magnitude (Fisher ratio 1.08 mean).
+
+These results quantify the target: reducing Fisher max from 3.49 to <2.0 would
+make the representation nearly indistinguishable.
+
+
+### 9. XAI Evidence: Integrated Gradients Reveal Distributed, Per-Pixel Artifacts
+
+Integrated Gradients provides per-pixel, axiom-satisfying attributions:
+
+| Experiment | IG Image Frac | Concentration | IG-CAM Corr | Completeness |
+|-----------|--------------|---------------|-------------|-------------|
+| x0_lp_1.5 | 0.526 | **0.186** | **-0.04** | **1080** |
+| velocity_lp_2.0 | 0.420 | 0.101 | +0.016 | 17.1 |
+| epsilon_lp_1.5 | 0.452 | 0.118 | -0.014 | 10.5 |
+
+Key findings for x0_lp_1.5:
+
+1. **Completeness = 1080**: The sum of attributions equals F(x) - F(baseline).
+   The x0 model produces very confident classifier logits despite subtle artifacts.
+   This is 100x larger than epsilon/velocity (10-17), confirming the classifier
+   is highly certain even for the best model.
+
+2. **IG-GradCAM correlation = -0.04**: Per-pixel attributions (IG) are
+   uncorrelated with spatial saliency maps (GradCAM). This means the classifier
+   doesn't rely on specific spatial regions but on **distributed, fine-grained
+   per-pixel texture** patterns across the entire patch.
+
+3. **Concentration = 0.186** (Gini coefficient): Higher than velocity/epsilon
+   (0.09-0.12), suggesting x0's artifacts are slightly more spatially focused
+   than the globally-distributed artifacts of other models. The artifacts have
+   some spatial structure (possibly lesion-boundary related).
+
+4. **IG image fraction = 0.526**: More balanced than channel decomposition
+   (0.586). The difference arises because IG measures pixel-level contribution
+   whereas gradient magnitude measures sensitivity. The mask carries more
+   subtle per-pixel information than gradient magnitude alone suggests.
+
+**Synthesis**: The classifier exploits fine-grained, spatially-distributed
+texture patterns in the image channel, concentrated in low-frequency bands.
+These are not correctable by simple spectral energy matching (FFL) alone.
+
 ---
 
 ## Part II: Proposed Changes
+
+### Revised Understanding from XAI
+
+The XAI analyses reveal that the remaining x0_lp_1.5 deficit has **two distinct
+components** with different remedies:
+
+| Component | Evidence | Remedy |
+|-----------|----------|--------|
+| HF energy deficit (32%) | Wavelet HH ratio=0.68, spectral slope diff=0.030 | FFL (frequency-domain loss) |
+| LF texture anomaly | Concordance=-0.9, classifier uses band 0 (69.6%), distributed per-pixel | Self-conditioning, longer training, reduced eta |
+
+The HF deficit is **measurable but not the classifier's main discriminative cue**.
+The LF texture anomaly is what the classifier actually exploits. Both must be
+addressed for optimal results.
+
 
 ### Parameter Changes (in `slurm/proposal.yaml`)
 
 | # | Parameter | Baseline | Proposed | Justification |
 |---|-----------|----------|----------|---------------|
 | C1 | prediction_type | sample | sample | Confirmed best; 37x better severity than epsilon |
-| C2 | loss.mode | mse_lp_norm | mse_lp_norm_ffl_groups | Adds frequency-domain loss for HF correction |
+| C2 | loss.mode | mse_lp_norm | mse_lp_norm_ffl_groups | FFL corrects measurable HF energy deficit |
 | C3 | lp_norm.p | 1.5 | 1.5 | Confirmed best HF preservation by data |
 | C4 | ffl.alpha | - | 1.0 | Moderate focal weighting; avoids HF noise artifacts |
-| C4 | ffl.patch_factor | - | 4 | Local frequency analysis isolates lesion textures |
+| C4 | ffl.patch_factor | - | 4 | Local frequency analysis at lesion-relevant scales |
 | C5 | group_uncertainty | off | on | Auto-balances spatial vs frequency loss |
 | C6 | lesion_weight | 1.0 | 2.0 | Focus gradient on rare lesion pixels |
-| C7 | anatomical_cond | off | cross_attention | Spatial guidance for background/boundary |
+| C7 | anatomical_cond | off | cross_attention | Spatial guidance for texture coherence |
 | C8 | batch_size | 16 | 32 | Stabilizes frequency-domain gradients |
-| C9 | num_inference_steps | 300 | 500 | More refinement for sharper x0 estimates |
-| C9 | eta | 0.2 | 0.1 | Less sampling noise = sharper outputs |
+| C9 | num_inference_steps | 300 | 500 | More refinement steps for texture detail |
+| C9 | eta | 0.2 | 0.05 | Near-deterministic sampling preserves LF texture |
 | C10 | ema.decay | 0.999 | 0.9995 | Smoother weights with dual-loss landscape |
-| C11 | self_cond.probability | 0.5 | 0.7 | Stronger iterative x0 refinement |
-| C12 | max_epochs | 500 | 1000 | FFL convergence requires more training |
+| C11 | self_cond.probability | 0.5 | 0.8 | Primary mechanism for LF texture refinement |
+| C12 | max_epochs | 500 | 1000 | Combined loss + self-cond refinement needs time |
 | C12 | patience | 25 | 60 | Combined loss converges more slowly |
 
 
@@ -132,11 +295,8 @@ layers that struggle to generate high-frequency content (Durall et al., 2020).
 
 #### M1: Focal Frequency Loss Integration
 
-**Problem**: The Lp norm loss treats all spatial frequencies equally. In pixel
-space, the loss gradient for a 1-pixel error at high frequency is the same as a
-1-pixel error at low frequency. But high-frequency content accounts for <1% of
-the total energy in natural images (1/f^beta spectrum), so the model has little
-incentive to get it right.
+**Problem**: The Lp norm loss treats all spatial frequencies equally. The wavelet
+analysis shows a 32% HF energy deficit at the finest scale (HH ratio=0.68).
 
 **Solution**: Add FFL (Jiang et al., 2021) as a complementary loss operating in
 frequency space. FFL computes the 2D FFT of predicted and target x0, then
@@ -150,32 +310,38 @@ L_FFL = sum_{u,v} w(u,v) * |F_pred(u,v) - F_target(u,v)|^2
 where w(u,v) = [|F_pred - F_target| / max(|F_pred - F_target|)]^alpha
 ```
 
-The focal weight `w(u,v)` upweights frequencies with large errors (the ones the
-model is failing to synthesize correctly), directly addressing the HF deficit.
+**XAI-informed nuance**: The spectral attribution analysis shows the classifier
+focuses 69.6% of its attention on band 0 (lowest frequencies) with concordance
+= -0.9. This means FFL will correct the measurable HF energy deficit but will
+**not eliminate classifier discriminability**. The remaining LF texture anomalies
+require complementary approaches (see M4, M6).
 
-**Expected impact**: Based on Jiang et al. (2021) results, FFL reduces FID by
-10-15% and improves spectral match by 20-30%. Given our wavelet HH deficit of
-32%, we expect to recover at least half of it (target: ratio > 0.85).
+FFL is still essential because:
+1. The wavelet HH deficit (0.68) is a real physical artifact visible in the data
+2. Even if the classifier doesn't primarily use it, a reader/clinician might
+3. Correcting HF content improves visual quality and downstream task performance
+4. FFL indirectly improves phase coherence at high frequencies through the
+   complex-valued FFT loss (it penalizes both magnitude AND phase errors)
 
-**Why alpha=1.0 and not higher**: The epsilon experiments show what happens with
-excessive HF emphasis — 39x excess power. Our deficit is moderate (0.68 ratio,
-not 0.0), so linear focal weighting (alpha=1.0) is sufficient. Aggressive
-weighting (alpha > 1.5) risks overshooting into HF noise.
+**Expected impact**: Wavelet HH ratio 0.68 -> 0.85+. Partial reduction in
+classifier separability (Fisher ratio 3.49 -> ~2.5), but LF anomalies will persist
+until self-conditioning and sampling refinements also take effect.
+
+**Why alpha=1.0**: Our deficit is moderate (ratio 0.68, not 0.0). Linear focal
+weighting avoids overshooting into HF noise (cf. epsilon's 39x excess).
 
 **Why patch_factor=4**: Lesions are 10-50px structures in 160x160 images. Patches
-of 40x40 isolate lesion texture from global brain structure, preventing the
-dominant low-frequency brain anatomy from overshadowing lesion-specific spectral
-patterns. Jiang et al. recommend patch_factor >= 2 for texture-sensitive tasks.
+of 40x40 isolate lesion-scale texture from global anatomy, matching the spatial
+scale where the classifier finds distributed per-pixel artifacts (IG concentration
+= 0.186, moderate spatial focus).
 
 **Literature**:
 - Jiang et al. (2021), "Focal Frequency Loss for Image Reconstruction and
-  Synthesis", ICCV. Direct source of FFL.
+  Synthesis", ICCV.
 - Durall et al. (2020), "Watch your Up-Convolution: CNN Based Generative Deep
-  Models Fail to Reproduce Spectral Distributions". Identifies the spectral
-  bias problem we observe.
+  Models Fail to Reproduce Spectral Distributions".
 - Chandrasegaran et al. (2021), "A Closer Look at Fourier Spectrum
-  Discrepancies for CNN-generated Images Detection". Confirms the generality
-  of spectral artifacts in generative models.
+  Discrepancies for CNN-generated Images Detection".
 
 
 #### M2: x0 Prediction as Optimal Parameterization for Medical Imaging
@@ -245,68 +411,112 @@ gradually takes effect as spectral errors become the dominant remaining issue.
   Losses for Scene Geometry and Semantics", CVPR.
 
 
-#### M4: Self-Conditioning Probability Increase
+#### M4: Self-Conditioning as Primary LF Texture Refinement Mechanism
 
-**Problem**: The current 50% self-conditioning probability means the model only
-sees its own x0 estimate half the time.
+**Problem**: The XAI analysis reveals the classifier detects LF texture anomalies
+(band 0 carries 69.6% of attribution, concordance=-0.9). These are subtle
+phase/structure artifacts that spectral energy losses cannot address. The current
+50% self-conditioning probability limits the model's ability to iteratively refine
+these fine-grained texture patterns.
 
-**Proposed change**: Increase to 70%.
+**Proposed change**: Increase to **80%** (up from the previously proposed 70%).
 
-**Rationale**: With x0 prediction, self-conditioning is uniquely powerful. The
-self-conditioning input IS the previous x0 estimate — the model literally sees
-its own attempt and can refine it. This creates an iterative refinement loop
-during training that mirrors the iterative denoising at inference.
+**Rationale**: Self-conditioning is the most direct mechanism for addressing
+distributed per-pixel texture artifacts because:
 
-The remaining HF deficit (wavelet HH=0.68) is exactly the type of fine detail
-that benefits from iterative refinement. The model's first x0 estimate captures
-the coarse structure; the second pass (with self-conditioning) can focus on
-filling in the missing high-frequency detail.
+1. **Iterative refinement corrects local texture**: The model's first x0 estimate
+   captures global structure. With self-conditioning, the second pass receives this
+   estimate as additional input and can focus on correcting local pixel-level
+   texture patterns — exactly the LF anomalies the spectral attribution identifies.
+
+2. **The IG analysis supports this**: IG concentration=0.186 and IG-GradCAM
+   correlation=-0.04 indicate the artifacts are fine-grained and per-pixel, not
+   region-specific. Self-conditioning addresses per-pixel refinement by providing
+   the model with spatial context about its own output quality.
+
+3. **Channel decomposition shows image-only focus needed**: With ablation ratio
+   8.87 for x0, the mask is already good. Self-conditioning refinement should
+   primarily improve the image channel's local texture coherence.
+
+4. **Training at 80% means**: 80% of steps see the previous x0 estimate, training
+   the model to be an excellent refiner. At inference, DDIM always uses the
+   previous x0 estimate (100% self-conditioning), so higher training probability
+   better matches the inference regime.
 
 **Literature**:
 - Chen et al. (2022), "Analog Bits". Introduced self-conditioning at p=0.5.
-- Jabri et al. (2022), "Scalable Adaptive Computation for Iterative Generation"
-  (RECURRENT INTERFACE NETWORKS). Shows iterative refinement improves fine detail.
+- Jabri et al. (2022), "Scalable Adaptive Computation for Iterative Generation".
+  Shows iterative refinement improves fine detail.
+- Watson et al. (2022), "Learning to Efficiently Sample from Diffusion
+  Probabilistic Models". Demonstrates that refinement-focused training improves
+  sample quality in fewer steps.
 
 
 #### M5: Anatomical Conditioning via Cross-Attention
 
 **Problem**: Without spatial guidance, the model must independently learn where
 the brain boundary is, what the background should be, and where lesions can
-appear. This leads to background noise leakage (observed: std 0.003 for x0
-but 0.017 for velocity/epsilon).
+appear. The XAI analysis reveals the classifier uses distributed per-pixel
+texture patterns (IG concentration=0.186) — providing spatial context via
+anatomical priors should help the model produce locally coherent texture.
 
 **Proposed change**: Enable cross-attention anatomical conditioning with the
 existing `AnatomicalPriorEncoder`.
 
-**Rationale**: The z-bin prior provides a spatial map of valid brain regions.
-Cross-attention (rather than concatenation) allows the model to selectively
-attend to this map at multiple UNet resolution levels, providing resolution-
-appropriate spatial guidance.
+**XAI-informed rationale**: The z-bin prior provides a spatial map of valid
+brain regions. Cross-attention (rather than concatenation) allows the model to
+selectively attend to this map at multiple UNet resolution levels. This is
+particularly relevant because:
 
-**Expected impact**: The main benefit is for background and boundary quality.
-With x0 prediction already producing very clean backgrounds (std=0.003), the
-anatomical conditioning should primarily help with:
-1. Boundary sharpness (currently 0.97, could reach 0.99+)
-2. Spatial correlation structure (currently 0.998, nearly ideal)
-3. Lesion placement anatomical plausibility
+1. The channel decomposition shows per-zbin variation in image_fraction (0.579
+   at z=0 to 0.589 at z=19). Different anatomical levels have different texture
+   characteristics; providing the anatomical prior helps the model produce
+   level-appropriate texture.
+2. The IG concentration (0.186) suggests moderately spatially-structured artifacts.
+   Cross-attention provides resolution-matched spatial guidance at exactly the
+   scale where artifacts concentrate.
+3. Background is already near-perfect for x0 (std=0.003), so the main benefit
+   is improved texture coherence within brain parenchyma, not background correction.
+
+**Expected impact**: Primarily improves LF texture coherence by providing the
+model with spatial context for texture generation. Secondary benefits:
+- Boundary sharpness (0.97 -> 0.99+)
+- Spatial correlation structure (0.998 -> closer to 1.0)
+- Reduced per-pixel texture artifacts in anatomically-guided regions
 
 
-#### M6: Reduced Sampling Stochasticity
+#### M6: Near-Deterministic Sampling for LF Texture Preservation
 
 **Problem**: The current eta=0.2 in DDIM sampling introduces stochastic noise
-at each step. This adds high-frequency noise to the output, which, while
-providing diversity, can mask the actual model quality.
+at each step. The XAI analysis shows the remaining artifacts are subtle LF texture
+patterns (band 0 attribution 69.6%, IG concentration 0.186). Stochastic noise at
+each step corrupts the very texture coherence the model learns to produce.
 
-**Proposed change**: eta=0.1, inference_steps=500.
+**Proposed change**: eta=**0.05**, inference_steps=500.
 
-**Rationale**: With x0 prediction and self-conditioning, each denoising step
-already refines the x0 estimate. Adding stochastic noise (eta > 0) partially
-undoes this refinement. Lower eta preserves the deterministic refinement while
-still providing minor diversity.
+**XAI-informed rationale**: The spectral attribution concordance=-0.9 indicates
+the classifier detects LF structure anomalies. These are precisely the features
+most sensitive to sampling noise injection:
 
-More steps (500 vs 300) provide finer granularity in the denoising trajectory,
-reducing discretization error and allowing more iterative self-conditioning
-refinement.
+1. **LF texture = spatial correlations over 5-20px**: Adding noise (eta > 0)
+   at each step disrupts local spatial correlations, introducing exactly the
+   type of texture incoherence the classifier detects.
+
+2. **Near-deterministic (eta=0.05) preserves learned structure**: The model
+   learns correct LF texture through self-conditioning. Deterministic sampling
+   preserves this learned texture through the full denoising trajectory.
+
+3. **500 steps with low eta**: More steps reduce discretization error. With
+   eta=0.05, the small residual stochasticity across 500 steps provides minimal
+   diversity while maintaining texture coherence.
+
+4. **The IG completeness (1080)** tells us the model produces very confident
+   predictions. Near-deterministic sampling respects this confidence rather than
+   perturbing it with noise.
+
+**Diversity concern**: For medical imaging, precision matters more than diversity.
+The primary use case is generating realistic training augmentation, where quality
+is more important than novelty.
 
 ---
 
@@ -314,38 +524,60 @@ refinement.
 
 | Change | Risk | Mitigation |
 |--------|------|------------|
-| FFL addition | Over-correction -> HF noise | alpha=1.0 (moderate), monitor spectral slope during training |
-| Higher self-cond prob | Slower convergence | Longer training (1000 epochs), monitor val loss curve |
+| FFL addition | Over-correction -> HF noise | alpha=1.0 (moderate), monitor wavelet HH ratio stays < 1.2 |
+| FFL alone insufficient | Won't fix LF texture (concordance=-0.9) | Combined with self-cond (80%) + low eta |
+| Higher self-cond prob (80%) | Mode collapse, slower convergence | Longer training (1000 epochs), diversity monitoring |
+| Very low eta (0.05) | Near-deterministic = less augmentation diversity | Sample many seeds, verify KID stability |
 | Anatomical conditioning | Additional parameters | Well-tested in prior experiments, small encoder |
 | Higher EMA decay | Slow adaptation | Offset by longer training |
-| Lower eta | Reduced diversity | Acceptable for medical imaging where precision > diversity |
+| Combined changes | Hard to attribute improvements | Ablation study already planned in slurm/ |
 
 
 ## Part IV: Validation Protocol
 
-After training the proposal config, run diagnostics and compare to baseline:
+After training the proposal config, run the full diagnostics pipeline including
+XAI analyses:
 
 ```bash
-# Run diagnostics on proposed model
+# Run full diagnostics (includes XAI: channel-decomp, spectral-attr,
+# feature-space, integrated-gradients, reports)
 python -m src.classification.diagnostics run-all \
     --config src/classification/diagnostics/config/diagnostics.yaml \
-    --experiment proposal_x0_ffl
+    --experiment proposal_x0_ffl --gpu 0
 
-# Then aggregate
+# Aggregate including XAI metrics
 python -m src.classification.diagnostics aggregate \
+    --config src/classification/diagnostics/config/diagnostics.yaml
+
+# Paired comparison with next-experiment recommendation
+python -m src.classification.diagnostics paired-comparison \
     --config src/classification/diagnostics/config/diagnostics.yaml
 ```
 
-**Success criteria** (compare to x0_lp_1.5 baseline):
+### Success Criteria (compare to x0_lp_1.5 baseline)
+
+**Tier 1: Statistical Metrics** (HF correction via FFL):
 1. Wavelet HH L1 energy ratio > 0.85 (baseline: 0.68)
 2. GLCM dissimilarity > 3.9 (baseline: 3.76, real: 4.18)
 3. Gradient magnitude > 0.700 (baseline: 0.667, real: 0.736)
 4. Spectral slope diff < 0.025 (baseline: 0.030)
-5. Background std < 0.005 (baseline: 0.003)
-6. Overall diagnostic severity < 0.015 (baseline: 0.025)
-7. Classification AUC after dithering < 0.70 (demonstrates non-trivial
-   generation quality where a classifier cannot reliably distinguish
-   real from synthetic)
+
+**Tier 2: XAI Metrics** (LF texture improvement via self-cond + low eta):
+5. Fisher max ratio < 2.5 (baseline: 3.49) — less separable features
+6. Spectral attribution concordance closer to 0.0 (baseline: -0.9) — less
+   exploitable LF structure
+7. IG concentration < 0.15 (baseline: 0.186) — less spatially focused artifacts
+8. Image ablation delta < 4.0 (baseline: 5.96) — less image-channel reliance
+
+**Tier 3: Overall Quality**:
+9. Overall diagnostic severity < 0.015 (baseline: 0.025)
+10. Classification AUC after dithering < 0.70 (non-trivial quality threshold)
+11. t-SNE silhouette < 0.30 (baseline: 0.356) — weaker clustering
+
+**Tier 4: Non-Regression**:
+12. Background std < 0.005 (baseline: 0.003) — no noise introduction
+13. Mask ablation delta remains < 1.0 (baseline: 0.67) — mask quality preserved
+14. Boundary sharpness ratio > 0.95 (baseline: 0.97) — edges not degraded
 
 
 ## Part V: References
@@ -378,3 +610,22 @@ python -m src.classification.diagnostics aggregate \
 
 10. Ho, J., Jain, A., & Abbeel, P. (2020). Denoising Diffusion Probabilistic
     Models. NeurIPS.
+
+11. Sundararajan, M., Taly, A., & Yan, Q. (2017). Axiomatic Attribution for
+    Deep Networks. ICML.
+
+12. Simonyan, K., Vedaldi, A., & Zisserman, A. (2014). Deep Inside Convolutional
+    Networks: Visualising Image Classification Models and Saliency Maps. ICLR
+    Workshop.
+
+13. Yosinski, J., et al. (2015). Understanding Neural Networks Through Deep
+    Visualization. ICML Workshop.
+
+14. Selvaraju, R.R., et al. (2017). Grad-CAM: Visual Explanations from Deep
+    Networks via Gradient-based Localization. ICCV.
+
+15. Watson, D., Ho, J., Norouzi, M., & Chan, W. (2022). Learning to Efficiently
+    Sample from Diffusion Probabilistic Models. arXiv:2106.03802.
+
+16. Jabri, A., Fleet, D., & Chen, T. (2022). Scalable Adaptive Computation for
+    Iterative Generation. arXiv:2212.11972.

@@ -145,8 +145,8 @@ scheduler:
 # =============================================================================
 sampler:
   type: "DDIM"
-  num_inference_steps: 300  # Keep same as baseline for fair comparison
-  eta: 0.2  # Keep same as baseline for fair comparison
+  num_inference_steps: 500  # Keep same as baseline for fair comparison
+  eta: 0.05 # Keep same as baseline for fair comparison
   guidance_scale: 1.0
 
 # =============================================================================
@@ -164,7 +164,7 @@ training:
   # Self-conditioning: UNCHANGED for this step (tested in step 4)
   self_conditioning:
     enabled: true
-    probability: 0.5
+    probability: 0.8
 
   optimizer:
     type: "AdamW"
@@ -197,13 +197,13 @@ training:
   early_stopping:
     enabled: true
     monitor: "val/loss"
-    patience: 50
+    patience: 100
     mode: "min"
 
   # EMA: UNCHANGED for this step (tested in step 4)
   ema:
     enabled: true
-    decay: 0.999
+    decay: 0.9995
     update_every: 1
     update_start_step: 0
     store_on_cpu: true
@@ -220,6 +220,7 @@ loss:
   mode: "mse_lp_norm_ffl_groups"
 
   # Lp norm p=1.5: UNCHANGED (confirmed best by data)
+  # Gradient ∝ |x|^{p-1}, sub-linear growth preserves sharp features
   lp_norm:
     p: 1.5
 
@@ -241,7 +242,7 @@ loss:
   #   then the learned sigma_2 decreases to bring FFL online.
   group_uncertainty_weighting:
     enabled: true
-    initial_log_vars: [0.0, 1.5]
+    initial_log_vars: [0.0, 1.0]
     learnable: true
     clamp_range: [-5.0, 5.0]
     intra_group_weights: [1.0, 1.0, 1.0]

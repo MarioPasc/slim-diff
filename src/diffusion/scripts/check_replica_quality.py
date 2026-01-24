@@ -1851,14 +1851,14 @@ Examples:
 
   # Multi-split (for uniform replicas):
 python -m src.diffusion.scripts.check_replica_quality \
---replicas-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas \
+--replicas-dir /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/velocity_lp_1.5/replicas \
 --train-dist-csv docs/train_analysis/train_zbin_distribution.csv \
---train-slices-csv /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache/train.csv \
+--train-slices-csv /media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache/train.csv \
 --val-dist-csv docs/val_analysis/val_zbin_distribution.csv \
---val-slices-csv /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache/val.csv \
+--val-slices-csv /media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache/val.csv \
 --test-dist-csv docs/test_analysis/test_zbin_distribution.csv \
---test-slices-csv /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache/test.csv \
---output-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/quality_check
+--test-slices-csv /media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache/test.csv \
+--output-dir /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/velocity_lp_1.5/replicas/quality_check
         """
     )
 

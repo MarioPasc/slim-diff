@@ -38,9 +38,9 @@ Usage:
 
 Example:
     python -m src.diffusion.scripts.plot_image_grid \
-        --replicas-dir /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/replicas \
-        --test-slices-csv /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache/test.csv \
-        --output-path /media/mpascual/Sandisk2TB/research/epilepsy/results/replicas_jsddpm_sinus_kendall_weighted_anatomicalprior/image_grid.pdf \
+        --replicas-dir /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/velocity_lp_1.5/replicas \
+        --test-slices-csv /media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache/test.csv \
+        --output-path /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/velocity_lp_1.5/replicas/quality_check/image_grid.pdf \
         --zbins 5 10 15 20 25 \
         --min-lesion-pixels 25 \
         --no-title \

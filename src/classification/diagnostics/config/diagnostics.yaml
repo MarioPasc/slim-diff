@@ -82,6 +82,32 @@ output:
   plot_dpi: 300
   save_data: true
 
+xai:
+  channel_decomposition:
+    ablation_baseline: -1.0  # Fill value when ablating a channel (-1 = background)
+    per_layer: true  # Also compute per-layer channel contributions
+  spectral_attribution:
+    source: "gradcam"  # "gradcam" (uses pre-computed heatmaps) or "input_gradient"
+    n_bands: 5  # Must match feature_probes.frequency_bands.n_bands
+  feature_space:
+    pca_components: 10
+    tsne_perplexity: 30
+    tsne_seed: 42
+    top_features: 5  # Top-k discriminative features to visualize
+  integrated_gradients:
+    n_steps: 50
+    baseline: "zeros"  # "zeros" or "noise"
+    max_samples: 100  # Total samples (50 per class) for computational efficiency
+
+reporting:
+  compact_format: "yaml"
+  quality_thresholds:  # For letter grades in compact report
+    A: 0.05
+    B: 0.15
+    C: 0.30
+    D: 0.50
+  recommendation_engine: true
+
 experiment:
   seed: 42
   device: "cuda"

@@ -50,6 +50,10 @@ ANALYSIS_JSON_FILES = {
     "background": "full_image/background/background_analysis_results.json",
     "spatial_correlation": "full_image/spatial_correlation/spatial_correlation_results.json",
     "global_frequency": "full_image/global_frequency/global_frequency_results.json",
+    "channel_decomposition": "channel_decomposition/channel_decomposition_results.json",
+    "spectral_attribution": "spectral_attribution/spectral_attribution_results.json",
+    "feature_space": "feature_space/feature_space_results.json",
+    "integrated_gradients": "integrated_gradients/ig_results.json",
 }
 
 
@@ -415,6 +419,127 @@ def _extract_global_frequency_psd(data: dict, experiment: str) -> list[dict]:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# XAI extraction functions
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _extract_channel_decomposition(data: dict, experiment: str) -> list[dict]:
+    """Extract channel decomposition metrics from JSON result."""
+    overall = data.get("overall", {})
+    gradient = overall.get("gradient", {})
+    ablation = overall.get("ablation", {})
+
+    row = {
+        "experiment": experiment,
+        "image_gradient_magnitude": gradient.get("image_magnitude_mean"),
+        "mask_gradient_magnitude": gradient.get("mask_magnitude_mean"),
+        "image_contribution_fraction": gradient.get("image_fraction"),
+        "mask_contribution_fraction": gradient.get("mask_fraction"),
+        "image_ablation_delta": ablation.get("image_ablation_delta_mean"),
+        "mask_ablation_delta": ablation.get("mask_ablation_delta_mean"),
+        "dominant_channel": overall.get("dominant_channel"),
+        "ablation_ratio": (
+            ablation.get("image_ablation_delta_mean", 0)
+            / max(ablation.get("mask_ablation_delta_mean", 1e-12), 1e-12)
+        ),
+    }
+
+    # Per-class breakdown
+    for cls in ("real", "synthetic"):
+        cls_data = data.get("per_class", {}).get(cls, {})
+        cls_grad = cls_data.get("gradient", {})
+        cls_abl = cls_data.get("ablation", {})
+        row[f"{cls}_image_fraction"] = cls_grad.get("image_fraction")
+        row[f"{cls}_image_ablation_delta"] = cls_abl.get("image_ablation_delta")
+        row[f"{cls}_mask_ablation_delta"] = cls_abl.get("mask_ablation_delta")
+
+    return [row]
+
+
+def _extract_spectral_attribution(data: dict, experiment: str) -> list[dict]:
+    """Extract spectral attribution metrics from JSON result."""
+    row = {
+        "experiment": experiment,
+        "peak_attribution_band": data.get("peak_attribution_band"),
+        "attribution_hf_fraction": data.get("attribution_hf_fraction"),
+        "concordance": data.get("concordance"),
+        "n_bands": data.get("n_bands"),
+    }
+
+    # Per-band attribution fractions
+    per_band = data.get("per_band_attribution_fraction", [])
+    for i, frac in enumerate(per_band):
+        row[f"band_{i}_attribution_fraction"] = frac
+
+    # Power ratio comparison (real/synth energy per band)
+    power_ratios = data.get("power_ratio_comparison", [])
+    for i, ratio in enumerate(power_ratios):
+        row[f"band_{i}_power_ratio"] = ratio
+
+    return [row]
+
+
+def _extract_feature_space(data: dict, experiment: str) -> list[dict]:
+    """Extract feature space analysis metrics from JSON result."""
+    fisher = data.get("fisher_discriminant", {})
+    stats = data.get("statistical_tests", {})
+    pca = data.get("pca", {})
+    cluster = data.get("cluster_metrics", {})
+
+    row = {
+        "experiment": experiment,
+        "feature_dim": data.get("feature_dim"),
+        "fisher_max_ratio": fisher.get("max_ratio"),
+        "fisher_mean_ratio": fisher.get("mean_ratio"),
+        "n_significant_features": stats.get("n_significant_fdr"),
+        "fraction_significant_features": stats.get("fraction_significant"),
+        "pca_cumulative_3d": pca.get("cumulative_3d"),
+        "tsne_silhouette": cluster.get("tsne_silhouette"),
+        "inter_class_cosine_distance": cluster.get("inter_class_cosine_distance"),
+        "inter_class_euclidean_distance": cluster.get("inter_class_euclidean_distance"),
+    }
+
+    # Top Fisher indices and ratios
+    top_indices = fisher.get("top_indices", [])
+    top_ratios = fisher.get("top_ratios", [])
+    for i, (idx, ratio) in enumerate(zip(top_indices[:5], top_ratios[:5])):
+        row[f"fisher_top{i+1}_dim"] = idx
+        row[f"fisher_top{i+1}_ratio"] = ratio
+
+    # PCA variance explained (top 3)
+    var_exp = pca.get("variance_explained", [])
+    for i, v in enumerate(var_exp[:3]):
+        row[f"pca_var_explained_pc{i+1}"] = v
+
+    return [row]
+
+
+def _extract_integrated_gradients(data: dict, experiment: str) -> list[dict]:
+    """Extract integrated gradients metrics from JSON result."""
+    attr_per_ch = data.get("mean_attribution_per_channel", {})
+    per_class = data.get("per_class", {})
+
+    row = {
+        "experiment": experiment,
+        "n_steps": data.get("n_steps"),
+        "ig_image_attribution": attr_per_ch.get("image"),
+        "ig_mask_attribution": attr_per_ch.get("mask"),
+        "ig_image_fraction": attr_per_ch.get("image_fraction"),
+        "ig_concentration": data.get("attribution_concentration"),
+        "ig_gradcam_correlation": data.get("ig_gradcam_correlation"),
+        "ig_completeness_mean": data.get("completeness_mean"),
+    }
+
+    # Per-class breakdown
+    for cls in ("real", "synthetic"):
+        cls_data = per_class.get(cls, {})
+        row[f"ig_{cls}_total_attribution"] = cls_data.get("mean_total_attribution")
+        row[f"ig_{cls}_concentration"] = cls_data.get("concentration")
+
+    return [row]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main aggregation logic
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -434,6 +559,10 @@ EXTRACTORS = {
     "spatial_correlation": ("spatial_correlation", _extract_spatial_correlation, "spatial_correlation.csv"),
     "global_frequency_summary": ("global_frequency", _extract_global_frequency, "global_frequency_summary.csv"),
     "global_frequency_psd": ("global_frequency", _extract_global_frequency_psd, "global_frequency_psd.csv"),
+    "channel_decomposition": ("channel_decomposition", _extract_channel_decomposition, "channel_decomposition.csv"),
+    "spectral_attribution": ("spectral_attribution", _extract_spectral_attribution, "spectral_attribution.csv"),
+    "feature_space": ("feature_space", _extract_feature_space, "feature_space.csv"),
+    "integrated_gradients": ("integrated_gradients", _extract_integrated_gradients, "integrated_gradients.csv"),
 }
 
 
@@ -634,6 +763,46 @@ def _generate_experiment_ranking(
                 row["background_synth_std"] = exp_bg_synth["std"].values[0]
                 row["background_synth_deviation"] = exp_bg_synth["deviation_from_minus1"].values[0]
 
+        # XAI: Channel decomposition
+        if "channel_decomposition" in combined:
+            cd = combined["channel_decomposition"]
+            exp_cd = cd[cd["experiment"] == exp]
+            if not exp_cd.empty:
+                row["xai_image_contribution_fraction"] = exp_cd["image_contribution_fraction"].values[0]
+                row["xai_image_ablation_delta"] = exp_cd["image_ablation_delta"].values[0]
+                row["xai_mask_ablation_delta"] = exp_cd["mask_ablation_delta"].values[0]
+                row["xai_ablation_ratio"] = exp_cd["ablation_ratio"].values[0]
+                row["xai_dominant_channel"] = exp_cd["dominant_channel"].values[0]
+
+        # XAI: Spectral attribution
+        if "spectral_attribution" in combined:
+            sa = combined["spectral_attribution"]
+            exp_sa = sa[sa["experiment"] == exp]
+            if not exp_sa.empty:
+                row["xai_peak_attribution_band"] = exp_sa["peak_attribution_band"].values[0]
+                row["xai_attribution_hf_fraction"] = exp_sa["attribution_hf_fraction"].values[0]
+                row["xai_concordance"] = exp_sa["concordance"].values[0]
+
+        # XAI: Feature space
+        if "feature_space" in combined:
+            fs = combined["feature_space"]
+            exp_fs = fs[fs["experiment"] == exp]
+            if not exp_fs.empty:
+                row["xai_fisher_max_ratio"] = exp_fs["fisher_max_ratio"].values[0]
+                row["xai_fisher_mean_ratio"] = exp_fs["fisher_mean_ratio"].values[0]
+                row["xai_tsne_silhouette"] = exp_fs["tsne_silhouette"].values[0]
+                row["xai_pca_cumulative_3d"] = exp_fs["pca_cumulative_3d"].values[0]
+                row["xai_fraction_significant_features"] = exp_fs["fraction_significant_features"].values[0]
+
+        # XAI: Integrated Gradients
+        if "integrated_gradients" in combined:
+            ig = combined["integrated_gradients"]
+            exp_ig = ig[ig["experiment"] == exp]
+            if not exp_ig.empty:
+                row["xai_ig_image_fraction"] = exp_ig["ig_image_fraction"].values[0]
+                row["xai_ig_concentration"] = exp_ig["ig_concentration"].values[0]
+                row["xai_ig_gradcam_correlation"] = exp_ig["ig_gradcam_correlation"].values[0]
+
         rows.append(row)
 
     if rows:
@@ -754,6 +923,35 @@ def _generate_diagnostic_report(
                 raw_scores[exp]["wavelet_energy_deviation"] = (
                     (exp_wv["energy_ratio"] - 1.0).abs().mean()
                 )
+
+        # XAI: Feature separability (higher = more distinguishable = worse)
+        if "feature_space" in combined:
+            fs = combined["feature_space"]
+            exp_fs = fs[fs["experiment"] == exp]
+            if not exp_fs.empty:
+                raw_scores[exp]["xai_fisher_separability"] = exp_fs["fisher_max_ratio"].values[0]
+                raw_scores[exp]["xai_tsne_silhouette"] = exp_fs["tsne_silhouette"].values[0]
+
+        # XAI: Channel decomposition (ablation ratio = how much image dominates)
+        if "channel_decomposition" in combined:
+            cd = combined["channel_decomposition"]
+            exp_cd = cd[cd["experiment"] == exp]
+            if not exp_cd.empty:
+                raw_scores[exp]["xai_image_ablation_delta"] = exp_cd["image_ablation_delta"].values[0]
+
+        # XAI: Spectral attribution HF fraction
+        if "spectral_attribution" in combined:
+            sa = combined["spectral_attribution"]
+            exp_sa = sa[sa["experiment"] == exp]
+            if not exp_sa.empty:
+                raw_scores[exp]["xai_attribution_hf_fraction"] = exp_sa["attribution_hf_fraction"].values[0]
+
+        # XAI: IG concentration (higher = focused artifacts, lower = distributed)
+        if "integrated_gradients" in combined:
+            ig = combined["integrated_gradients"]
+            exp_ig = ig[ig["experiment"] == exp]
+            if not exp_ig.empty:
+                raw_scores[exp]["xai_ig_concentration"] = exp_ig["ig_concentration"].values[0]
 
     # Build the report DataFrame
     all_metrics = set()
@@ -887,6 +1085,28 @@ def _generate_grouped_analysis(
             exp_wv = wv[(wv["experiment"] == exp) & (wv["channel"] == "image")]
             if not exp_wv.empty:
                 row["wavelet_mean_energy_ratio"] = exp_wv["energy_ratio"].mean()
+
+        # XAI metrics for grouped analysis
+        if "channel_decomposition" in combined:
+            cd = combined["channel_decomposition"]
+            exp_cd = cd[cd["experiment"] == exp]
+            if not exp_cd.empty:
+                row["xai_image_fraction"] = exp_cd["image_contribution_fraction"].values[0]
+                row["xai_ablation_ratio"] = exp_cd["ablation_ratio"].values[0]
+
+        if "feature_space" in combined:
+            fs = combined["feature_space"]
+            exp_fs = fs[fs["experiment"] == exp]
+            if not exp_fs.empty:
+                row["xai_fisher_max"] = exp_fs["fisher_max_ratio"].values[0]
+                row["xai_silhouette"] = exp_fs["tsne_silhouette"].values[0]
+
+        if "spectral_attribution" in combined:
+            sa = combined["spectral_attribution"]
+            exp_sa = sa[sa["experiment"] == exp]
+            if not exp_sa.empty:
+                row["xai_hf_fraction"] = exp_sa["attribution_hf_fraction"].values[0]
+                row["xai_concordance"] = exp_sa["concordance"].values[0]
 
         summary_rows.append(row)
 

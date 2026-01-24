@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import torch
+import torch.nn as nn
 
 logger = logging.getLogger(__name__)
 
@@ -235,3 +237,146 @@ def save_figure(fig: Any, output_dir: Path, name: str, formats: list[str] | None
         path = output_dir / f"{name}.{fmt}"
         fig.savefig(path, dpi=dpi, bbox_inches="tight")
     logger.info(f"Saved figure '{name}' to {output_dir}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Model loading utilities (shared by all XAI analyses)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def load_model_from_checkpoint(
+    ckpt_path: Path,
+    in_channels: int,
+    device: str,
+) -> nn.Module:
+    """Load a trained classifier from a checkpoint.
+
+    Creates a minimal compatible config for ClassificationLightningModule
+    and loads the model weights from the checkpoint.
+
+    Args:
+        ckpt_path: Path to the .ckpt file.
+        in_channels: Number of input channels for the model.
+        device: Target device string.
+
+    Returns:
+        The loaded model in eval mode on the specified device.
+    """
+    from omegaconf import OmegaConf
+
+    from src.classification.training.lit_module import ClassificationLightningModule
+
+    train_cfg = OmegaConf.create({
+        "training": {
+            "optimizer": "adam",
+            "learning_rate": 1e-4,
+            "weight_decay": 1e-5,
+            "max_epochs": 50,
+            "scheduler": {"type": "reduce_on_plateau", "factor": 0.5, "patience": 5, "min_lr": 1e-6},
+            "early_stopping": {"monitor": "val/auc", "patience": 10, "min_delta": 0.001},
+        },
+        "model": {"config_path": "models/simple_cnn.yaml"},
+    })
+
+    lit_module = ClassificationLightningModule.load_from_checkpoint(
+        str(ckpt_path),
+        cfg=train_cfg,
+        in_channels=in_channels,
+        map_location=device,
+    )
+    lit_module.eval()
+    model = lit_module.model.to(device)
+    model.eval()
+    return model
+
+
+def discover_checkpoint(
+    checkpoints_base_dir: Path,
+    experiment_name: str,
+    fold_idx: int,
+) -> Path | None:
+    """Discover the best checkpoint file for a given experiment and fold.
+
+    Searches all subdirectories under the experiment's checkpoint directory
+    for fold checkpoint files. Handles versioned checkpoints (e.g., -v1, -v2)
+    by preferring the base name without version suffix.
+
+    Args:
+        checkpoints_base_dir: Base directory containing experiment subdirs.
+        experiment_name: Experiment name (e.g., 'epsilon_lp_1.5').
+        fold_idx: Fold index to find checkpoint for.
+
+    Returns:
+        Path to the best checkpoint file, or None if not found.
+    """
+    exp_dir = Path(checkpoints_base_dir) / experiment_name
+    if not exp_dir.exists():
+        return None
+
+    base_name = f"fold{fold_idx}_best.ckpt"
+    candidates: list[Path] = []
+
+    for subdir in sorted(exp_dir.rglob("*.ckpt")):
+        # Skip non-matching filenames
+        pass
+
+    # Walk all subdirectories
+    for subdir in sorted(exp_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+        # Check recursively within subdirs
+        for ckpt in sorted(subdir.rglob(base_name)):
+            candidates.append(ckpt)
+        if not candidates or candidates[-1].parent != subdir:
+            # Look for versioned checkpoints
+            for ckpt in sorted(subdir.rglob(f"fold{fold_idx}_best-v*.ckpt")):
+                candidates.append(ckpt)
+
+    if not candidates:
+        return None
+
+    # Prefer non-versioned, then latest by modification time
+    non_versioned = [c for c in candidates if "-v" not in c.name]
+    if non_versioned:
+        return max(non_versioned, key=lambda p: p.stat().st_mtime)
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def determine_in_channels(mode: str) -> int:
+    """Map input mode string to channel count.
+
+    Args:
+        mode: One of 'joint', 'image_only', 'mask_only'.
+
+    Returns:
+        Number of input channels (2 for joint, 1 otherwise).
+    """
+    if mode == "joint":
+        return 2
+    elif mode in ("image_only", "mask_only"):
+        return 1
+    else:
+        raise ValueError(f"Unknown input mode: {mode}")
+
+
+def select_patches_by_mode(
+    patches: np.ndarray,
+    mode: str,
+) -> np.ndarray:
+    """Select channels from patches based on input mode.
+
+    Args:
+        patches: Array of shape (N, 2, H, W).
+        mode: One of 'joint', 'image_only', 'mask_only'.
+
+    Returns:
+        Array of shape (N, C, H, W) where C depends on mode.
+    """
+    if mode == "joint":
+        return patches
+    elif mode == "image_only":
+        return patches[:, 0:1, :, :]
+    elif mode == "mask_only":
+        return patches[:, 1:2, :, :]
+    else:
+        raise ValueError(f"Unknown input mode: {mode}")

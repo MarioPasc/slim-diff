@@ -25,17 +25,20 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 
 from src.classification.diagnostics.utils import (
+    discover_checkpoint,
+    determine_in_channels,
     ensure_output_dir,
+    load_model_from_checkpoint,
     load_patches,
     save_csv,
     save_result_json,
+    select_patches_by_mode,
 )
 from src.classification.diagnostics.xai.aggregation import (
     aggregate_heatmaps,
     compute_attention_difference,
     plot_gradcam_results,
 )
-from src.classification.training.lit_module import ClassificationLightningModule
 
 logger = logging.getLogger(__name__)
 
@@ -245,140 +248,27 @@ class GradCAM:
 
 
 def _load_model_from_checkpoint(
-    ckpt_path: Path,
-    in_channels: int,
-    device: str,
+    ckpt_path: Path, in_channels: int, device: str,
 ) -> nn.Module:
-    """Load a trained classifier from a checkpoint.
-
-    Creates a minimal compatible config for ClassificationLightningModule
-    and loads the model weights from the checkpoint.
-
-    Args:
-        ckpt_path: Path to the .ckpt file.
-        in_channels: Number of input channels for the model.
-        device: Target device string.
-
-    Returns:
-        The loaded model in eval mode on the specified device.
-    """
-    from omegaconf import OmegaConf
-
-    # Create minimal config compatible with ClassificationLightningModule
-    # The model factory resolves relative config_path from src/classification/config/
-    train_cfg = OmegaConf.create({
-        "training": {
-            "optimizer": "adam",
-            "learning_rate": 1e-4,
-            "weight_decay": 1e-5,
-            "max_epochs": 50,
-            "scheduler": {"type": "reduce_on_plateau", "factor": 0.5, "patience": 5, "min_lr": 1e-6},
-            "early_stopping": {"monitor": "val/auc", "patience": 10, "min_delta": 0.001},
-        },
-        "model": {"config_path": "models/simple_cnn.yaml"},
-    })
-
-    lit_module = ClassificationLightningModule.load_from_checkpoint(
-        str(ckpt_path),
-        cfg=train_cfg,
-        in_channels=in_channels,
-        map_location=device,
-    )
-    lit_module.eval()
-    model = lit_module.model.to(device)
-    model.eval()
-    return model
+    """Load a trained classifier from a checkpoint. Delegates to utils."""
+    return load_model_from_checkpoint(ckpt_path, in_channels, device)
 
 
 def _discover_checkpoint(
-    checkpoints_base_dir: Path,
-    experiment_name: str,
-    fold_idx: int,
+    checkpoints_base_dir: Path, experiment_name: str, fold_idx: int,
 ) -> Path | None:
-    """Discover the best checkpoint file for a given experiment and fold.
-
-    Searches all subdirectories under the experiment's checkpoint directory
-    for fold checkpoint files. Handles versioned checkpoints (e.g., -v1, -v2)
-    by preferring the base name without version suffix.
-
-    Args:
-        checkpoints_base_dir: Base directory containing experiment subdirs.
-        experiment_name: Experiment name (e.g., 'epsilon_lp_1.5').
-        fold_idx: Fold index to find checkpoint for.
-
-    Returns:
-        Path to the best checkpoint file, or None if not found.
-    """
-    exp_dir = checkpoints_base_dir / experiment_name
-    if not exp_dir.exists():
-        return None
-
-    # Find all subdirectories that contain checkpoints
-    base_name = f"fold{fold_idx}_best.ckpt"
-    candidates: list[Path] = []
-
-    for subdir in sorted(exp_dir.iterdir()):
-        if not subdir.is_dir():
-            continue
-        # Prefer the base checkpoint (no version suffix)
-        base_ckpt = subdir / base_name
-        if base_ckpt.exists():
-            candidates.append(base_ckpt)
-        else:
-            # Look for versioned checkpoints and take the latest
-            versioned = sorted(
-                subdir.glob(f"fold{fold_idx}_best-v*.ckpt"),
-                key=lambda p: p.name,
-            )
-            if versioned:
-                candidates.append(versioned[-1])
-
-    if not candidates:
-        return None
-
-    # If multiple subdirectories have checkpoints, prefer the most recent
-    # (by modification time)
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    """Discover checkpoint for experiment/fold. Delegates to utils."""
+    return discover_checkpoint(checkpoints_base_dir, experiment_name, fold_idx)
 
 
 def _determine_in_channels(mode: str) -> int:
-    """Map input mode string to channel count.
-
-    Args:
-        mode: One of 'joint', 'image_only', 'mask_only'.
-
-    Returns:
-        Number of input channels (2 for joint, 1 otherwise).
-    """
-    if mode == "joint":
-        return 2
-    elif mode in ("image_only", "mask_only"):
-        return 1
-    else:
-        raise ValueError(f"Unknown input mode: {mode}")
+    """Map input mode to channel count. Delegates to utils."""
+    return determine_in_channels(mode)
 
 
-def _select_patches_by_mode(
-    patches: np.ndarray,
-    mode: str,
-) -> np.ndarray:
-    """Select channels from patches based on input mode.
-
-    Args:
-        patches: Array of shape (N, 2, H, W).
-        mode: One of 'joint', 'image_only', 'mask_only'.
-
-    Returns:
-        Array of shape (N, C, H, W) where C depends on mode.
-    """
-    if mode == "joint":
-        return patches
-    elif mode == "image_only":
-        return patches[:, 0:1, :, :]
-    elif mode == "mask_only":
-        return patches[:, 1:2, :, :]
-    else:
-        raise ValueError(f"Unknown input mode: {mode}")
+def _select_patches_by_mode(patches: np.ndarray, mode: str) -> np.ndarray:
+    """Select channels by mode. Delegates to utils."""
+    return select_patches_by_mode(patches, mode)
 
 
 def run_gradcam_analysis(
