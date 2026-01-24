@@ -17,6 +17,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from omegaconf import DictConfig
 from scipy.stats import ks_2samp, wasserstein_distance
@@ -24,6 +25,7 @@ from scipy.stats import ks_2samp, wasserstein_distance
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_patches,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -482,5 +484,41 @@ def run_distribution_tests(cfg: DictConfig, experiment_name: str) -> dict[str, A
 
     # Save JSON summary
     save_result_json(all_results, output_dir / "distribution_tests_results.json")
+
+    # Save CSV: distribution test metrics for inter-experiment analysis
+    csv_rows = []
+    for ch in channels:
+        ch_label = channel_names.get(ch, f"ch{ch}")
+        ch_data = all_results.get(ch_label, {})
+        if "ks_statistic" in ch_data:
+            csv_rows.append({
+                "experiment": experiment_name,
+                "channel": ch_label,
+                "tissue": "all",
+                "ks_statistic": ch_data["ks_statistic"],
+                "ks_pvalue": ch_data["ks_pvalue"],
+                "wasserstein": ch_data["wasserstein"],
+                "real_mean": ch_data["real_mean"],
+                "real_std": ch_data["real_std"],
+                "synth_mean": ch_data["synth_mean"],
+                "synth_std": ch_data["synth_std"],
+            })
+    # Per-tissue results
+    for tissue_name, tissue_res in all_results.get("per_tissue", {}).items():
+        if tissue_res.get("skipped", False):
+            continue
+        csv_rows.append({
+            "experiment": experiment_name,
+            "channel": "image",
+            "tissue": tissue_name,
+            "ks_statistic": tissue_res["ks_statistic"],
+            "ks_pvalue": tissue_res["ks_pvalue"],
+            "wasserstein": tissue_res["wasserstein"],
+            "real_mean": tissue_res["real_mean"],
+            "real_std": tissue_res["real_std"],
+            "synth_mean": tissue_res["synth_mean"],
+            "synth_std": tissue_res["synth_std"],
+        })
+    save_csv(pd.DataFrame(csv_rows), output_dir / "distribution_tests_summary.csv")
 
     return all_results

@@ -60,12 +60,12 @@ data:
 
   # K-fold cross-validation
   kfold:
-    n_folds: 5
+    n_folds: 3
     stratify_by: "z_bin"
     seed: 42
 
   # Input modes to evaluate
-  input_modes: ["joint", "image_only", "mask_only"]
+  input_modes: ["joint"]  # , "image_only", "mask_only"
   # "joint":      2-channel (image + mask) — overall paired quality
   # "image_only": 1-channel (FLAIR patch) — texture quality
   # "mask_only":  1-channel (mask patch) — shape/boundary quality
@@ -81,7 +81,7 @@ model:
 # Training
 # ---------------------------------------------------------------------------
 training:
-  batch_size: 64
+  batch_size: 8
   max_epochs: 50
   learning_rate: 1.0e-4
   weight_decay: 1.0e-5
@@ -96,7 +96,7 @@ training:
   early_stopping:
     monitor: "val/auc"
     mode: "max"
-    patience: 10
+    patience: 3
     min_delta: 0.001
 
   precision: "32-true"
@@ -135,6 +135,7 @@ evaluation:
 output:
   base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/classification"
   patches_subdir: "patches"
+  full_images_subdir: "full_images"
   results_subdir: "results"
   checkpoints_subdir: "checkpoints"
   figures_subdir: "figures"

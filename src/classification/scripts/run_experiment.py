@@ -8,11 +8,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gc
 import logging
 from pathlib import Path
 from typing import Literal
 
 import pytorch_lightning as pl
+import torch
 from omegaconf import OmegaConf
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
@@ -38,6 +40,10 @@ def run_experiment(args: argparse.Namespace) -> ExperimentResult:
     input_mode: Literal["joint", "image_only", "mask_only"] = args.input_mode
     n_folds = cfg.data.kfold.n_folds
 
+    # Optional flags
+    use_dithering = getattr(args, "dithering", False)
+    use_full_image = getattr(args, "full_image", False)
+
     # Determine which folds to run
     if args.folds:
         fold_indices = [int(f) for f in args.folds.split(",")]
@@ -48,16 +54,30 @@ def run_experiment(args: argparse.Namespace) -> ExperimentResult:
 
     # Setup data module
     is_control = experiment_name == "control"
-    if is_control:
-        patches_dir = Path(cfg.output.base_dir) / cfg.output.patches_subdir / "control"
-    else:
-        patches_dir = Path(cfg.output.base_dir) / cfg.output.patches_subdir / experiment_name
 
-    # Output directory for this run
+    # Determine patches directory based on full-image vs patch mode
+    patches_subdir = cfg.output.get("full_images_subdir", "full_images") if use_full_image else cfg.output.patches_subdir
+    if is_control:
+        patches_dir = Path(cfg.output.base_dir) / patches_subdir / "control"
+    else:
+        patches_dir = Path(cfg.output.base_dir) / patches_subdir / experiment_name
+
+    # Output directory for this run (include dithering/full-image suffix)
+    mode_suffix = input_mode
+    if use_dithering:
+        mode_suffix += "_dithered"
+    if use_full_image:
+        mode_suffix += "_fullimg"
+
     results_dir = (
-        Path(cfg.output.base_dir) / cfg.output.results_subdir / experiment_name / input_mode
+        Path(cfg.output.base_dir) / cfg.output.results_subdir / experiment_name / mode_suffix
     )
     results_dir.mkdir(parents=True, exist_ok=True)
+
+    if use_dithering:
+        logger.info("Dithering ENABLED: will apply uniform dithering to synthetic data")
+    if use_full_image:
+        logger.info("Full-image mode ENABLED: using 160x160 images instead of patches")
 
     fold_results = []
     for fold_idx in fold_indices:
@@ -72,6 +92,8 @@ def run_experiment(args: argparse.Namespace) -> ExperimentResult:
             dm = KFoldClassificationDataModule(
                 cfg=cfg, experiment_name=experiment_name,
                 input_mode=input_mode, patches_dir=patches_dir,
+                dithering=use_dithering,
+                dithering_seed=cfg.experiment.seed,
             )
         dm.set_fold(fold_idx)
         dm.prepare_data()
@@ -83,7 +105,7 @@ def run_experiment(args: argparse.Namespace) -> ExperimentResult:
         )
 
         # Callbacks
-        ckpt_dir = Path(cfg.output.base_dir) / cfg.output.checkpoints_subdir / experiment_name / input_mode
+        ckpt_dir = Path(cfg.output.base_dir) / cfg.output.checkpoints_subdir / experiment_name / mode_suffix
         callbacks = [
             EarlyStopping(
                 monitor=cfg.training.early_stopping.monitor,
@@ -143,6 +165,12 @@ def run_experiment(args: argparse.Namespace) -> ExperimentResult:
             f"[{fold_result.global_metrics.auc_roc_ci_lower:.4f}, "
             f"{fold_result.global_metrics.auc_roc_ci_upper:.4f}]"
         )
+
+        # Free GPU memory between folds
+        del model, trainer
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # Aggregate across folds
     experiment_result = aggregate_fold_metrics(

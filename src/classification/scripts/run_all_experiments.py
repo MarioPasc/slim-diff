@@ -8,12 +8,16 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gc
 import logging
+import subprocess
+import sys
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import pytorch_lightning as pl
+import torch
 from omegaconf import OmegaConf
 
 from src.classification.data.data_module import ControlDataModule
@@ -39,52 +43,62 @@ logger = logging.getLogger(__name__)
 
 
 def run_all(args: argparse.Namespace) -> None:
-    """Run classification for all experiments and input modes."""
+    """Run classification for all experiments and input modes.
+
+    Each experiment/mode is run as a separate subprocess to prevent memory
+    accumulation from numpy arrays that Python's allocator doesn't return to
+    the OS. Results are saved to disk by each subprocess and loaded at the end.
+    """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
 
     cfg = OmegaConf.load(args.config)
     input_modes: list[str] = list(cfg.data.input_modes)
     experiments = [exp.name for exp in cfg.data.synthetic.experiments]
 
-    all_results: list[ExperimentResult] = []
-    all_perm_results: dict[str, PermutationTestResult] = {}
+    use_dithering = getattr(args, "dithering", False)
+    use_full_image = getattr(args, "full_image", False)
+
+    failed: list[str] = []
+    total = len(experiments) * len(input_modes)
+    completed = 0
 
     for exp_name in experiments:
         for mode in input_modes:
+            completed += 1
             logger.info(f"{'='*60}")
-            logger.info(f"Running: {exp_name} / {mode}")
+            logger.info(f"[{completed}/{total}] Running: {exp_name} / {mode}")
             logger.info(f"{'='*60}")
 
-            # Create a namespace mimicking the run command args
-            run_args = argparse.Namespace(
-                config=args.config,
-                experiment=exp_name,
-                input_mode=mode,
-                folds=None,
-            )
-            result = run_experiment(run_args)
-            all_results.append(result)
+            # Run as subprocess to guarantee memory isolation
+            cmd = [
+                sys.executable, "-m", "src.classification", "run",
+                "--config", str(args.config),
+                "--experiment", exp_name,
+                "--input-mode", mode,
+            ]
+            if use_dithering:
+                cmd.append("--dithering")
+            if use_full_image:
+                cmd.append("--full-image")
 
-            # Permutation test on pooled predictions
-            all_probs = np.concatenate([fr.probs for fr in result.fold_results])
-            all_labels = np.concatenate([fr.labels for fr in result.fold_results])
-            perm = permutation_test_auc(
-                all_probs, all_labels,
-                n_permutations=cfg.evaluation.permutation_test.n_permutations,
-                seed=cfg.evaluation.permutation_test.seed,
-                alpha=cfg.evaluation.permutation_test.alpha,
-            )
-            key = f"{exp_name}_{mode}"
-            all_perm_results[key] = perm
+            result = subprocess.run(cmd, capture_output=False)
+            if result.returncode != 0:
+                logger.error(f"FAILED: {exp_name} / {mode} (exit code {result.returncode})")
+                failed.append(f"{exp_name}/{mode}")
+            else:
+                logger.info(f"Completed: {exp_name} / {mode}")
 
-    # Control experiment
-    control_result: ExperimentResult | None = None
+    # Control experiment (small patches, run in-process)
     if args.include_control and cfg.evaluation.control.enabled:
         logger.info("Running real-vs-real control experiment...")
-        control_result = _run_control(cfg, input_modes[0])
+        _run_control(cfg, input_modes[0])
 
-    # Generate report
-    _generate_full_report(cfg, all_results, all_perm_results, control_result)
+    if failed:
+        logger.warning(f"{len(failed)} experiment(s) failed: {failed}")
+    else:
+        logger.info(f"All {total} experiments completed successfully.")
+
+    logger.info("Run 'python -m src.classification report --config ...' to generate tables.")
 
 
 def generate_report(args: argparse.Namespace) -> None:

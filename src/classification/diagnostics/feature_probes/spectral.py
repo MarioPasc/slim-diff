@@ -19,6 +19,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from omegaconf import DictConfig
 from scipy.spatial.distance import jensenshannon
@@ -27,6 +28,7 @@ from scipy.stats import linregress
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_patches,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -471,6 +473,36 @@ def run_spectral_analysis(cfg: DictConfig, experiment_name: str) -> dict:
         "channels": {r["channel"]: r for r in all_results},
     }
     save_result_json(combined_result, output_dir / "spectral_results.json")
+
+    # Save CSV: radial PSD curves for inter-experiment analysis
+    csv_rows = []
+    for r in all_results:
+        for freq, p_real, p_synth in zip(
+            r["frequencies_real"], r["power_real"], r["power_synth"]
+        ):
+            csv_rows.append({
+                "experiment": experiment_name,
+                "channel": r["channel"],
+                "frequency": freq,
+                "power_real": p_real,
+                "power_synth": p_synth,
+            })
+    save_csv(pd.DataFrame(csv_rows), output_dir / "spectral_psd.csv")
+
+    # Save CSV: summary metrics per channel
+    summary_rows = []
+    for r in all_results:
+        summary_rows.append({
+            "experiment": experiment_name,
+            "channel": r["channel"],
+            "real_slope": r["real_slope"],
+            "synth_slope": r["synth_slope"],
+            "slope_difference": r["slope_difference"],
+            "js_divergence": r["js_divergence"],
+            "n_real": r["n_real"],
+            "n_synth": r["n_synth"],
+        })
+    save_csv(pd.DataFrame(summary_rows), output_dir / "spectral_summary.csv")
 
     logger.info(f"Spectral analysis complete for '{experiment_name}'")
     return combined_result

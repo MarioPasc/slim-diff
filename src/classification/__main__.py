@@ -2,8 +2,9 @@
 
 Usage:
     python -m src.classification extract --config <path> [--experiment <name>] [--all]
-    python -m src.classification run --config <path> --experiment <name> [--input-mode joint]
-    python -m src.classification run-all --config <path>
+    python -m src.classification extract-full --config <path> --experiment <name>
+    python -m src.classification run --config <path> --experiment <name> [--input-mode joint] [--dithering] [--full-image]
+    python -m src.classification run-all --config <path> [--dithering] [--full-image]
     python -m src.classification report --config <path>
 """
 
@@ -26,17 +27,33 @@ def main() -> None:
     p_extract.add_argument("--experiment", help="Single experiment name to extract")
     p_extract.add_argument("--all", action="store_true", help="Extract for all experiments")
 
+    # --- extract-full ---
+    p_extract_full = subparsers.add_parser(
+        "extract-full", help="Extract full 160x160 images (no patch cropping)."
+    )
+    p_extract_full.add_argument("--config", required=True, help="Path to classification_task.yaml")
+    p_extract_full.add_argument("--experiment", help="Single experiment name to extract")
+    p_extract_full.add_argument("--all", action="store_true", help="Extract for all experiments")
+
     # --- run ---
     p_run = subparsers.add_parser("run", help="Run k-fold classification for one experiment.")
     p_run.add_argument("--config", required=True, help="Path to classification_task.yaml")
     p_run.add_argument("--experiment", required=True, help="Experiment name")
     p_run.add_argument("--input-mode", default="joint", choices=["joint", "image_only", "mask_only"])
     p_run.add_argument("--folds", default=None, help="Comma-separated fold indices (default: all)")
+    p_run.add_argument("--dithering", action="store_true",
+                       help="Apply uniform dithering to synthetic data before classification")
+    p_run.add_argument("--full-image", action="store_true",
+                       help="Use full 160x160 images instead of patches (requires extract-full first)")
 
     # --- run-all ---
     p_all = subparsers.add_parser("run-all", help="Run all experiments and input modes.")
     p_all.add_argument("--config", required=True, help="Path to classification_task.yaml")
     p_all.add_argument("--include-control", action="store_true", help="Run real-vs-real control")
+    p_all.add_argument("--dithering", action="store_true",
+                       help="Apply uniform dithering to synthetic data before classification")
+    p_all.add_argument("--full-image", action="store_true",
+                       help="Use full 160x160 images instead of patches (requires extract-full first)")
 
     # --- report ---
     p_report = subparsers.add_parser("report", help="Generate comparison tables and figures.")
@@ -58,6 +75,9 @@ def main() -> None:
     if args.command == "extract":
         from src.classification.scripts.extract_patches import run_extraction
         run_extraction(args)
+    elif args.command == "extract-full":
+        from src.classification.scripts.extract_full_images import run_full_extraction
+        run_full_extraction(args)
     elif args.command == "run":
         from src.classification.scripts.run_experiment import run_experiment
         run_experiment(args)

@@ -18,6 +18,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from omegaconf import DictConfig
 from scipy.ndimage import distance_transform_edt
 from scipy.stats import ks_2samp
@@ -25,6 +26,7 @@ from scipy.stats import ks_2samp
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_patches,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -480,5 +482,38 @@ def run_boundary_analysis(cfg: DictConfig, experiment_name: str) -> dict[str, An
         })
 
     save_result_json(summary, output_dir / "boundary_analysis_results.json")
+
+    # Save CSV: boundary profile data and summary metrics
+    csv_rows = []
+    if not result.get("insufficient_data", True):
+        # Profile curve data
+        profile_rows = []
+        bin_centers = np.linspace(-max_distance, max_distance, n_radii)
+        for i, dist in enumerate(bin_centers):
+            profile_rows.append({
+                "experiment": experiment_name,
+                "distance": float(dist),
+                "real_mean_intensity": float(result["real_mean_profile"][i]),
+                "synth_mean_intensity": float(result["synth_mean_profile"][i]),
+                "real_std": float(result["real_std_profile"][i]),
+                "synth_std": float(result["synth_std_profile"][i]),
+            })
+        save_csv(pd.DataFrame(profile_rows), output_dir / "boundary_profiles.csv")
+
+        # Summary metrics
+        csv_rows.append({
+            "experiment": experiment_name,
+            "real_sharpness_mean": result["real_sharpness_mean"],
+            "synth_sharpness_mean": result["synth_sharpness_mean"],
+            "real_width_mean": result["real_width_mean"],
+            "synth_width_mean": result["synth_width_mean"],
+            "sharpness_ks_statistic": result["sharpness_ks"]["statistic"],
+            "sharpness_ks_pvalue": result["sharpness_ks"]["pvalue"],
+            "width_ks_statistic": result["width_ks"]["statistic"],
+            "width_ks_pvalue": result["width_ks"]["pvalue"],
+            "n_real_valid": result["n_real_valid"],
+            "n_synth_valid": result["n_synth_valid"],
+        })
+        save_csv(pd.DataFrame(csv_rows), output_dir / "boundary_summary.csv")
 
     return summary

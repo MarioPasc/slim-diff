@@ -5,6 +5,10 @@ Usage:
         --config src/classification/diagnostics/config/diagnostics.yaml \
         --experiment velocity_lp_1.5
 
+    python -m src.classification.diagnostics run-all \
+        --config src/classification/diagnostics/config/diagnostics.yaml \
+        --experiment all
+
     python -m src.classification.diagnostics dither \
         --config <path> --experiment <name>
 
@@ -25,12 +29,16 @@ Usage:
 
     python -m src.classification.diagnostics report \
         --config <path> --experiment <name>
+
+    python -m src.classification.diagnostics aggregate \
+        --config <path>
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -53,6 +61,20 @@ def _load_config(config_path: str):
     """Load and return the diagnostics configuration."""
     cfg = OmegaConf.load(config_path)
     return cfg
+
+
+def _discover_experiments(cfg) -> list[str]:
+    """Discover available experiments from the patches directory."""
+    patches_dir = Path(cfg.data.patches_base_dir)
+    if not patches_dir.exists():
+        logger.error(f"Patches directory not found: {patches_dir}")
+        return []
+
+    experiments = sorted([
+        d.name for d in patches_dir.iterdir()
+        if d.is_dir() and (d / "real_patches.npz").exists() and d.name != "control"
+    ])
+    return experiments
 
 
 def _run_dither(cfg, experiment_name: str) -> dict:
@@ -134,6 +156,12 @@ def _run_report(cfg, experiment_name: str) -> None:
     generate_report(cfg, experiment_name)
 
 
+def _run_aggregate(cfg) -> dict:
+    """Aggregate all experiment CSVs into cross-experiment summaries."""
+    from src.classification.diagnostics.reporting.cross_experiment import aggregate_experiments
+    return aggregate_experiments(cfg)
+
+
 def run_all(cfg, experiment_name: str, gpu: int = 0, skip: list[str] | None = None) -> dict:
     """Run all diagnostic analyses for one experiment.
 
@@ -151,7 +179,7 @@ def run_all(cfg, experiment_name: str, gpu: int = 0, skip: list[str] | None = No
 
     # Phase 1: Independent analyses (patches-based)
     analyses = [
-        ("dither", _run_dither),
+        #("dither", _run_dither),
         ("spectral", _run_spectral),
         ("texture", _run_texture),
         ("bands", _run_bands),
@@ -211,14 +239,87 @@ def run_all(cfg, experiment_name: str, gpu: int = 0, skip: list[str] | None = No
     return results
 
 
+def _run_all_experiments_subprocess(
+    config_path: str,
+    experiments: list[str],
+    component: str,
+    gpu: int = 0,
+    skip: list[str] | None = None,
+) -> None:
+    """Run diagnostics for all experiments using subprocess isolation.
+
+    Each experiment runs in a separate subprocess to prevent memory
+    accumulation from numpy/torch allocations.
+
+    Args:
+        config_path: Path to diagnostics.yaml.
+        experiments: List of experiment names.
+        component: Which component to run (e.g., "all", "dither", etc.).
+        gpu: GPU device index.
+        skip: Analyses to skip (only for run-all).
+    """
+    failed: list[str] = []
+    total = len(experiments)
+
+    for i, exp_name in enumerate(experiments, 1):
+        logger.info(f"{'='*60}")
+        logger.info(f"[{i}/{total}] Diagnostics for: {exp_name} ({component})")
+        logger.info(f"{'='*60}")
+
+        # Build subprocess command
+        cmd = [
+            sys.executable, "-m", "src.classification.diagnostics",
+            component if component != "all" else "run-all",
+            "--config", config_path,
+            "--experiment", exp_name,
+        ]
+        if component in ("run-all", "gradcam"):
+            cmd.extend(["--gpu", str(gpu)])
+        if skip and component == "run-all":
+            cmd.extend(["--skip"] + skip)
+
+        result = subprocess.run(cmd, capture_output=False)
+        if result.returncode != 0:
+            logger.error(f"FAILED: {exp_name} (exit code {result.returncode})")
+            failed.append(exp_name)
+        else:
+            logger.info(f"Completed: {exp_name}")
+
+    if failed:
+        logger.warning(f"{len(failed)}/{total} experiment(s) failed: {failed}")
+    else:
+        logger.info(f"All {total} experiments completed successfully.")
+
+
 def run_from_args(args: argparse.Namespace) -> None:
     """Entry point from the classification __main__.py."""
     _setup_logging()
     cfg = _load_config(args.config)
 
     component = args.component
+
+    # Handle aggregate (no experiment required)
+    if component == "aggregate":
+        _run_aggregate(cfg)
+        return
+
     experiment = args.experiment
     gpu = args.gpu
+
+    # Handle --experiment all
+    if experiment == "all":
+        experiments = _discover_experiments(cfg)
+        if not experiments:
+            logger.error("No experiments found. Check data.patches_base_dir in config.")
+            sys.exit(1)
+        logger.info(f"Discovered {len(experiments)} experiments: {experiments}")
+        _run_all_experiments_subprocess(
+            config_path=args.config,
+            experiments=experiments,
+            component=component,
+            gpu=gpu,
+        )
+        return
 
     if component == "all":
         run_all(cfg, experiment, gpu=gpu)
@@ -257,14 +358,22 @@ def main() -> None:
     # --- run-all ---
     p_all = subparsers.add_parser("run-all", help="Run all diagnostic analyses.")
     p_all.add_argument("--config", required=True, help="Path to diagnostics.yaml")
-    p_all.add_argument("--experiment", required=True, help="Experiment name")
+    p_all.add_argument("--experiment", required=True,
+                       help="Experiment name or 'all' to run all detected experiments")
     p_all.add_argument("--gpu", type=int, default=0, help="GPU device index")
     p_all.add_argument("--skip", nargs="*", default=[], help="Analyses to skip")
     p_all.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
+    # --- Aggregate (no experiment required) ---
+    p_agg = subparsers.add_parser(
+        "aggregate", help="Aggregate all experiment CSVs into cross-experiment summaries."
+    )
+    p_agg.add_argument("--config", required=True, help="Path to diagnostics.yaml")
+    p_agg.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+
     # --- Individual subcommands ---
     for cmd_name, cmd_help in [
-        ("dither", "Run dithering and re-classification"),
+        #("dither", "Run dithering and re-classification"),
         ("gradcam", "Run GradCAM analysis"),
         ("spectral", "Run spectral (PSD) analysis"),
         ("texture", "Run texture (GLCM, LBP) analysis"),
@@ -280,7 +389,8 @@ def main() -> None:
     ]:
         p = subparsers.add_parser(cmd_name, help=cmd_help)
         p.add_argument("--config", required=True, help="Path to diagnostics.yaml")
-        p.add_argument("--experiment", required=True, help="Experiment name")
+        p.add_argument("--experiment", required=True,
+                       help="Experiment name or 'all' to run all detected experiments")
         if cmd_name == "gradcam":
             p.add_argument("--gpu", type=int, default=0, help="GPU device index")
         p.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
@@ -290,11 +400,33 @@ def main() -> None:
     cfg = _load_config(args.config)
 
     cmd = args.command
+
+    # Handle aggregate (no experiment required)
+    if cmd == "aggregate":
+        _run_aggregate(cfg)
+        return
+
     experiment = args.experiment
+
+    # Handle --experiment all for any command
+    if experiment == "all":
+        experiments = _discover_experiments(cfg)
+        if not experiments:
+            logger.error("No experiments found. Check data.patches_base_dir in config.")
+            sys.exit(1)
+        logger.info(f"Discovered {len(experiments)} experiments: {experiments}")
+        _run_all_experiments_subprocess(
+            config_path=args.config,
+            experiments=experiments,
+            component=cmd,
+            gpu=getattr(args, "gpu", 0),
+            skip=getattr(args, "skip", None),
+        )
+        return
 
     dispatch = {
         "run-all": lambda: run_all(cfg, experiment, gpu=args.gpu, skip=args.skip),
-        "dither": lambda: _run_dither(cfg, experiment),
+        #"dither": lambda: _run_dither(cfg, experiment),
         "gradcam": lambda: _run_gradcam(cfg, experiment, args.gpu),
         "spectral": lambda: _run_spectral(cfg, experiment),
         "texture": lambda: _run_texture(cfg, experiment),

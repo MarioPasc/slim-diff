@@ -653,9 +653,9 @@ def main() -> None:
     parser.add_argument(
         "--dtype",
         type=str,
-        default="float16",
+        default="float32",
         choices=["float16", "float32"],
-        help="Output dtype (default: float16)",
+        help="Output dtype (default: float32)",
     )
     parser.add_argument(
         "--seed_base",

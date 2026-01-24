@@ -205,6 +205,7 @@ def _train_single_fold(
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=4)
 
     # Build training config compatible with ClassificationLightningModule
+    # The model factory resolves relative config_path from src/classification/config/
     train_cfg = OmegaConf.create({
         "training": {
             "optimizer": "adam",
@@ -214,7 +215,7 @@ def _train_single_fold(
             "scheduler": {"type": "reduce_on_plateau", "factor": 0.5, "patience": 5, "min_lr": 1e-6},
             "early_stopping": {"monitor": "val/auc", "patience": cfg.dithering.reclassification.early_stopping_patience, "min_delta": 0.001},
         },
-        "model": {"type": "simple_cnn", "channels": [32, 64, 128], "fc_dim": 256, "dropout": 0.3},
+        "model": {"config_path": "models/simple_cnn.yaml"},
     })
 
     module = ClassificationLightningModule(

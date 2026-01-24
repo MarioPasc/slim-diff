@@ -15,19 +15,19 @@ dithering:
   reclassification:
     n_folds: 5
     max_epochs: 50
-    batch_size: 64
+    batch_size: 16
     learning_rate: 1.0e-4
     weight_decay: 1.0e-5
     early_stopping_patience: 10
-    input_modes: ["joint", "image_only", "mask_only"]
+    input_modes: ["joint"]
   metrics:
     bootstrap_n: 2000
     confidence_level: 0.95
 
 gradcam:
   target_class: 1
-  input_modes: ["joint", "image_only"]
-  batch_size: 64
+  input_modes: ["joint"]
+  batch_size: 16
   aggregation:
     per_zbin: true
     per_class: true

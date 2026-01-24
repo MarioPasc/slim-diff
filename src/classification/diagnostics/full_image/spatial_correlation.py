@@ -23,10 +23,13 @@ import numpy as np
 from omegaconf import DictConfig
 from scipy.optimize import curve_fit
 
+import pandas as pd
+
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_full_replicas,
     load_real_slices,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -452,6 +455,35 @@ def run_spatial_correlation(cfg: DictConfig, experiment_name: str) -> dict[str, 
         radial_real=np.array(results["radial_real"]),
         radial_synth=np.array(results["radial_synth"]),
     )
+
+    # Save CSV: radial autocorrelation profiles for inter-experiment analysis
+    csv_rows = []
+    radial_lags = results.get("radial_lags", [])
+    radial_real = results.get("radial_real", [])
+    radial_synth = results.get("radial_synth", [])
+    for lag, r_real, r_synth in zip(radial_lags, radial_real, radial_synth):
+        csv_rows.append({
+            "experiment": experiment_name,
+            "lag": float(lag),
+            "autocorr_real": float(r_real),
+            "autocorr_synth": float(r_synth),
+        })
+    if csv_rows:
+        save_csv(pd.DataFrame(csv_rows), output_dir / "spatial_correlation_radial.csv")
+
+    # Summary CSV
+    summary_row = {
+        "experiment": experiment_name,
+        "correlation_length_real": results["correlation_length_real"],
+        "correlation_length_synth": results["correlation_length_synth"],
+        "correlation_length_ratio": (
+            results["correlation_length_synth"]
+            / max(results["correlation_length_real"], 1e-12)
+        ),
+        "n_real_images": len(real_images),
+        "n_synth_images": len(synth_images),
+    }
+    save_csv(pd.DataFrame([summary_row]), output_dir / "spatial_correlation_summary.csv")
 
     logger.info(
         f"Spatial correlation analysis complete. "

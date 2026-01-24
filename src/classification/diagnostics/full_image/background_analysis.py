@@ -22,10 +22,13 @@ import numpy as np
 import seaborn as sns
 from omegaconf import DictConfig
 
+import pandas as pd
+
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_full_replicas,
     load_real_slices,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -350,6 +353,26 @@ def run_background_analysis(cfg: DictConfig, experiment_name: str) -> dict[str, 
 
     # Save results JSON
     save_result_json(results, output_dir / "background_analysis_results.json")
+
+    # Save CSV: background metrics for inter-experiment analysis
+    csv_rows = []
+    for source in ("real", "synth"):
+        src_data = results.get(source, {})
+        if src_data.get("mean") is not None:
+            csv_rows.append({
+                "experiment": experiment_name,
+                "source": source,
+                "mean": src_data["mean"],
+                "std": src_data["std"],
+                "min": src_data["min"],
+                "max": src_data["max"],
+                "n_unique": src_data["n_unique"],
+                "fraction_background_mean": src_data["fraction_background_mean"],
+                "has_noise": src_data["has_noise"],
+                "deviation_from_minus1": src_data["deviation_from_minus1"],
+            })
+    if csv_rows:
+        save_csv(pd.DataFrame(csv_rows), output_dir / "background_summary.csv")
 
     logger.info(
         f"Background analysis complete. "

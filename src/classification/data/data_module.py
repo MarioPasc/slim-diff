@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from src.classification.data.dataset import ClassificationDataset
 from src.classification.data.patch_extractor import PatchExtractor
+from src.classification.diagnostics.preprocessing.dithering import apply_uniform_dithering
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +38,15 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
         experiment_name: str,
         input_mode: Literal["joint", "image_only", "mask_only"] = "joint",
         patches_dir: Path | None = None,
+        dithering: bool = False,
+        dithering_seed: int = 42,
     ) -> None:
         super().__init__()
         self.cfg = cfg
         self.experiment_name = experiment_name
         self.input_mode = input_mode
+        self.dithering = dithering
+        self.dithering_seed = dithering_seed
         self.n_folds = cfg.data.kfold.n_folds
         self.kfold_seed = cfg.data.kfold.seed
 
@@ -62,6 +67,7 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
         self._real_subjects: np.ndarray | None = None
         self._synth_patches: np.ndarray | None = None
         self._synth_zbins: np.ndarray | None = None
+        self._image_size: int = 0
 
         # Fold splits (computed once)
         self._fold_splits: list[dict] | None = None
@@ -75,6 +81,11 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
         if self.input_mode == "joint":
             return 2
         return 1
+
+    @property
+    def _is_full_image(self) -> bool:
+        """Detect full-image mode from loaded patch dimensions."""
+        return self._image_size > 128
 
     def set_fold(self, fold_idx: int) -> None:
         """Set the active fold index. Must call setup() after."""
@@ -103,16 +114,22 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
 
         fold = self._fold_splits[self._current_fold]
 
-        # Build train/val datasets for this fold
-        real_train = self._real_patches[fold["real_train_idx"]]
-        real_val = self._real_patches[fold["real_val_idx"]]
-        real_zbins_train = self._real_zbins[fold["real_train_idx"]]
-        real_zbins_val = self._real_zbins[fold["real_val_idx"]]
+        # Build train/val datasets for this fold (copies the data into subsets)
+        real_train = self._real_patches[fold["real_train_idx"]].copy()
+        real_val = self._real_patches[fold["real_val_idx"]].copy()
+        real_zbins_train = self._real_zbins[fold["real_train_idx"]].copy()
+        real_zbins_val = self._real_zbins[fold["real_val_idx"]].copy()
 
-        synth_train = self._synth_patches[fold["synth_train_idx"]]
-        synth_val = self._synth_patches[fold["synth_val_idx"]]
-        synth_zbins_train = self._synth_zbins[fold["synth_train_idx"]]
-        synth_zbins_val = self._synth_zbins[fold["synth_val_idx"]]
+        synth_train = self._synth_patches[fold["synth_train_idx"]].copy()
+        synth_val = self._synth_patches[fold["synth_val_idx"]].copy()
+        synth_zbins_train = self._synth_zbins[fold["synth_train_idx"]].copy()
+        synth_zbins_val = self._synth_zbins[fold["synth_val_idx"]].copy()
+
+        # Free the full arrays since we now have copies for this fold
+        self._real_patches = None
+        self._synth_patches = None
+        self._real_zbins = None
+        self._synth_zbins = None
 
         self._train_dataset = ClassificationDataset(
             real_patches=real_train,
@@ -143,22 +160,25 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
         sampler = WeightedRandomSampler(
             weights, num_samples=len(self._train_dataset), replacement=True
         )
+        # Use num_workers=0 for full-image mode to avoid forking large arrays
+        num_workers = 0 if self._is_full_image else self.cfg.training.num_workers
         return DataLoader(
             self._train_dataset,
             batch_size=self.cfg.training.batch_size,
             sampler=sampler,
-            num_workers=self.cfg.training.num_workers,
+            num_workers=num_workers,
             pin_memory=self.cfg.training.pin_memory,
             drop_last=True,
         )
 
     def val_dataloader(self) -> DataLoader:
         assert self._val_dataset is not None, "Call setup() first."
+        num_workers = 0 if self._is_full_image else self.cfg.training.num_workers
         return DataLoader(
             self._val_dataset,
             batch_size=self.cfg.training.batch_size,
             shuffle=False,
-            num_workers=self.cfg.training.num_workers,
+            num_workers=num_workers,
             pin_memory=self.cfg.training.pin_memory,
         )
 
@@ -167,7 +187,7 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
     # -------------------------------------------------------------------------
 
     def _load_patches(self) -> None:
-        """Load pre-extracted patches from disk."""
+        """Load pre-extracted patches from disk, optionally applying dithering."""
         real_path = self.patches_dir / "real_patches.npz"
         synth_path = self.patches_dir / "synthetic_patches.npz"
 
@@ -175,6 +195,7 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
         self._real_patches = real_data["patches"]
         self._real_zbins = real_data["z_bins"]
         self._real_subjects = real_data["subject_ids"]
+        self._image_size = self._real_patches.shape[-1] if self._real_patches.ndim == 4 else 0
 
         if synth_path.exists():
             synth_data = np.load(synth_path, allow_pickle=True)
@@ -185,9 +206,21 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
             self._synth_patches = np.empty((0, 2, 0, 0), dtype=np.float32)
             self._synth_zbins = np.empty((0,), dtype=np.int32)
 
+        # Apply dithering to synthetic patches to remove float16 quantization artifact
+        if self.dithering and len(self._synth_patches) > 0:
+            logger.info("Applying uniform dithering to synthetic patches...")
+            self._synth_patches, dither_stats = apply_uniform_dithering(
+                self._synth_patches, seed=self.dithering_seed
+            )
+            logger.info(
+                f"Dithering applied: {dither_stats.unique_values_before} -> "
+                f"{dither_stats.unique_values_after} unique values"
+            )
+
         logger.info(
             f"Loaded patches: {len(self._real_patches)} real, "
             f"{len(self._synth_patches)} synthetic"
+            f"{' (dithered)' if self.dithering else ''}"
         )
 
     def _compute_fold_splits(self) -> None:

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,6 +27,7 @@ from omegaconf import DictConfig
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_patches,
+    save_csv,
     save_result_json,
 )
 from src.classification.diagnostics.xai.aggregation import (
@@ -263,6 +265,7 @@ def _load_model_from_checkpoint(
     from omegaconf import OmegaConf
 
     # Create minimal config compatible with ClassificationLightningModule
+    # The model factory resolves relative config_path from src/classification/config/
     train_cfg = OmegaConf.create({
         "training": {
             "optimizer": "adam",
@@ -272,7 +275,7 @@ def _load_model_from_checkpoint(
             "scheduler": {"type": "reduce_on_plateau", "factor": 0.5, "patience": 5, "min_lr": 1e-6},
             "early_stopping": {"monitor": "val/auc", "patience": 10, "min_delta": 0.001},
         },
-        "model": {"type": "simple_cnn", "channels": [32, 64, 128], "fc_dim": 256, "dropout": 0.3},
+        "model": {"config_path": "models/simple_cnn.yaml"},
     })
 
     lit_module = ClassificationLightningModule.load_from_checkpoint(
@@ -285,6 +288,57 @@ def _load_model_from_checkpoint(
     model = lit_module.model.to(device)
     model.eval()
     return model
+
+
+def _discover_checkpoint(
+    checkpoints_base_dir: Path,
+    experiment_name: str,
+    fold_idx: int,
+) -> Path | None:
+    """Discover the best checkpoint file for a given experiment and fold.
+
+    Searches all subdirectories under the experiment's checkpoint directory
+    for fold checkpoint files. Handles versioned checkpoints (e.g., -v1, -v2)
+    by preferring the base name without version suffix.
+
+    Args:
+        checkpoints_base_dir: Base directory containing experiment subdirs.
+        experiment_name: Experiment name (e.g., 'epsilon_lp_1.5').
+        fold_idx: Fold index to find checkpoint for.
+
+    Returns:
+        Path to the best checkpoint file, or None if not found.
+    """
+    exp_dir = checkpoints_base_dir / experiment_name
+    if not exp_dir.exists():
+        return None
+
+    # Find all subdirectories that contain checkpoints
+    base_name = f"fold{fold_idx}_best.ckpt"
+    candidates: list[Path] = []
+
+    for subdir in sorted(exp_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+        # Prefer the base checkpoint (no version suffix)
+        base_ckpt = subdir / base_name
+        if base_ckpt.exists():
+            candidates.append(base_ckpt)
+        else:
+            # Look for versioned checkpoints and take the latest
+            versioned = sorted(
+                subdir.glob(f"fold{fold_idx}_best-v*.ckpt"),
+                key=lambda p: p.name,
+            )
+            if versioned:
+                candidates.append(versioned[-1])
+
+    if not candidates:
+        return None
+
+    # If multiple subdirectories have checkpoints, prefer the most recent
+    # (by modification time)
+    return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
 def _determine_in_channels(mode: str) -> int:
@@ -380,18 +434,18 @@ def run_gradcam_analysis(
         fold_results: list[GradCAMResult] = []
 
         for fold_idx in range(n_folds):
-            # Locate checkpoint
-            ckpt_path = (
-                checkpoints_base_dir
-                / experiment_name
-                / mode
-                / f"fold{fold_idx}_best.ckpt"
+            # Locate checkpoint (auto-discover subdirectory and version)
+            ckpt_path = _discover_checkpoint(
+                checkpoints_base_dir, experiment_name, fold_idx
             )
-            if not ckpt_path.exists():
-                logger.warning(f"Checkpoint not found, skipping: {ckpt_path}")
+            if ckpt_path is None:
+                logger.warning(
+                    f"Checkpoint not found for fold {fold_idx} in "
+                    f"{checkpoints_base_dir / experiment_name}"
+                )
                 continue
 
-            logger.info(f"  Fold {fold_idx}: loading {ckpt_path.name}")
+            logger.info(f"  Fold {fold_idx}: loading {ckpt_path.relative_to(checkpoints_base_dir)}")
 
             # Load model
             model = _load_model_from_checkpoint(ckpt_path, in_channels, device)
@@ -463,13 +517,9 @@ def run_gradcam_analysis(
             "mode": mode,
             "n_folds_processed": sum(
                 1
-                for fold_idx in range(n_folds)
-                if (
-                    checkpoints_base_dir
-                    / experiment_name
-                    / mode
-                    / f"fold{fold_idx}_best.ckpt"
-                ).exists()
+                for fi in range(n_folds)
+                if _discover_checkpoint(checkpoints_base_dir, experiment_name, fi)
+                is not None
             ),
             "n_real_samples": sum(1 for r in fold_results if r.label == 0),
             "n_synth_samples": sum(1 for r in fold_results if r.label == 1),
@@ -484,6 +534,36 @@ def run_gradcam_analysis(
 
         # Save results
         save_result_json(mode_summary, output_dir / "gradcam_summary.json")
+
+        # Save CSV: per-sample attention statistics for inter-experiment analysis
+        csv_rows = []
+        for r in fold_results:
+            csv_rows.append({
+                "experiment": experiment_name,
+                "mode": mode,
+                "label": r.label,
+                "z_bin": r.z_bin,
+                "prediction": r.prediction,
+                "heatmap_mean": float(r.heatmap.mean()),
+                "heatmap_max": float(r.heatmap.max()),
+                "heatmap_std": float(r.heatmap.std()),
+                # Center vs periphery attention ratio
+                "center_attention": float(
+                    r.heatmap[
+                        r.heatmap.shape[0]//4:3*r.heatmap.shape[0]//4,
+                        r.heatmap.shape[1]//4:3*r.heatmap.shape[1]//4,
+                    ].mean()
+                ),
+                "periphery_attention": float(
+                    np.mean([
+                        r.heatmap[:r.heatmap.shape[0]//4, :].mean(),
+                        r.heatmap[3*r.heatmap.shape[0]//4:, :].mean(),
+                        r.heatmap[:, :r.heatmap.shape[1]//4].mean(),
+                        r.heatmap[:, 3*r.heatmap.shape[1]//4:].mean(),
+                    ])
+                ),
+            })
+        save_csv(pd.DataFrame(csv_rows), output_dir / "gradcam_samples.csv")
 
         # Save raw heatmaps for further analysis
         heatmap_data = {

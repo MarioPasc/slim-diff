@@ -12,6 +12,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from omegaconf import DictConfig
 from scipy.stats import ks_2samp
@@ -19,6 +20,7 @@ from scipy.stats import ks_2samp
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_patches,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -406,6 +408,27 @@ def run_band_analysis(cfg: DictConfig, experiment_name: str) -> dict:
         json_results["channels"][ch_name] = ch_data
 
     save_result_json(json_results, output_dir / "frequency_bands_results.json")
+
+    # Save CSV: per-band metrics for inter-experiment analysis
+    csv_rows = []
+    for ch_name, result in all_results.items():
+        for b in result["bands"]:
+            csv_rows.append({
+                "experiment": experiment_name,
+                "channel": ch_name,
+                "band_idx": b["band_idx"],
+                "low_freq": b["low_freq"],
+                "high_freq": b["high_freq"],
+                "real_power_mean": b["real_power_mean"],
+                "real_power_std": b["real_power_std"],
+                "synth_power_mean": b["synth_power_mean"],
+                "synth_power_std": b["synth_power_std"],
+                "power_ratio": b["power_ratio"],
+                "ks_statistic": b["ks_statistic"],
+                "ks_pvalue": b["ks_pvalue"],
+                "cohens_d": b["cohens_d"],
+            })
+    save_csv(pd.DataFrame(csv_rows), output_dir / "frequency_bands_summary.csv")
 
     logger.info(f"Band-pass frequency analysis complete for '{experiment_name}'")
     return all_results

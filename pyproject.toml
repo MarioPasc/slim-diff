@@ -57,7 +57,7 @@ jsddpm-segmentation-kfold = "src.segmentation.cli.kfold_segmentation:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["src*", "diffusion*", "classification*", "segmentation*"]
 
 [tool.pytest.ini_options]
 testpaths = ["src/diffusion/tests"]

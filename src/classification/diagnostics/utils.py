@@ -205,6 +205,18 @@ def ensure_output_dir(base_dir: Path, experiment_name: str, analysis_name: str) 
     return out
 
 
+def save_csv(df: pd.DataFrame, output_path: Path) -> None:
+    """Save a DataFrame to CSV for inter-experiment analysis.
+
+    Args:
+        df: DataFrame to save.
+        output_path: Full path for the CSV file.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    logger.info(f"Saved CSV to {output_path}")
+
+
 def save_figure(fig: Any, output_dir: Path, name: str, formats: list[str] | None = None, dpi: int = 300) -> None:
     """Save a matplotlib figure in multiple formats.
 

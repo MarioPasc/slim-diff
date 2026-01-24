@@ -17,6 +17,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from omegaconf import DictConfig
 from scipy.stats import ttest_ind
@@ -25,6 +26,7 @@ from statsmodels.stats.multitest import multipletests
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_patches,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -398,5 +400,29 @@ def run_pixel_stats(cfg: DictConfig, experiment_name: str) -> dict[str, Any]:
 
     # Save JSON summary
     save_result_json(all_results, output_dir / "pixel_stats_results.json")
+
+    # Save CSV: per-channel and per-zbin fraction significant
+    csv_rows = []
+    for ch in channels:
+        ch_label = channel_names.get(ch, f"ch{ch}")
+        ch_data = all_results.get(ch_label, {})
+        csv_rows.append({
+            "experiment": experiment_name,
+            "channel": ch_label,
+            "z_bin": "all",
+            "fraction_significant": ch_data.get("fraction_significant", 0.0),
+            "n_real": ch_data.get("n_real", 0),
+            "n_synth": ch_data.get("n_synth", 0),
+        })
+        for zbin, zdata in ch_data.get("per_zbin", {}).items():
+            csv_rows.append({
+                "experiment": experiment_name,
+                "channel": ch_label,
+                "z_bin": str(zbin),
+                "fraction_significant": zdata["fraction_significant"],
+                "n_real": zdata["n_real"],
+                "n_synth": zdata["n_synth"],
+            })
+    save_csv(pd.DataFrame(csv_rows), output_dir / "pixel_stats_summary.csv")
 
     return all_results

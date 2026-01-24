@@ -20,6 +20,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from omegaconf import DictConfig
 from scipy import ndimage
@@ -29,6 +30,7 @@ from skimage.feature import graycomatrix, graycoprops, local_binary_pattern
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_patches,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -581,6 +583,54 @@ def run_texture_analysis(cfg: DictConfig, experiment_name: str) -> dict:
         },
     }
     save_result_json(json_result, output_dir / "texture_results.json")
+
+    # Save CSV: GLCM and gradient summary for inter-experiment analysis
+    csv_rows = []
+    for prop, data in result["glcm"].items():
+        csv_rows.append({
+            "experiment": experiment_name,
+            "channel": result["channel"],
+            "feature_type": "glcm",
+            "feature": prop,
+            "real_mean": data["real_mean"],
+            "real_std": data["real_std"],
+            "synth_mean": data["synth_mean"],
+            "synth_std": data["synth_std"],
+            "ks_statistic": data["ks_statistic"],
+            "ks_pvalue": data["ks_pvalue"],
+            "cohens_d": data["cohens_d"],
+        })
+    # Add gradient magnitude
+    grad = result["gradient"]
+    csv_rows.append({
+        "experiment": experiment_name,
+        "channel": result["channel"],
+        "feature_type": "gradient",
+        "feature": "magnitude_mean",
+        "real_mean": grad["real"]["mean"],
+        "real_std": grad["real"]["std"],
+        "synth_mean": grad["synth"]["mean"],
+        "synth_std": grad["synth"]["std"],
+        "ks_statistic": grad["ks_statistic"],
+        "ks_pvalue": grad["ks_pvalue"],
+        "cohens_d": grad["cohens_d"],
+    })
+    # Add LBP summary
+    for key, lbp_data in result["lbp"].items():
+        csv_rows.append({
+            "experiment": experiment_name,
+            "channel": result["channel"],
+            "feature_type": "lbp",
+            "feature": key,
+            "real_mean": float(np.mean(lbp_data["real_mean_histogram"])),
+            "real_std": 0.0,
+            "synth_mean": float(np.mean(lbp_data["synth_mean_histogram"])),
+            "synth_std": 0.0,
+            "ks_statistic": lbp_data["max_bin_ks"],
+            "ks_pvalue": float("nan"),
+            "cohens_d": float("nan"),
+        })
+    save_csv(pd.DataFrame(csv_rows), output_dir / "texture_summary.csv")
 
     logger.info(f"Texture analysis complete for '{experiment_name}'")
     return result

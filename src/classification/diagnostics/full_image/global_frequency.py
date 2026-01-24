@@ -22,10 +22,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from omegaconf import DictConfig
 
+import pandas as pd
+
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_full_replicas,
     load_real_slices,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -507,6 +510,34 @@ def run_global_frequency(cfg: DictConfig, experiment_name: str) -> dict[str, Any
         psd_1d_real=np.array(results["psd_real"]),
         psd_1d_synth=np.array(results["psd_synth"]),
     )
+
+    # Save CSV: PSD curve data for inter-experiment analysis
+    csv_rows = []
+    for freq, p_real, p_synth in zip(
+        results["frequencies"], results["psd_real"], results["psd_synth"]
+    ):
+        csv_rows.append({
+            "experiment": experiment_name,
+            "frequency": freq,
+            "psd_real": p_real,
+            "psd_synth": p_synth,
+        })
+    if csv_rows:
+        save_csv(pd.DataFrame(csv_rows), output_dir / "global_frequency_psd.csv")
+
+    # Summary CSV
+    summary_row = {
+        "experiment": experiment_name,
+        "slope_real": results["slope_real"],
+        "slope_synth": results["slope_synth"],
+        "slope_difference": results["slope_difference"],
+        "high_freq_ratio_real": results["high_freq_ratio_real"],
+        "high_freq_ratio_synth": results["high_freq_ratio_synth"],
+        "high_freq_ratio_difference": results["high_freq_ratio_difference"],
+        "n_real_images": len(real_images),
+        "n_synth_images": len(synth_images),
+    }
+    save_csv(pd.DataFrame([summary_row]), output_dir / "global_frequency_summary.csv")
 
     logger.info(
         f"Global frequency analysis complete. "

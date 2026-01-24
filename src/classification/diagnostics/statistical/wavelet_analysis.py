@@ -19,12 +19,14 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from omegaconf import DictConfig
 from scipy.stats import ks_2samp
 
 from src.classification.diagnostics.utils import (
     ensure_output_dir,
     load_patches,
+    save_csv,
     save_figure,
     save_result_json,
 )
@@ -438,5 +440,29 @@ def run_wavelet_analysis(cfg: DictConfig, experiment_name: str) -> dict[str, Any
 
     # Save JSON summary
     save_result_json(all_results, output_dir / "wavelet_analysis_results.json")
+
+    # Save CSV: per-level per-subband metrics for inter-experiment analysis
+    csv_rows = []
+    for ch in channels:
+        ch_label = channel_names.get(ch, f"ch{ch}")
+        ch_data = all_results.get(ch_label, {})
+        for lvl, level_data in ch_data.get("per_level", {}).items():
+            for sb, sb_data in level_data.items():
+                csv_rows.append({
+                    "experiment": experiment_name,
+                    "channel": ch_label,
+                    "level": int(lvl),
+                    "subband": sb,
+                    "real_energy": sb_data["real_energy"],
+                    "synth_energy": sb_data["synth_energy"],
+                    "energy_ratio": sb_data["energy_ratio"],
+                    "ks_statistic": sb_data["ks_statistic"],
+                    "ks_pvalue": sb_data["ks_pvalue"],
+                    "real_coeff_mean": sb_data["real_coeff_mean"],
+                    "synth_coeff_mean": sb_data["synth_coeff_mean"],
+                    "real_coeff_std": sb_data["real_coeff_std"],
+                    "synth_coeff_std": sb_data["synth_coeff_std"],
+                })
+    save_csv(pd.DataFrame(csv_rows), output_dir / "wavelet_summary.csv")
 
     return all_results
