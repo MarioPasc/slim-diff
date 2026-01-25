@@ -35,6 +35,9 @@ from .icip2026_figure import (
     create_icip2026_figure,
     create_compact_figure,
     create_unified_legend,
+    create_subplot_legend_lines,
+    create_subplot_legend_boxes,
+    generate_plots_from_config,
 )
 
 __all__ = [
@@ -62,4 +65,7 @@ __all__ = [
     "create_icip2026_figure",
     "create_compact_figure",
     "create_unified_legend",
+    "create_subplot_legend_lines",
+    "create_subplot_legend_boxes",
+    "generate_plots_from_config",
 ]

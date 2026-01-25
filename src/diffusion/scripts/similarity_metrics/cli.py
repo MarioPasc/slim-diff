@@ -238,7 +238,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_plot(args: argparse.Namespace) -> int:
-    """Generate plots from existing CSV files.
+    """Generate plots from existing CSV files or config.
+
+    If only --config is provided, generates all plots using paths from config.
+    If individual CSVs are provided, generates plots from those files.
 
     Args:
         args: Parsed arguments.
@@ -246,15 +249,42 @@ def cmd_plot(args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
+    # Check if we should use config-only mode
+    config = load_config(args.config) if args.config else {}
+
+    # Config-only mode: generate everything from config
+    if args.config and not args.global_csv and not args.zbin_csv:
+        print("Using config-only mode: generating all plots from config paths")
+        try:
+            from .plotting.icip2026_figure import generate_plots_from_config
+
+            generate_plots_from_config(
+                config_path=args.config,
+                output_subdir=args.output_subdir,
+            )
+            return 0
+        except Exception as e:
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return 1
+
+    # Legacy mode: use explicit CSV paths
     import pandas as pd
     from .plotting.zbin_multiexp import plot_zbin_multiexperiment
     from .plotting.global_comparison import plot_global_comparison, plot_metric_summary_table
 
-    # Load config for plotting settings
-    config = load_config(args.config)
     plot_config = config.get("plotting", {})
 
-    output_dir = Path(args.output_dir)
+    # Determine output directory
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+    elif config.get("paths", {}).get("output_dir"):
+        output_dir = Path(config["paths"]["output_dir"]) / "plots"
+    else:
+        print("Error: --output-dir is required (or set output_dir in config)")
+        return 1
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     formats = args.format.split(",") if args.format else plot_config.get("formats", ["png", "pdf"])
@@ -289,6 +319,15 @@ def cmd_plot(args: argparse.Namespace) -> int:
             df_zbin = pd.read_csv(args.zbin_csv)
             print(f"Loaded {len(df_zbin)} rows from zbin CSV")
 
+            # Determine test_csv for images
+            test_csv = None
+            if args.test_csv:
+                test_csv = Path(args.test_csv)
+            elif config.get("paths", {}).get("cache_dir"):
+                potential_test_csv = Path(config["paths"]["cache_dir"]) / "test.csv"
+                if potential_test_csv.exists():
+                    test_csv = potential_test_csv
+
             # Generate per-zbin plots
             for metric in ["kid_zbin", "lpips_zbin"]:
                 if metric in df_zbin.columns:
@@ -297,6 +336,8 @@ def cmd_plot(args: argparse.Namespace) -> int:
                         metric_col=metric,
                         output_dir=output_dir,
                         baseline_real=args.baseline_kid if "kid" in metric else None,
+                        test_csv=test_csv,
+                        show_images=test_csv is not None,
                         formats=formats,
                     )
 
@@ -330,6 +371,9 @@ Examples:
     jsddpm-similarity-metrics baseline \\
         --cache-dir /path/to/slice_cache \\
         --output-dir /path/to/output
+
+    # Generate all plots from config (recommended)
+    jsddpm-similarity-metrics plot --config config/icip2026.yaml
 
     # Generate plots from existing CSVs
     jsddpm-similarity-metrics plot \\
@@ -447,44 +491,71 @@ Examples:
     # ===== plot =====
     p_plot = subparsers.add_parser(
         "plot",
-        help="Generate plots from existing CSV files",
+        help="Generate plots from config or existing CSV files",
+        description="""
+Generate ICIP 2026 publication-ready plots.
+
+Two modes of operation:
+1. Config-only mode: Just provide --config, plots are generated from paths in config
+2. CSV mode: Provide explicit --global-csv and/or --zbin-csv paths
+
+Examples:
+    # Config-only mode (recommended)
+    jsddpm-similarity-metrics plot --config config/icip2026.yaml
+
+    # With custom output subdirectory
+    jsddpm-similarity-metrics plot --config config/icip2026.yaml --output-subdir icip_figures
+
+    # CSV mode (legacy)
+    jsddpm-similarity-metrics plot --global-csv metrics.csv --output-dir plots/
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_plot.add_argument(
         "--config", "-c",
         type=str,
-        help="Path to YAML config file (for plotting settings)",
+        help="Path to YAML config file. If provided alone, generates all plots from config paths.",
     )
     p_plot.add_argument(
         "--global-csv",
         type=str,
-        help="Path to similarity_metrics_global.csv",
+        help="Path to similarity_metrics_global.csv (overrides config)",
     )
     p_plot.add_argument(
         "--zbin-csv",
         type=str,
-        help="Path to similarity_metrics_zbin.csv",
+        help="Path to similarity_metrics_zbin.csv (overrides config)",
+    )
+    p_plot.add_argument(
+        "--test-csv",
+        type=str,
+        help="Path to test.csv for representative images (overrides config cache_dir)",
     )
     p_plot.add_argument(
         "--comparison-csv",
         type=str,
-        help="Path to similarity_metrics_comparison.csv",
+        help="Path to similarity_metrics_comparison.csv (overrides config)",
     )
     p_plot.add_argument(
         "--output-dir",
         type=str,
-        required=True,
-        help="Output directory for plots",
+        help="Output directory for plots (required if not using config-only mode)",
+    )
+    p_plot.add_argument(
+        "--output-subdir",
+        type=str,
+        default="plots",
+        help="Subdirectory within output_dir for plots (default: plots)",
     )
     p_plot.add_argument(
         "--format",
         type=str,
-        default="png,pdf",
-        help="Output formats (comma-separated, default: png,pdf)",
+        help="Output formats (comma-separated, e.g., 'png,pdf'). Overrides config.",
     )
     p_plot.add_argument(
         "--baseline-kid",
         type=float,
-        help="Baseline KID value (real vs real) to show on plots",
+        help="Baseline KID value (real vs real) to show on plots. Auto-loaded from config output_dir if not specified.",
     )
     p_plot.set_defaults(func=cmd_plot)
 

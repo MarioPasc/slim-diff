@@ -24,6 +24,7 @@ from .settings import (
     PLOT_SETTINGS,
     PREDICTION_TYPE_COLORS,
     PREDICTION_TYPE_LABELS,
+    PREDICTION_TYPE_LABELS_SHORT,
     LP_NORM_LABELS,
     LP_NORM_HATCHES,
     apply_ieee_style,
@@ -129,17 +130,21 @@ def plot_global_boxplots(
 
     # Position calculations
     group_spacing = 1.0
-    box_width = 0.22
+    box_width = PLOT_SETTINGS.get("boxplot_width_factor", 0.25)
+    box_whis = PLOT_SETTINGS.get("boxplot_whis", (5, 95))
     positions = []
     colors = []
     hatches = []
     data_to_plot = []
+    lp_norms_for_boxes = []  # Track Lp norm for each box
 
     # Find best configuration
     best_config = None
     best_value = float("inf")
+    best_box_idx = None
 
     # Prepare data for boxplot
+    box_idx = 0
     for i, pred_type in enumerate(prediction_types):
         group_center = i * group_spacing
         base_color = PREDICTION_TYPE_COLORS.get(pred_type, "#888888")
@@ -154,25 +159,29 @@ def plot_global_boxplots(
             if len(values) == 0:
                 continue
 
-            pos = group_center + (j - 1) * box_width * 1.3
+            pos = group_center + (j - 1) * box_width * 1.5
             positions.append(pos)
             colors.append(base_color)
             hatches.append(LP_NORM_HATCHES.get(lp_norm, None))
             data_to_plot.append(values)
+            lp_norms_for_boxes.append(lp_norm)
 
             # Track best configuration
             mean_val = np.mean(values)
             if highlight_best and mean_val < best_value:
                 best_value = mean_val
                 best_config = (pred_type, lp_norm, pos)
+                best_box_idx = box_idx
+            box_idx += 1
 
-    # Create boxplots
+    # Create boxplots with percentile-based whiskers
     bp = ax.boxplot(
         data_to_plot,
         positions=positions,
         widths=box_width,
         patch_artist=True,
         showfliers=False,  # We'll show points separately
+        whis=box_whis,  # Percentile whiskers (5th-95th by default)
     )
 
     # Style boxplots
@@ -204,18 +213,25 @@ def plot_global_boxplots(
                 zorder=3,
             )
 
-    # Highlight best with star
-    if highlight_best and best_config is not None:
+    # Highlight best with star (placed just above the box, not the whisker)
+    if highlight_best and best_config is not None and best_box_idx is not None:
         pred_type, lp_norm, best_pos = best_config
-        y_max = max(np.max(d) for d in data_to_plot)
+        # Get the Q3 (top of box) for the best boxplot
+        best_data = data_to_plot[best_box_idx]
+        q3 = np.percentile(best_data, 75)
+
+        # Place star just above the box (Q3) - smaller offset
+        y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
+        star_y = q3 + y_range * 0.03
+
         ax.scatter(
             best_pos,
-            y_max * 1.05,
+            star_y,
             marker="*",
-            s=150,
+            s=80,  # Smaller star
             color="gold",
             edgecolors="black",
-            linewidths=0.5,
+            linewidths=0.4,
             zorder=4,
         )
 
@@ -230,9 +246,10 @@ def plot_global_boxplots(
             show_effect_sizes=show_effect_sizes,
         )
 
-    # Configure x-axis
+    # Configure x-axis - use short labels to prevent overlap
     tick_positions = [i * group_spacing for i in range(n_types)]
-    tick_labels = [PREDICTION_TYPE_LABELS.get(t, t.capitalize()) for t in prediction_types]
+    # Use short labels for boxplots (full labels go in unified legend)
+    tick_labels = [PREDICTION_TYPE_LABELS_SHORT.get(t, t) for t in prediction_types]
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, fontsize=PLOT_SETTINGS["tick_labelsize"])
 
@@ -280,29 +297,27 @@ def _add_significance_brackets_boxplot(
 ) -> None:
     """Add significance brackets between prediction types for boxplots.
 
+    Brackets are sorted by span width (narrower first) to avoid overlaps.
+    Effect sizes are shown inline with stars: "*** (d=0.85)"
+
     Args:
         ax: Matplotlib axes.
         comparison_results: Dict from between_group_comparison().
         groups: List of prediction types.
         group_spacing: Spacing between group centers.
         settings: Plot settings dict.
-        show_effect_sizes: Whether to show Cliff's delta below stars.
+        show_effect_sizes: Whether to show Cliff's delta with stars.
     """
     posthoc_pvalues = comparison_results.get("posthoc_pvalues", {})
     posthoc_significant = comparison_results.get("posthoc_significant", {})
     effect_sizes = comparison_results.get("effect_sizes", {})
 
-    # Get y-axis limits
-    y_min, y_max = ax.get_ylim()
-    y_range = y_max - y_min
-    bracket_y = y_max + y_range * 0.05
-    bracket_increment = y_range * 0.15 if show_effect_sizes else y_range * 0.10
-
+    # Collect significant comparisons
+    significant_comps = []
     for comp_key, p_val in posthoc_pvalues.items():
         if not posthoc_significant.get(comp_key, False):
             continue
 
-        # Parse comparison (e.g., "epsilon_vs_x0")
         parts = comp_key.split("_vs_")
         if len(parts) != 2:
             continue
@@ -314,12 +329,30 @@ def _add_significance_brackets_boxplot(
         except ValueError:
             continue
 
+        # Sort indices so smaller is first
+        if idx1 > idx2:
+            idx1, idx2 = idx2, idx1
+
+        span = idx2 - idx1
+        significant_comps.append((span, idx1, idx2, comp_key, p_val))
+
+    # Sort by span (narrower brackets first, then by position)
+    significant_comps.sort(key=lambda x: (x[0], x[1]))
+
+    # Get y-axis limits
+    y_min, y_max = ax.get_ylim()
+    y_range = y_max - y_min
+
+    # Starting y position and increment
+    bracket_y = y_max + y_range * 0.08
+    bracket_increment = y_range * 0.12
+    bracket_height = y_range * 0.015
+
+    for span, idx1, idx2, comp_key, p_val in significant_comps:
         x1 = idx1 * group_spacing
         x2 = idx2 * group_spacing
 
         # Draw bracket
-        bracket_height = y_range * 0.02
-
         ax.plot(
             [x1, x1, x2, x2],
             [bracket_y, bracket_y + bracket_height, bracket_y + bracket_height, bracket_y],
@@ -328,37 +361,35 @@ def _add_significance_brackets_boxplot(
             clip_on=False,
         )
 
-        # Significance stars
+        # Build annotation text: stars + effect size
         stars = get_significance_stars(p_val)
-        ax.text(
-            (x1 + x2) / 2,
-            bracket_y + bracket_height + y_range * 0.01,
-            stars,
-            ha="center",
-            va="bottom",
-            fontsize=settings["significance_text_fontsize"],
-            fontweight="bold",
-        )
-
-        # Effect size (Cliff's delta)
         if show_effect_sizes:
             effect = effect_sizes.get(comp_key, {})
             d_value = effect.get("cliffs_delta")
             if d_value is not None:
-                ax.text(
-                    (x1 + x2) / 2,
-                    bracket_y + bracket_height + y_range * 0.05,
-                    f"d={d_value:.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=settings["effect_size_fontsize"],
-                    style="italic",
-                )
+                annotation = f"{stars} (d={d_value:.2f})"
+            else:
+                annotation = stars
+        else:
+            annotation = stars
 
+        # Place annotation above bracket
+        ax.text(
+            (x1 + x2) / 2,
+            bracket_y + bracket_height + y_range * 0.01,
+            annotation,
+            ha="center",
+            va="bottom",
+            fontsize=settings["effect_size_fontsize"],
+            fontweight="bold",
+        )
+
+        # Move to next bracket level
         bracket_y += bracket_increment
 
-    # Adjust y-limits to fit brackets
-    ax.set_ylim(y_min, bracket_y + y_range * 0.02)
+    # Adjust y-limits to fit all brackets
+    if significant_comps:
+        ax.set_ylim(y_min, bracket_y + y_range * 0.02)
 
 
 def _create_boxplot_legend(

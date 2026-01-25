@@ -112,6 +112,7 @@ def add_representative_images(
     zbins: np.ndarray,
     image_step: int | None = None,
     image_zoom: float | None = None,
+    image_x_offset: float | None = None,
     image_y_offset: float | None = None,
 ) -> None:
     """Add representative MRI images above the plot.
@@ -125,12 +126,15 @@ def add_representative_images(
         zbins: Array of all z-bin values in the data.
         image_step: Sample every Nth z-bin (default from PLOT_SETTINGS).
         image_zoom: Zoom factor for images (default from PLOT_SETTINGS).
+        image_x_offset: Horizontal offset in axes fraction (default from PLOT_SETTINGS).
         image_y_offset: Vertical offset above axis (default from PLOT_SETTINGS).
     """
     if image_step is None:
         image_step = PLOT_SETTINGS["image_step"]
     if image_zoom is None:
         image_zoom = PLOT_SETTINGS["image_zoom"]
+    if image_x_offset is None:
+        image_x_offset = PLOT_SETTINGS.get("image_x_offset", 0.0)
     if image_y_offset is None:
         image_y_offset = PLOT_SETTINGS["image_y_offset"]
 
@@ -157,8 +161,8 @@ def add_representative_images(
             cmap=PLOT_SETTINGS["image_cmap"],
         )
 
-        # x position as fraction of axis width
-        x_frac = (zb - x_min) / x_range
+        # x position as fraction of axis width (with offset)
+        x_frac = (zb - x_min) / x_range + image_x_offset
 
         # y = 1.0 is axis top, add offset to place above
         ab = AnnotationBbox(

@@ -181,8 +181,13 @@ PLOT_SETTINGS = {
     # Image display (representative MRI images)
     "image_zoom": 0.12,
     "image_cmap": "gray",
-    "image_y_offset": 0.08,  # Fraction above axis
+    "image_x_offset": 0.0,   # Horizontal offset (fraction of axis width)
+    "image_y_offset": 0.08,  # Vertical offset above axis (fraction)
     "image_step": 5,  # Sample every Nth z-bin
+
+    # Boxplot whiskers and width
+    "boxplot_whis": (5, 95),  # Whisker percentiles (5th to 95th)
+    "boxplot_width_factor": 0.25,  # Box width as fraction of group spacing
 
     # DPI for output
     "dpi_print": 300,
