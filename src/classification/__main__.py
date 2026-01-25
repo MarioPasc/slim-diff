@@ -26,6 +26,8 @@ def main() -> None:
     p_extract.add_argument("--config", required=True, help="Path to classification_task.yaml")
     p_extract.add_argument("--experiment", help="Single experiment name to extract")
     p_extract.add_argument("--all", action="store_true", help="Extract for all experiments")
+    p_extract.add_argument("--skip-analysis", action="store_true",
+                           help="Skip generating dataset analysis plots")
 
     # --- extract-full ---
     p_extract_full = subparsers.add_parser(
@@ -34,6 +36,8 @@ def main() -> None:
     p_extract_full.add_argument("--config", required=True, help="Path to classification_task.yaml")
     p_extract_full.add_argument("--experiment", help="Single experiment name to extract")
     p_extract_full.add_argument("--all", action="store_true", help="Extract for all experiments")
+    p_extract_full.add_argument("--skip-analysis", action="store_true",
+                                help="Skip generating dataset analysis plots")
 
     # --- run ---
     p_run = subparsers.add_parser("run", help="Run k-fold classification for one experiment.")

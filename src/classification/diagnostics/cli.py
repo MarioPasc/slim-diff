@@ -64,17 +64,29 @@ def _load_config(config_path: str):
 
 
 def _discover_experiments(cfg) -> list[str]:
-    """Discover available experiments from the patches directory."""
+    """Discover available experiments from patches or full_images directory."""
     patches_dir = Path(cfg.data.patches_base_dir)
-    if not patches_dir.exists():
-        logger.error(f"Patches directory not found: {patches_dir}")
+    full_images_dir = patches_dir.parent / "full_images"
+
+    experiments = set()
+
+    # Check patches directory
+    if patches_dir.exists():
+        for d in patches_dir.iterdir():
+            if d.is_dir() and (d / "real_patches.npz").exists() and d.name != "control":
+                experiments.add(d.name)
+
+    # Check full_images directory
+    if full_images_dir.exists():
+        for d in full_images_dir.iterdir():
+            if d.is_dir() and (d / "real_patches.npz").exists() and d.name != "control":
+                experiments.add(d.name)
+
+    if not experiments:
+        logger.error(f"No experiments found in {patches_dir} or {full_images_dir}")
         return []
 
-    experiments = sorted([
-        d.name for d in patches_dir.iterdir()
-        if d.is_dir() and (d / "real_patches.npz").exists() and d.name != "control"
-    ])
-    return experiments
+    return sorted(experiments)
 
 
 def _run_dither(cfg, experiment_name: str) -> dict:
@@ -185,6 +197,7 @@ def _run_confusion_stratified(cfg, experiment_name: str, gpu: int = 0, input_mod
     from src.classification.evaluation.confusion_samples import (
         load_all_fold_confusion_samples,
         aggregate_confusion_samples,
+        discover_results_dir,
     )
     from pathlib import Path
 
@@ -193,13 +206,22 @@ def _run_confusion_stratified(cfg, experiment_name: str, gpu: int = 0, input_mod
     # Run the analysis
     results = run_confusion_stratified_analysis(cfg, experiment_name, device=device, input_mode=input_mode)
 
-    # Load samples for visualization using diagnostics config paths
-    patches_dir = Path(cfg.data.patches_base_dir) / experiment_name
+    # Discover the actual results directory (handles _dithered, _fullimg suffixes)
     classification_results_dir = Path(cfg.data.classification_results_dir)
-    results_dir = classification_results_dir / experiment_name / input_mode
-    n_folds = cfg.dithering.reclassification.n_folds
+    results_dir = discover_results_dir(classification_results_dir, experiment_name, input_mode)
 
-    fold_samples = load_all_fold_confusion_samples(results_dir, n_folds)
+    if results_dir is None:
+        logger.warning(f"No results directory found for visualization")
+        return results.comparisons if results.comparisons else {}
+
+    # Detect if using full images and set appropriate patches directory
+    patches_base_dir = Path(cfg.data.patches_base_dir)
+    if "_fullimg" in results_dir.name:
+        patches_base_dir = patches_base_dir.parent / "full_images"
+    patches_dir = patches_base_dir / experiment_name
+
+    # Load samples with auto-discovery of folds
+    fold_samples = load_all_fold_confusion_samples(results_dir, n_folds=None)
     if fold_samples:
         aggregated_samples = aggregate_confusion_samples(fold_samples)
 

@@ -88,10 +88,10 @@ def run_all(args: argparse.Namespace) -> None:
             else:
                 logger.info(f"Completed: {exp_name} / {mode}")
 
-    # Control experiment (small patches, run in-process)
+    # Control experiment (run in-process)
     if args.include_control and cfg.evaluation.control.enabled:
         logger.info("Running real-vs-real control experiment...")
-        _run_control(cfg, input_modes[0])
+        _run_control(cfg, input_modes[0], use_full_image=use_full_image)
 
     if failed:
         logger.warning(f"{len(failed)} experiment(s) failed: {failed}")
@@ -159,9 +159,33 @@ def generate_report(args: argparse.Namespace) -> None:
 def _run_control(
     cfg,
     input_mode: Literal["joint", "image_only", "mask_only"],
+    use_full_image: bool = False,
 ) -> ExperimentResult:
     """Run the real-vs-real control experiment."""
-    patches_dir = Path(cfg.output.base_dir) / cfg.output.patches_subdir / "control"
+    # Use full_images or patches directory based on flag
+    if use_full_image:
+        patches_subdir = cfg.output.get("full_images_subdir", "full_images")
+    else:
+        patches_subdir = cfg.output.patches_subdir
+    base_patches_dir = Path(cfg.output.base_dir) / patches_subdir
+    patches_dir = base_patches_dir / "control"
+
+    # If control folder doesn't exist, try to use real patches from first experiment
+    # (real patches are the same across all experiments)
+    if not (patches_dir / "real_patches.npz").exists():
+        experiments = [exp.name for exp in cfg.data.synthetic.experiments]
+        for exp_name in experiments:
+            exp_dir = base_patches_dir / exp_name
+            if (exp_dir / "real_patches.npz").exists():
+                logger.info(f"Control folder not found, using real patches from {exp_name}")
+                patches_dir = exp_dir
+                break
+        else:
+            raise FileNotFoundError(
+                f"No real_patches.npz found in {base_patches_dir}. "
+                "Run extraction first."
+            )
+
     n_folds = cfg.data.kfold.n_folds
     n_repeats = cfg.evaluation.control.n_repeats
 
@@ -229,7 +253,11 @@ def _run_control(
         f"(expected ~0.5)"
     )
 
-    results_dir = Path(cfg.output.base_dir) / cfg.output.results_subdir / "control" / input_mode
+    # Include full-image suffix in results directory if applicable
+    mode_suffix = input_mode
+    if use_full_image:
+        mode_suffix += "_fullimg"
+    results_dir = Path(cfg.output.base_dir) / cfg.output.results_subdir / "control" / mode_suffix
     save_experiment_result(result, results_dir / "experiment_result.json")
 
     return result

@@ -137,18 +137,28 @@ def run_experiment(args: argparse.Namespace) -> ExperimentResult:
         # Train
         trainer.fit(model, datamodule=dm)
 
-        # Evaluate on validation fold (using best checkpoint)
+        # Load best checkpoint for evaluation
         best_path = callbacks[1].best_model_path
         if best_path:
             model = ClassificationLightningModule.load_from_checkpoint(
                 best_path, cfg=cfg, in_channels=dm.in_channels, fold_idx=fold_idx
             )
 
+        # Evaluate on held-out test set if available, otherwise use validation set
+        # Note: Test set is the same for all folds, providing consistent evaluation
+        use_test_set = hasattr(dm, "has_test_set") and dm.has_test_set
+        if use_test_set:
+            eval_dataloader = dm.test_dataloader()
+            eval_set_name = "test"
+        else:
+            eval_dataloader = dm.val_dataloader()
+            eval_set_name = "val"
+
         model.clear_test_outputs()
-        trainer.test(model, dataloaders=dm.val_dataloader())
+        trainer.test(model, dataloaders=eval_dataloader)
         outputs = model.get_test_outputs()
 
-        # Compute metrics for this fold
+        # Compute metrics for this fold on the evaluation set
         fold_result = compute_fold_metrics(
             probs=outputs["probs"],
             labels=outputs["labels"],
@@ -162,7 +172,7 @@ def run_experiment(args: argparse.Namespace) -> ExperimentResult:
         fold_results.append(fold_result)
 
         logger.info(
-            f"Fold {fold_idx}: AUC={fold_result.global_metrics.auc_roc:.4f} "
+            f"Fold {fold_idx} ({eval_set_name} set): AUC={fold_result.global_metrics.auc_roc:.4f} "
             f"[{fold_result.global_metrics.auc_roc_ci_lower:.4f}, "
             f"{fold_result.global_metrics.auc_roc_ci_upper:.4f}]"
         )

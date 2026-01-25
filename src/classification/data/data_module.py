@@ -353,12 +353,25 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
         subject_zbins = np.array(subject_zbins)
 
         # Split subjects into train-pool and test
-        trainpool_subj_idx, test_subj_idx = train_test_split(
-            np.arange(len(unique_subjects)),
-            test_size=self.test_fraction,
-            stratify=subject_zbins,
-            random_state=self.test_seed,
-        )
+        # Try stratified split first, fall back to random if z-bins are too sparse
+        try:
+            trainpool_subj_idx, test_subj_idx = train_test_split(
+                np.arange(len(unique_subjects)),
+                test_size=self.test_fraction,
+                stratify=subject_zbins,
+                random_state=self.test_seed,
+            )
+        except ValueError as e:
+            logger.warning(
+                f"Stratified test split failed ({e}). "
+                "Falling back to random (non-stratified) split."
+            )
+            trainpool_subj_idx, test_subj_idx = train_test_split(
+                np.arange(len(unique_subjects)),
+                test_size=self.test_fraction,
+                stratify=None,
+                random_state=self.test_seed,
+            )
 
         trainpool_subjects = unique_subjects[trainpool_subj_idx]
         test_subjects = unique_subjects[test_subj_idx]
@@ -377,12 +390,24 @@ class KFoldClassificationDataModule(pl.LightningDataModule):
 
         # ---- Synthetic data: stratified split by z-bin ----
         if len(self._synth_patches) > 0:
-            trainpool_synth_idx, test_synth_idx = train_test_split(
-                np.arange(len(self._synth_patches)),
-                test_size=self.test_fraction,
-                stratify=self._synth_zbins,
-                random_state=self.test_seed,
-            )
+            try:
+                trainpool_synth_idx, test_synth_idx = train_test_split(
+                    np.arange(len(self._synth_patches)),
+                    test_size=self.test_fraction,
+                    stratify=self._synth_zbins,
+                    random_state=self.test_seed,
+                )
+            except ValueError:
+                logger.warning(
+                    "Stratified synthetic test split failed. "
+                    "Falling back to random split."
+                )
+                trainpool_synth_idx, test_synth_idx = train_test_split(
+                    np.arange(len(self._synth_patches)),
+                    test_size=self.test_fraction,
+                    stratify=None,
+                    random_state=self.test_seed,
+                )
 
             self._trainpool_synth_patches = self._synth_patches[trainpool_synth_idx]
             self._trainpool_synth_zbins = self._synth_zbins[trainpool_synth_idx]
@@ -562,6 +587,11 @@ class ControlDataModule(pl.LightningDataModule):
     @property
     def in_channels(self) -> int:
         return 2 if self.input_mode == "joint" else 1
+
+    @property
+    def has_test_set(self) -> bool:
+        """Control experiment doesn't use held-out test set."""
+        return False
 
     def prepare_data(self) -> None:
         real_path = self.patches_dir / "real_patches.npz"

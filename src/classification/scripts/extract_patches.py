@@ -51,3 +51,21 @@ def run_extraction(args: argparse.Namespace) -> None:
             f"Done: {stats.n_real} real, {stats.n_synthetic} synthetic patches "
             f"(patch_size={stats.patch_size})"
         )
+
+    # Run dataset analysis if not skipped
+    skip_analysis = getattr(args, "skip_analysis", False)
+    if not skip_analysis and len(experiments) > 0:
+        logger.info(f"{'='*60}")
+        logger.info("Running dataset analysis...")
+        logger.info(f"{'='*60}")
+
+        from src.classification.data.dataset_analysis import run_dataset_analysis
+
+        analysis_output = base_output / "analysis"
+        run_dataset_analysis(
+            patches_dir=base_output,
+            output_dir=analysis_output,
+            experiments=experiments,
+            dpi=150,
+        )
+        logger.info(f"Analysis complete. Output saved to {analysis_output}")

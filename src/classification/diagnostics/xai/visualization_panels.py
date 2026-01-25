@@ -90,11 +90,13 @@ def plot_gradcam_comparison_panel(
             continue
 
         # Select samples (evenly spaced or first N)
-        n_show = min(n_samples_per_category, len(gradcam_results))
+        # Use minimum of gradcam_results and patches to avoid index out of bounds
+        n_available = min(len(gradcam_results), len(patches))
+        n_show = min(n_samples_per_category, n_available)
         if n_show < 1:
             continue
 
-        indices = np.linspace(0, len(gradcam_results) - 1, n_show, dtype=int)
+        indices = np.linspace(0, n_available - 1, n_show, dtype=int)
 
         fig, axes = plt.subplots(n_show, 4, figsize=(12, 3 * n_show))
         if n_show == 1:

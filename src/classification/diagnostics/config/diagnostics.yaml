@@ -14,7 +14,7 @@ dithering:
   seed: 42
   clip_range: [-1.0, 1.0]
   reclassification:
-    n_folds: 5
+    n_folds: 2
     max_epochs: 50
     batch_size: 16
     learning_rate: 1.0e-4
@@ -102,6 +102,7 @@ xai:
   confusion_stratified:
     enabled: true
     use_full_images: true
+    use_ensemble: true  # When using held-out test set, average predictions across folds
     n_representative_samples: 8  # Per category for detailed analysis
     comparisons:
       - ["FP", "TN"]  # Primary: what makes FP indistinguishable from real

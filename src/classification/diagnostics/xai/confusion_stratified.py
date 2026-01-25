@@ -51,6 +51,7 @@ from src.classification.evaluation.confusion_samples import (
     ConfusionMatrixSamples,
     load_all_fold_confusion_samples,
     aggregate_confusion_samples,
+    discover_results_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -436,24 +437,44 @@ def run_confusion_stratified_analysis(
     checkpoints_base_dir = Path(cfg.data.checkpoints_base_dir)
     output_base_dir = Path(cfg.output.base_dir)
 
-    # Determine results directory for the input mode
-    mode_suffix = input_mode
-    results_dir = classification_results_dir / experiment_name / mode_suffix
+    # Discover results directory (handles suffixes like _dithered, _fullimg)
+    results_dir = discover_results_dir(classification_results_dir, experiment_name, input_mode)
 
-    # Load confusion samples from all folds
-    n_folds = cfg.dithering.reclassification.n_folds
-    fold_samples = load_all_fold_confusion_samples(results_dir, n_folds)
+    if results_dir is None:
+        logger.warning(
+            f"No results directory found for {experiment_name}/{input_mode}* "
+            f"in {classification_results_dir}"
+        )
+        return ConfusionStratifiedResults(experiment_name=experiment_name)
+
+    logger.info(f"Using results directory: {results_dir}")
+
+    # Detect if using full images based on results directory name
+    use_full_images = "_fullimg" in results_dir.name
+    if use_full_images:
+        # Switch to full_images directory instead of patches
+        patches_base_dir = patches_base_dir.parent / "full_images"
+        logger.info(f"Detected full-image mode, using: {patches_base_dir}")
+
+    # Load confusion samples from all folds (auto-discover available folds)
+    fold_samples = load_all_fold_confusion_samples(results_dir, n_folds=None)
 
     if not fold_samples:
         logger.warning(f"No confusion samples found in {results_dir}")
         return ConfusionStratifiedResults(experiment_name=experiment_name)
 
+    logger.info(f"Loaded {len(fold_samples)} fold(s) of confusion samples")
+
+    # Use ensemble aggregation when there's a held-out test set
+    # (all folds evaluate the same samples with different models)
+    use_ensemble = cfg.xai.get("confusion_stratified", {}).get("use_ensemble", True)
+
     # Aggregate across folds
-    aggregated_samples = aggregate_confusion_samples(fold_samples)
+    aggregated_samples = aggregate_confusion_samples(fold_samples, ensemble=use_ensemble)
     logger.info(
-        f"Aggregated confusion samples: TP={aggregated_samples.n_tp}, "
-        f"TN={aggregated_samples.n_tn}, FP={aggregated_samples.n_fp}, "
-        f"FN={aggregated_samples.n_fn}"
+        f"{'Ensembled' if use_ensemble else 'Aggregated'} confusion samples: "
+        f"TP={aggregated_samples.n_tp}, TN={aggregated_samples.n_tn}, "
+        f"FP={aggregated_samples.n_fp}, FN={aggregated_samples.n_fn}"
     )
 
     # Load patches for each category
@@ -462,7 +483,7 @@ def run_confusion_stratified_analysis(
 
     # Load best model (use fold 0 checkpoint)
     in_channels = determine_in_channels(input_mode)
-    ckpt_path = discover_checkpoint(checkpoints_base_dir, experiment_name, fold_idx=0)
+    ckpt_path = discover_checkpoint(checkpoints_base_dir, experiment_name, fold_idx=0, input_mode=input_mode)
     if ckpt_path is None:
         logger.error(f"No checkpoint found for {experiment_name}")
         return ConfusionStratifiedResults(experiment_name=experiment_name)

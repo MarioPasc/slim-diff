@@ -14,7 +14,7 @@ data:
   # Real data (slice cache)
   real:
     cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
-    csv_files: ["train.csv", "val.csv"]
+    csv_files: ["train.csv", "val.csv", "test.csv"]
     slices_subdir: "slices"
 
   # Synthetic data

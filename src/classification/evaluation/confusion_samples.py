@@ -327,21 +327,28 @@ def compute_confusion_samples(
 
 def aggregate_confusion_samples(
     fold_samples: list[ConfusionMatrixSamples],
+    ensemble: bool = False,
 ) -> ConfusionMatrixSamples:
     """Aggregate confusion samples across folds.
 
-    Note: Original indices will refer to fold-specific validation sets,
-    so this aggregation is primarily for summary statistics.
+    For held-out test sets (where all folds evaluate the same samples),
+    use ensemble=True to average predictions across folds and reclassify.
 
     Args:
         fold_samples: List of ConfusionMatrixSamples from each fold.
+        ensemble: If True, average predictions for same samples across folds.
+                  Use this when all folds evaluate the same held-out test set.
 
     Returns:
-        Aggregated ConfusionMatrixSamples with combined samples.
+        Aggregated ConfusionMatrixSamples with combined or ensembled samples.
     """
     if not fold_samples:
         return ConfusionMatrixSamples()
 
+    if ensemble:
+        return _ensemble_aggregate_confusion_samples(fold_samples)
+
+    # Simple concatenation for different validation sets per fold
     aggregated = ConfusionMatrixSamples(
         threshold=fold_samples[0].threshold,
         fold_idx=-1,  # Indicates aggregated
@@ -358,15 +365,86 @@ def aggregate_confusion_samples(
     return aggregated
 
 
+def _ensemble_aggregate_confusion_samples(
+    fold_samples: list[ConfusionMatrixSamples],
+) -> ConfusionMatrixSamples:
+    """Aggregate confusion samples using ensemble averaging.
+
+    When all folds evaluate the same held-out test set, this function:
+    1. Groups samples by unique identifier (original_idx, is_real)
+    2. Averages probabilities across folds
+    3. Reclassifies based on averaged probability
+
+    Args:
+        fold_samples: List of ConfusionMatrixSamples from each fold.
+
+    Returns:
+        Ensembled ConfusionMatrixSamples with averaged predictions.
+    """
+    if not fold_samples:
+        return ConfusionMatrixSamples()
+
+    # Collect all samples with their probabilities
+    # Key: (original_idx, is_real) -> list of SampleReference
+    from collections import defaultdict
+
+    sample_dict = defaultdict(list)
+
+    for fs in fold_samples:
+        for sample in fs.true_positives + fs.true_negatives + fs.false_positives + fs.false_negatives:
+            key = (sample.original_idx, sample.is_real)
+            sample_dict[key].append(sample)
+
+    # Average probabilities and reclassify
+    threshold = fold_samples[0].threshold
+    aggregated = ConfusionMatrixSamples(
+        threshold=threshold,
+        fold_idx=-1,  # Indicates ensembled
+        experiment_name=fold_samples[0].experiment_name,
+        input_mode=fold_samples[0].input_mode,
+    )
+
+    for key, samples in sample_dict.items():
+        # Average probability across folds
+        avg_prob = sum(s.prob for s in samples) / len(samples)
+
+        # Create averaged sample using first sample as template
+        template = samples[0]
+        avg_sample = SampleReference(
+            original_idx=template.original_idx,
+            is_real=template.is_real,
+            z_bin=template.z_bin,
+            prob=avg_prob,
+            subject_id=template.subject_id,
+            replica_id=template.replica_id,
+            sample_idx=template.sample_idx,
+        )
+
+        # Classify based on average probability
+        predicted_synthetic = avg_prob >= threshold
+        actual_real = template.is_real
+
+        if actual_real and not predicted_synthetic:
+            aggregated.true_positives.append(avg_sample)
+        elif actual_real and predicted_synthetic:
+            aggregated.false_negatives.append(avg_sample)
+        elif not actual_real and predicted_synthetic:
+            aggregated.true_negatives.append(avg_sample)
+        else:  # not actual_real and not predicted_synthetic
+            aggregated.false_positives.append(avg_sample)
+
+    return aggregated
+
+
 def load_all_fold_confusion_samples(
     results_dir: Path,
-    n_folds: int = 3,
+    n_folds: int | None = None,
 ) -> list[ConfusionMatrixSamples]:
     """Load confusion samples from all folds.
 
     Args:
         results_dir: Directory containing fold{idx}_confusion_samples.json files.
-        n_folds: Number of folds.
+        n_folds: Number of folds. If None, auto-discovers available fold files.
 
     Returns:
         List of ConfusionMatrixSamples, one per fold.
@@ -374,11 +452,68 @@ def load_all_fold_confusion_samples(
     results_dir = Path(results_dir)
     fold_samples = []
 
-    for fold_idx in range(n_folds):
-        path = results_dir / f"fold{fold_idx}_confusion_samples.json"
-        if path.exists():
+    if n_folds is None:
+        # Auto-discover fold files
+        fold_files = sorted(results_dir.glob("fold*_confusion_samples.json"))
+        for path in fold_files:
             fold_samples.append(ConfusionMatrixSamples.load(path))
-        else:
-            logger.warning(f"Confusion samples not found: {path}")
+        if not fold_files:
+            logger.warning(f"No confusion sample files found in {results_dir}")
+    else:
+        for fold_idx in range(n_folds):
+            path = results_dir / f"fold{fold_idx}_confusion_samples.json"
+            if path.exists():
+                fold_samples.append(ConfusionMatrixSamples.load(path))
+            else:
+                logger.warning(f"Confusion samples not found: {path}")
 
     return fold_samples
+
+
+def discover_results_dir(
+    base_dir: Path,
+    experiment_name: str,
+    input_mode: str,
+) -> Path | None:
+    """Discover the actual results directory with any suffixes.
+
+    Searches for directories matching patterns like:
+    - {input_mode}
+    - {input_mode}_dithered
+    - {input_mode}_fullimg
+    - {input_mode}_dithered_fullimg
+
+    Args:
+        base_dir: Base classification results directory.
+        experiment_name: Experiment name.
+        input_mode: Base input mode (e.g., "joint").
+
+    Returns:
+        Path to the results directory, or None if not found.
+    """
+    base_dir = Path(base_dir)
+    exp_dir = base_dir / experiment_name
+
+    if not exp_dir.exists():
+        return None
+
+    # Try different suffix combinations, prefer more specific ones first
+    suffix_patterns = [
+        f"{input_mode}_dithered_fullimg",
+        f"{input_mode}_fullimg",
+        f"{input_mode}_dithered",
+        f"{input_mode}",
+    ]
+
+    for suffix in suffix_patterns:
+        candidate = exp_dir / suffix
+        if candidate.exists() and any(candidate.glob("fold*_confusion_samples.json")):
+            return candidate
+
+    # Fallback: find any subdirectory starting with input_mode
+    for subdir in sorted(exp_dir.iterdir()):
+        if subdir.is_dir() and subdir.name.startswith(input_mode):
+            if any(subdir.glob("fold*_confusion_samples.json")):
+                return subdir
+
+    return None

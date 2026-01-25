@@ -331,7 +331,7 @@ def run_feature_space_analysis(
     folds_processed = 0
 
     for fold_idx in range(n_folds):
-        ckpt_path = discover_checkpoint(checkpoints_base_dir, experiment_name, fold_idx)
+        ckpt_path = discover_checkpoint(checkpoints_base_dir, experiment_name, fold_idx, input_mode="joint")
         if ckpt_path is None:
             continue
 

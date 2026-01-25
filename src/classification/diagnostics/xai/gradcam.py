@@ -255,10 +255,10 @@ def _load_model_from_checkpoint(
 
 
 def _discover_checkpoint(
-    checkpoints_base_dir: Path, experiment_name: str, fold_idx: int,
+    checkpoints_base_dir: Path, experiment_name: str, fold_idx: int, input_mode: str = "joint",
 ) -> Path | None:
     """Discover checkpoint for experiment/fold. Delegates to utils."""
-    return discover_checkpoint(checkpoints_base_dir, experiment_name, fold_idx)
+    return discover_checkpoint(checkpoints_base_dir, experiment_name, fold_idx, input_mode=input_mode)
 
 
 def _determine_in_channels(mode: str) -> int:
@@ -326,7 +326,7 @@ def run_gradcam_analysis(
         for fold_idx in range(n_folds):
             # Locate checkpoint (auto-discover subdirectory and version)
             ckpt_path = _discover_checkpoint(
-                checkpoints_base_dir, experiment_name, fold_idx
+                checkpoints_base_dir, experiment_name, fold_idx, input_mode=mode
             )
             if ckpt_path is None:
                 logger.warning(
@@ -408,7 +408,7 @@ def run_gradcam_analysis(
             "n_folds_processed": sum(
                 1
                 for fi in range(n_folds)
-                if _discover_checkpoint(checkpoints_base_dir, experiment_name, fi)
+                if _discover_checkpoint(checkpoints_base_dir, experiment_name, fi, input_mode=mode)
                 is not None
             ),
             "n_real_samples": sum(1 for r in fold_results if r.label == 0),

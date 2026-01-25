@@ -18,20 +18,42 @@ logger = logging.getLogger(__name__)
 def load_patches(
     patches_dir: Path,
     experiment_name: str,
+    auto_fallback_full_images: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load pre-extracted patches for an experiment.
+
+    Automatically falls back to full_images directory if patches don't exist.
 
     Args:
         patches_dir: Base directory containing per-experiment patch subdirs.
         experiment_name: Name of the experiment (e.g., 'velocity_lp_1.5').
+        auto_fallback_full_images: If True, automatically check full_images
+            directory when patches don't exist.
 
     Returns:
         Tuple of (real_patches, synth_patches, real_zbins, synth_zbins).
         Patches are float32 with shape (N, 2, H, W).
     """
-    exp_dir = Path(patches_dir) / experiment_name
+    patches_dir = Path(patches_dir)
+    exp_dir = patches_dir / experiment_name
     real_path = exp_dir / "real_patches.npz"
     synth_path = exp_dir / "synthetic_patches.npz"
+
+    # Check if patches exist, if not try full_images
+    if not real_path.exists() and auto_fallback_full_images:
+        # Try to find full_images directory as sibling to patches
+        # e.g., .../classification/patches -> .../classification/full_images
+        full_images_dir = patches_dir.parent / "full_images" / experiment_name
+        full_real_path = full_images_dir / "real_patches.npz"
+        full_synth_path = full_images_dir / "synthetic_patches.npz"
+
+        if full_real_path.exists():
+            logger.info(
+                f"Patches not found, using full_images instead: {full_images_dir}"
+            )
+            exp_dir = full_images_dir
+            real_path = full_real_path
+            synth_path = full_synth_path
 
     if not real_path.exists():
         raise FileNotFoundError(f"Real patches not found: {real_path}")
@@ -51,6 +73,44 @@ def load_patches(
         f"real={real_patches.shape}, synth={synth_patches.shape}"
     )
     return real_patches, synth_patches, real_zbins, synth_zbins
+
+
+def discover_patches_or_full_images(
+    patches_base_dir: Path,
+    experiment_name: str,
+) -> tuple[Path, bool]:
+    """Discover whether to use patches or full_images for an experiment.
+
+    Args:
+        patches_base_dir: Base directory for patches (e.g., .../classification/patches).
+        experiment_name: Name of the experiment.
+
+    Returns:
+        Tuple of (data_dir, is_full_images) where data_dir is the path to
+        either patches or full_images directory, and is_full_images indicates
+        which type was found.
+
+    Raises:
+        FileNotFoundError: If neither patches nor full_images are found.
+    """
+    patches_base_dir = Path(patches_base_dir)
+
+    # First check patches directory
+    patches_dir = patches_base_dir / experiment_name
+    if (patches_dir / "real_patches.npz").exists():
+        return patches_dir, False
+
+    # Then check full_images directory
+    full_images_base = patches_base_dir.parent / "full_images"
+    full_images_dir = full_images_base / experiment_name
+    if (full_images_dir / "real_patches.npz").exists():
+        logger.info(f"Using full_images directory: {full_images_dir}")
+        return full_images_dir, True
+
+    raise FileNotFoundError(
+        f"Neither patches nor full_images found for experiment '{experiment_name}'. "
+        f"Checked: {patches_dir} and {full_images_dir}"
+    )
 
 
 def load_full_replicas(
@@ -294,17 +354,22 @@ def discover_checkpoint(
     checkpoints_base_dir: Path,
     experiment_name: str,
     fold_idx: int,
+    input_mode: str = "joint",
 ) -> Path | None:
     """Discover the best checkpoint file for a given experiment and fold.
 
-    Searches all subdirectories under the experiment's checkpoint directory
-    for fold checkpoint files. Handles versioned checkpoints (e.g., -v1, -v2)
-    by preferring the base name without version suffix.
+    Searches subdirectories in priority order:
+    1. {input_mode}_dithered_fullimg (full images with dithering)
+    2. {input_mode}_fullimg (full images without dithering)
+    3. {input_mode}_dithered (patches with dithering)
+    4. {input_mode} (patches without dithering)
+    5. Any subdirectory containing the checkpoint
 
     Args:
         checkpoints_base_dir: Base directory containing experiment subdirs.
         experiment_name: Experiment name (e.g., 'epsilon_lp_1.5').
         fold_idx: Fold index to find checkpoint for.
+        input_mode: Input mode (joint, image_only, mask_only).
 
     Returns:
         Path to the best checkpoint file, or None if not found.
@@ -314,23 +379,42 @@ def discover_checkpoint(
         return None
 
     base_name = f"fold{fold_idx}_best.ckpt"
+
+    # Priority order for subdirectories
+    priority_subdirs = [
+        f"{input_mode}_dithered_fullimg",
+        f"{input_mode}_fullimg",
+        f"{input_mode}_dithered",
+        input_mode,
+    ]
+
+    # Try priority subdirectories first
+    for subdir_name in priority_subdirs:
+        subdir = exp_dir / subdir_name
+        if not subdir.exists():
+            continue
+
+        ckpt_path = subdir / base_name
+        if ckpt_path.exists():
+            return ckpt_path
+
+        # Try versioned checkpoints
+        versioned = sorted(subdir.glob(f"fold{fold_idx}_best-v*.ckpt"))
+        if versioned:
+            return versioned[-1]  # Latest version
+
+    # Fallback: search all subdirectories
     candidates: list[Path] = []
 
-    for subdir in sorted(exp_dir.rglob("*.ckpt")):
-        # Skip non-matching filenames
-        pass
-
-    # Walk all subdirectories
     for subdir in sorted(exp_dir.iterdir()):
         if not subdir.is_dir():
             continue
         # Check recursively within subdirs
         for ckpt in sorted(subdir.rglob(base_name)):
             candidates.append(ckpt)
-        if not candidates or candidates[-1].parent != subdir:
-            # Look for versioned checkpoints
-            for ckpt in sorted(subdir.rglob(f"fold{fold_idx}_best-v*.ckpt")):
-                candidates.append(ckpt)
+        # Look for versioned checkpoints
+        for ckpt in sorted(subdir.rglob(f"fold{fold_idx}_best-v*.ckpt")):
+            candidates.append(ckpt)
 
     if not candidates:
         return None
@@ -340,6 +424,49 @@ def discover_checkpoint(
     if non_versioned:
         return max(non_versioned, key=lambda p: p.stat().st_mtime)
     return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def discover_checkpoint_dir(
+    checkpoints_base_dir: Path,
+    experiment_name: str,
+    input_mode: str = "joint",
+) -> tuple[Path | None, bool]:
+    """Discover the checkpoint directory for an experiment.
+
+    Returns the directory containing checkpoints and whether it's full_images.
+
+    Args:
+        checkpoints_base_dir: Base directory containing experiment subdirs.
+        experiment_name: Experiment name.
+        input_mode: Input mode (joint, image_only, mask_only).
+
+    Returns:
+        Tuple of (checkpoint_dir, is_full_images) or (None, False) if not found.
+    """
+    exp_dir = Path(checkpoints_base_dir) / experiment_name
+    if not exp_dir.exists():
+        return None, False
+
+    # Priority order for subdirectories
+    priority_subdirs = [
+        (f"{input_mode}_dithered_fullimg", True),
+        (f"{input_mode}_fullimg", True),
+        (f"{input_mode}_dithered", False),
+        (input_mode, False),
+    ]
+
+    for subdir_name, is_fullimg in priority_subdirs:
+        subdir = exp_dir / subdir_name
+        if subdir.exists() and any(subdir.glob("fold*_best*.ckpt")):
+            return subdir, is_fullimg
+
+    # Fallback: any subdirectory with checkpoints
+    for subdir in sorted(exp_dir.iterdir()):
+        if subdir.is_dir() and any(subdir.glob("fold*_best*.ckpt")):
+            is_fullimg = "_fullimg" in subdir.name
+            return subdir, is_fullimg
+
+    return None, False
 
 
 def determine_in_channels(mode: str) -> int:
