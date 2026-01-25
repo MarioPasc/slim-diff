@@ -17,6 +17,11 @@ class ClassificationDataset(Dataset):
     - "image_only": 1-channel input (image patch, channel 0)
     - "mask_only": 1-channel input (mask patch, channel 1)
 
+    Tracks sample metadata for downstream XAI analysis:
+    - sample_idx: Global index in the concatenated dataset
+    - original_idx: Index into the original real_patches or synth_patches array
+    - is_real: Whether the sample is from real_patches (True) or synth_patches (False)
+
     Args:
         real_patches: Real patches array (N_real, 2, H, W).
         synth_patches: Synthetic patches array (N_synth, 2, H, W).
@@ -33,19 +38,33 @@ class ClassificationDataset(Dataset):
         synth_zbins: np.ndarray,
         input_mode: Literal["joint", "image_only", "mask_only"] = "joint",
     ) -> None:
+        n_real = len(real_patches)
+        n_synth = len(synth_patches)
+
         # Concatenate real (label=0) and synthetic (label=1)
         self.patches = np.concatenate([real_patches, synth_patches], axis=0)
         self.z_bins = np.concatenate([real_zbins, synth_zbins], axis=0)
         self.labels = np.concatenate([
-            np.zeros(len(real_patches), dtype=np.float32),
-            np.ones(len(synth_patches), dtype=np.float32),
+            np.zeros(n_real, dtype=np.float32),
+            np.ones(n_synth, dtype=np.float32),
         ])
         self.input_mode = input_mode
+
+        # Sample tracking for confusion matrix analysis
+        self.sample_indices = np.arange(n_real + n_synth, dtype=np.int32)
+        self.original_indices = np.concatenate([
+            np.arange(n_real, dtype=np.int32),
+            np.arange(n_synth, dtype=np.int32),
+        ])
+        self.is_real = np.concatenate([
+            np.ones(n_real, dtype=bool),
+            np.zeros(n_synth, dtype=bool),
+        ])
 
     def __len__(self) -> int:
         return len(self.patches)
 
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor | int]:
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor | int | bool]:
         patch = self.patches[idx]  # (2, H, W)
 
         if self.input_mode == "image_only":
@@ -58,6 +77,10 @@ class ClassificationDataset(Dataset):
             "patch": torch.from_numpy(patch.copy()).float(),
             "label": torch.tensor(self.labels[idx]).float(),
             "z_bin": int(self.z_bins[idx]),
+            # Sample tracking for confusion matrix analysis
+            "sample_idx": int(self.sample_indices[idx]),
+            "original_idx": int(self.original_indices[idx]),
+            "is_real": bool(self.is_real[idx]),
         }
 
     @property

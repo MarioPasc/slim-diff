@@ -47,6 +47,10 @@ class ClassificationLightningModule(pl.LightningModule):
         self._test_probs: list[torch.Tensor] = []
         self._test_labels: list[torch.Tensor] = []
         self._test_zbins: list[int] = []
+        # Sample metadata for confusion matrix tracking
+        self._test_sample_indices: list[int] = []
+        self._test_original_indices: list[int] = []
+        self._test_is_real: list[bool] = []
 
     @property
     def fold_idx(self) -> int:
@@ -103,24 +107,47 @@ class ClassificationLightningModule(pl.LightningModule):
         self._test_probs.append(probs.cpu())
         self._test_labels.append(batch["label"].cpu())
         self._test_zbins.extend([int(z) for z in batch["z_bin"]])
+        # Collect sample metadata for confusion matrix tracking
+        if "sample_idx" in batch:
+            self._test_sample_indices.extend([int(s) for s in batch["sample_idx"]])
+        if "original_idx" in batch:
+            self._test_original_indices.extend([int(o) for o in batch["original_idx"]])
+        if "is_real" in batch:
+            self._test_is_real.extend([bool(r) for r in batch["is_real"]])
 
     def get_test_outputs(self) -> dict:
         """Retrieve collected test outputs for evaluation.
 
         Returns:
-            Dict with 'probs', 'labels', 'z_bins' as numpy arrays.
+            Dict with 'probs', 'labels', 'z_bins' as numpy arrays, plus
+            'sample_indices', 'original_indices', 'is_real' for confusion
+            matrix tracking if available.
         """
         import numpy as np
         probs = torch.cat(self._test_probs).numpy()
         labels = torch.cat(self._test_labels).numpy()
         z_bins = np.array(self._test_zbins)
-        return {"probs": probs, "labels": labels, "z_bins": z_bins}
+
+        outputs = {"probs": probs, "labels": labels, "z_bins": z_bins}
+
+        # Include sample metadata if available
+        if self._test_sample_indices:
+            outputs["sample_indices"] = np.array(self._test_sample_indices)
+        if self._test_original_indices:
+            outputs["original_indices"] = np.array(self._test_original_indices)
+        if self._test_is_real:
+            outputs["is_real"] = np.array(self._test_is_real)
+
+        return outputs
 
     def clear_test_outputs(self) -> None:
         """Clear stored test outputs."""
         self._test_probs = []
         self._test_labels = []
         self._test_zbins = []
+        self._test_sample_indices = []
+        self._test_original_indices = []
+        self._test_is_real = []
 
     def configure_optimizers(self) -> dict:
         train_cfg = self.cfg.training

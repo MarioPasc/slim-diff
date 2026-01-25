@@ -299,12 +299,14 @@ logging:
     texture_quality:
       enabled: true
       log_every_n_epochs: 25
-      n_samples: 200
+      n_samples: 32
       lbp_radius: 1
       lbp_n_points: 8
       wavelet: "db4"
       compute_full_texture: false
       run_on_first_epoch: true
+      fast_inference_steps: 50
+      batch_size: 8
 
 # =============================================================================
 # Visualization Configuration

@@ -178,6 +178,42 @@ def _run_integrated_gradients(cfg, experiment_name: str, gpu: int = 0) -> dict:
     return run_integrated_gradients(cfg, experiment_name, device=device)
 
 
+def _run_confusion_stratified(cfg, experiment_name: str, gpu: int = 0, input_mode: str = "joint") -> dict:
+    """Run confusion-matrix-stratified XAI analysis."""
+    from src.classification.diagnostics.xai.confusion_stratified import run_confusion_stratified_analysis
+    from src.classification.diagnostics.xai.visualization_panels import generate_xai_panel
+    from src.classification.evaluation.confusion_samples import (
+        load_all_fold_confusion_samples,
+        aggregate_confusion_samples,
+    )
+    from pathlib import Path
+
+    device = f"cuda:{gpu}" if cfg.experiment.device == "cuda" else "cpu"
+
+    # Run the analysis
+    results = run_confusion_stratified_analysis(cfg, experiment_name, device=device, input_mode=input_mode)
+
+    # Load samples for visualization using diagnostics config paths
+    patches_dir = Path(cfg.data.patches_base_dir) / experiment_name
+    classification_results_dir = Path(cfg.data.classification_results_dir)
+    results_dir = classification_results_dir / experiment_name / input_mode
+    n_folds = cfg.dithering.reclassification.n_folds
+
+    fold_samples = load_all_fold_confusion_samples(results_dir, n_folds)
+    if fold_samples:
+        aggregated_samples = aggregate_confusion_samples(fold_samples)
+
+        # Load patches for visualization
+        from src.classification.diagnostics.xai.confusion_stratified import _load_samples_by_category
+        samples_by_category = _load_samples_by_category(aggregated_samples, patches_dir)
+
+        # Generate visualizations
+        output_dir = Path(cfg.output.base_dir) / experiment_name / "confusion_stratified"
+        generate_xai_panel(results, samples_by_category, output_dir)
+
+    return results.comparisons if results.comparisons else {}
+
+
 def _run_report(cfg, experiment_name: str) -> None:
     """Generate summary report (legacy)."""
     from src.classification.diagnostics.reporting.summary_report import generate_report
@@ -279,6 +315,7 @@ def run_all(cfg, experiment_name: str, gpu: int = 0, skip: list[str] | None = No
         ("spectral_attribution", _run_spectral_attribution),
         ("feature_space", _run_feature_space),
         ("integrated_gradients", _run_integrated_gradients),
+        ("confusion_stratified", _run_confusion_stratified),
     ]
 
     for name, fn in xai_analyses:
@@ -410,6 +447,8 @@ def run_from_args(args: argparse.Namespace) -> None:
         _run_feature_space(cfg, experiment, gpu)
     elif component == "integrated-gradients":
         _run_integrated_gradients(cfg, experiment, gpu)
+    elif component == "confusion-stratified":
+        _run_confusion_stratified(cfg, experiment, gpu)
     elif component == "spectral":
         _run_spectral(cfg, experiment)
     elif component == "texture":
@@ -459,7 +498,7 @@ def main() -> None:
     p_agg.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     # --- Individual subcommands ---
-    gpu_commands = {"gradcam", "channel-decomp", "spectral-attr", "feature-space", "integrated-gradients"}
+    gpu_commands = {"gradcam", "channel-decomp", "spectral-attr", "feature-space", "integrated-gradients", "confusion-stratified"}
     for cmd_name, cmd_help in [
         #("dither", "Run dithering and re-classification"),
         ("gradcam", "Run GradCAM analysis"),
@@ -467,6 +506,7 @@ def main() -> None:
         ("spectral-attr", "Run spectral attribution XAI analysis"),
         ("feature-space", "Run feature space analysis"),
         ("integrated-gradients", "Run Integrated Gradients analysis"),
+        ("confusion-stratified", "Run confusion-matrix-stratified XAI analysis"),
         ("spectral", "Run spectral (PSD) analysis"),
         ("texture", "Run texture (GLCM, LBP) analysis"),
         ("bands", "Run frequency band analysis"),
@@ -535,6 +575,7 @@ def main() -> None:
         "spectral-attr": lambda: _run_spectral_attribution(cfg, experiment, args.gpu),
         "feature-space": lambda: _run_feature_space(cfg, experiment, args.gpu),
         "integrated-gradients": lambda: _run_integrated_gradients(cfg, experiment, args.gpu),
+        "confusion-stratified": lambda: _run_confusion_stratified(cfg, experiment, args.gpu),
         "spectral": lambda: _run_spectral(cfg, experiment),
         "texture": lambda: _run_texture(cfg, experiment),
         "bands": lambda: _run_bands(cfg, experiment),

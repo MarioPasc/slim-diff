@@ -58,9 +58,15 @@ data:
     max_patch_size: 96        # Maximum patch dimension
     fixed_size: 64            # Used when method="fixed"
 
-  # K-fold cross-validation
+  # Held-out test set (split before k-fold)
+  test_split:
+    fraction: 0.20          # 20% of data held out for testing
+    stratify_by: "z_bin"    # Stratify test set by z-bin
+    seed: 42
+
+  # K-fold cross-validation (on remaining 80%)
   kfold:
-    n_folds: 3
+    n_folds: 2
     stratify_by: "z_bin"
     seed: 42
 

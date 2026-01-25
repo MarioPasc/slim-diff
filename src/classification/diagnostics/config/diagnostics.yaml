@@ -5,6 +5,7 @@
 data:
   patches_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/classification/patches"
   checkpoints_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/classification/checkpoints"
+  classification_results_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/classification/results"
   replicas_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs"
   real_cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
   full_image_replica_ids: [0, 1, 2, 3, 4]
@@ -98,6 +99,19 @@ xai:
     n_steps: 50
     baseline: "zeros"  # "zeros" or "noise"
     max_samples: 100  # Total samples (50 per class) for computational efficiency
+  confusion_stratified:
+    enabled: true
+    use_full_images: true
+    n_representative_samples: 8  # Per category for detailed analysis
+    comparisons:
+      - ["FP", "TN"]  # Primary: what makes FP indistinguishable from real
+      - ["FN", "TP"]  # Secondary: unusual real samples
+    visualization:
+      panel_dpi: 300
+      panel_format: ["pdf", "png"]
+      include_individual_samples: true
+      n_samples_per_subplot: 4
+      radial_profile_bins: 20
 
 reporting:
   compact_format: "yaml"

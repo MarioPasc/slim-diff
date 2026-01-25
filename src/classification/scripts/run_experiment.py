@@ -24,6 +24,7 @@ from src.classification.evaluation.metrics import (
     aggregate_fold_metrics,
     ExperimentResult,
 )
+from src.classification.evaluation.confusion_samples import compute_confusion_samples
 from src.classification.evaluation.statistical_tests import permutation_test_auc
 from src.classification.evaluation.reporting import save_experiment_result
 from src.classification.training.lit_module import ClassificationLightningModule
@@ -165,6 +166,30 @@ def run_experiment(args: argparse.Namespace) -> ExperimentResult:
             f"[{fold_result.global_metrics.auc_roc_ci_lower:.4f}, "
             f"{fold_result.global_metrics.auc_roc_ci_upper:.4f}]"
         )
+
+        # Compute and save confusion samples for XAI analysis
+        if "original_indices" in outputs and "is_real" in outputs:
+            real_metadata = dm.get_real_metadata() if hasattr(dm, "get_real_metadata") else None
+            synth_metadata = dm.get_synth_metadata() if hasattr(dm, "get_synth_metadata") else None
+
+            confusion_samples = compute_confusion_samples(
+                probs=outputs["probs"],
+                labels=outputs["labels"],
+                z_bins=outputs["z_bins"],
+                original_indices=outputs["original_indices"],
+                is_real=outputs["is_real"],
+                threshold=fold_result.global_metrics.optimal_threshold,
+                real_metadata=real_metadata,
+                synth_metadata=synth_metadata,
+                fold_idx=fold_idx,
+                experiment_name=experiment_name,
+                input_mode=input_mode,
+            )
+            confusion_samples.save(results_dir / f"fold{fold_idx}_confusion_samples.json")
+            logger.info(
+                f"Fold {fold_idx}: FP rate={confusion_samples.fp_rate:.3f} "
+                f"(FP={confusion_samples.n_fp}, TN={confusion_samples.n_tn})"
+            )
 
         # Free GPU memory between folds
         del model, trainer

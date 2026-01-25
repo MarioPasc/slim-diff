@@ -117,25 +117,31 @@ class TextureQualityCallback(Callback):
     - Wavelet HH L1 energy ratio (synth/real) - target: > 0.85
 
     Only runs on global rank 0 in DDP to avoid duplicate computation.
+
+    IMPORTANT: Generation is expensive. Use small n_samples (32-50) and
+    fast_inference_steps (50-100) to keep callback runtime under 2-3 minutes.
     """
 
     def __init__(
         self,
         cfg: DictConfig,
         log_every_n_epochs: int = 25,
-        n_samples: int = 200,
+        n_samples: int = 32,
         lbp_radius: int = 1,
         lbp_n_points: int = 8,
         wavelet: str = "db4",
         compute_full_texture: bool = False,
         run_on_first_epoch: bool = True,
+        fast_inference_steps: int = 50,
+        batch_size: int = 8,
     ) -> None:
         """Initialize the callback.
 
         Args:
             cfg: Configuration object.
             log_every_n_epochs: Frequency of texture quality evaluation.
-            n_samples: Number of samples to generate for comparison.
+            n_samples: Number of samples to generate for comparison (default: 32).
+                      Keep small for reasonable callback runtime.
             lbp_radius: LBP radius parameter.
             lbp_n_points: Number of LBP points.
             wavelet: Wavelet name for DWT.
@@ -143,6 +149,9 @@ class TextureQualityCallback(Callback):
                                  If False, only compute key markers (faster).
             run_on_first_epoch: If True, also run after epoch 1 to establish
                                a worst-case baseline early in training.
+            fast_inference_steps: Number of DDIM steps for fast generation
+                                 (default: 50, vs 500 for full quality).
+            batch_size: Batch size for generation (default: 8).
         """
         super().__init__()
         self.cfg = cfg
@@ -153,6 +162,8 @@ class TextureQualityCallback(Callback):
         self.wavelet = wavelet
         self.compute_full_texture = compute_full_texture
         self.run_on_first_epoch = run_on_first_epoch
+        self.fast_inference_steps = fast_inference_steps
+        self.batch_size = batch_size
 
         # Output directory for CSV logs
         self.output_dir = Path(cfg.experiment.output_dir) / "texture_quality"
@@ -201,7 +212,7 @@ class TextureQualityCallback(Callback):
         tokens: list[int],
         z_bins: list[int],
     ) -> np.ndarray:
-        """Generate synthetic samples for given tokens.
+        """Generate synthetic samples for given tokens using fast batched inference.
 
         Args:
             pl_module: Lightning module.
@@ -214,21 +225,51 @@ class TextureQualityCallback(Callback):
         sampler = self._get_sampler(pl_module)
         self._load_zbin_priors(pl_module)
 
-        samples = []
-        with torch.no_grad():
-            for token, z_bin in zip(tokens, z_bins):
-                # Get anatomical prior if needed
-                anatomical_mask = None
-                if self._use_anatomical_conditioning and self._zbin_priors is not None:
-                    anatomical_mask = get_anatomical_priors_as_input(
-                        [z_bin],
-                        self._zbin_priors,
-                        device=pl_module.device,
-                    ).squeeze(0)
+        # Override inference steps for fast generation
+        original_steps = sampler.num_inference_steps
+        sampler.num_inference_steps = self.fast_inference_steps
 
-                sample = sampler.sample_single(token, anatomical_mask=anatomical_mask)
-                # Extract image channel (channel 0)
-                samples.append(sample[0].cpu().numpy())
+        samples = []
+        n_total = len(tokens)
+
+        try:
+            with torch.no_grad():
+                # Process in batches for efficiency
+                for batch_start in range(0, n_total, self.batch_size):
+                    batch_end = min(batch_start + self.batch_size, n_total)
+                    batch_tokens = tokens[batch_start:batch_end]
+                    batch_zbins = z_bins[batch_start:batch_end]
+                    batch_size = len(batch_tokens)
+
+                    # Get anatomical priors for batch if needed
+                    anatomical_masks = None
+                    if self._use_anatomical_conditioning and self._zbin_priors is not None:
+                        anatomical_masks = get_anatomical_priors_as_input(
+                            batch_zbins,
+                            self._zbin_priors,
+                            device=pl_module.device,
+                        )
+
+                    # Generate batch using sample_batch if available, else loop
+                    if hasattr(sampler, 'sample_batch'):
+                        batch_samples = sampler.sample_batch(
+                            batch_tokens, anatomical_masks=anatomical_masks
+                        )
+                        for sample in batch_samples:
+                            samples.append(sample[0].cpu().numpy())
+                    else:
+                        # Fallback to single-sample generation
+                        for i, (token, z_bin) in enumerate(zip(batch_tokens, batch_zbins)):
+                            anatomical_mask = None
+                            if anatomical_masks is not None:
+                                anatomical_mask = anatomical_masks[i]
+
+                            sample = sampler.sample_single(token, anatomical_mask=anatomical_mask)
+                            samples.append(sample[0].cpu().numpy())
+
+        finally:
+            # Restore original inference steps
+            sampler.num_inference_steps = original_steps
 
         return np.stack(samples, axis=0)
 
@@ -456,10 +497,12 @@ def build_texture_quality_callback(cfg: DictConfig) -> TextureQualityCallback | 
     return TextureQualityCallback(
         cfg=cfg,
         log_every_n_epochs=callback_cfg.get("log_every_n_epochs", 25),
-        n_samples=callback_cfg.get("n_samples", 200),
+        n_samples=callback_cfg.get("n_samples", 32),  # Reduced from 200
         lbp_radius=callback_cfg.get("lbp_radius", 1),
         lbp_n_points=callback_cfg.get("lbp_n_points", 8),
         wavelet=callback_cfg.get("wavelet", "db4"),
         compute_full_texture=callback_cfg.get("compute_full_texture", False),
         run_on_first_epoch=callback_cfg.get("run_on_first_epoch", True),
+        fast_inference_steps=callback_cfg.get("fast_inference_steps", 50),  # Fast generation
+        batch_size=callback_cfg.get("batch_size", 8),
     )

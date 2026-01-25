@@ -372,15 +372,18 @@ logging:
     # - LBP code 8 ratio (Component B: LF texture anomaly, target: 1.0)
     # - Wavelet HH L1 ratio (Component A: HF deficit, target: >0.85)
     # Only runs on rank 0 in DDP to avoid duplicate computation.
+    # Uses fast generation (50 steps vs 500) for reasonable callback runtime (~1-2 min).
     texture_quality:
       enabled: true
       log_every_n_epochs: 25
-      n_samples: 200
+      n_samples: 32               # Small sample for fast callback (was 200)
       lbp_radius: 1
       lbp_n_points: 8
       wavelet: "db4"
-      compute_full_texture: false  # Only key markers for efficiency
-      run_on_first_epoch: true     # Establish worst-case baseline early
+      compute_full_texture: false
+      run_on_first_epoch: true
+      fast_inference_steps: 50    # Fast DDIM (vs 500 for full quality)
+      batch_size: 8               # Batched generation
 
 # =============================================================================
 # Visualization Configuration
