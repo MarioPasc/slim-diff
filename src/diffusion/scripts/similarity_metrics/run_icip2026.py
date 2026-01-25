@@ -27,6 +27,7 @@ from .metrics.lpips import LPIPSComputer, compute_per_zbin_lpips
 from .statistics.comparison import run_all_comparisons, comparison_results_to_dataframe
 from .plotting.zbin_multiexp import plot_zbin_multiexperiment
 from .plotting.global_comparison import plot_global_comparison, plot_metric_summary_table
+from .plotting.icip2026_figure import create_icip2026_figure, create_compact_figure
 
 
 def run_full_pipeline(
@@ -38,6 +39,8 @@ def run_full_pipeline(
     batch_size: int = 32,
     compute_per_zbin: bool = True,
     n_lpips_pairs: int = 1000,
+    test_csv: Path | None = None,
+    create_publication_figure: bool = True,
 ) -> dict[str, Any]:
     """Execute full ICIP 2026 similarity metrics pipeline.
 
@@ -50,6 +53,8 @@ def run_full_pipeline(
         batch_size: Batch size for feature extraction.
         compute_per_zbin: Whether to compute per-zbin metrics.
         n_lpips_pairs: Number of pairs for LPIPS computation.
+        test_csv: Path to test.csv for representative images (default: cache_dir/test.csv).
+        create_publication_figure: Whether to create the ICIP 2026 publication figure.
 
     Returns:
         Dict with paths to output files.
@@ -57,12 +62,19 @@ def run_full_pipeline(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Set default test_csv path
+    if test_csv is None:
+        test_csv = Path(cache_dir) / "test.csv"
+    else:
+        test_csv = Path(test_csv)
+
     print("=" * 70)
     print("ICIP 2026 SIMILARITY METRICS PIPELINE")
     print("=" * 70)
     print(f"Runs directory: {runs_dir}")
     print(f"Cache directory: {cache_dir}")
     print(f"Output directory: {output_dir}")
+    print(f"Test CSV: {test_csv}")
     print(f"Metrics: {metrics}")
     print(f"Device: {device}")
     print("=" * 70)
@@ -311,6 +323,48 @@ def run_full_pipeline(
         )
     except Exception as e:
         print(f"Warning: Failed to create summary table: {e}")
+
+    # ICIP 2026 Publication Figure (2x2 layout)
+    if create_publication_figure and compute_per_zbin and zbin_results_list:
+        print("\nGenerating ICIP 2026 publication figure...")
+        try:
+            # Extract baseline values
+            baseline_kid_mean = baseline_results.get("kid", {}).get("mean")
+            baseline_kid_std = baseline_results.get("kid", {}).get("std")
+            baseline_lpips_mean = baseline_results.get("lpips", {}).get("mean")
+            baseline_lpips_std = baseline_results.get("lpips", {}).get("std")
+
+            # Create main 2x2 figure
+            create_icip2026_figure(
+                df_global=df_global,
+                df_zbin=df_zbin,
+                output_dir=plots_dir,
+                test_csv=test_csv if test_csv.exists() else None,
+                comparison_results=comparison_results if available_metrics else None,
+                baseline_kid=baseline_kid_mean,
+                baseline_kid_std=baseline_kid_std,
+                baseline_lpips=baseline_lpips_mean,
+                baseline_lpips_std=baseline_lpips_std,
+                formats=["pdf", "png"],
+                show_images=test_csv.exists(),
+            )
+
+            # Create compact single-column figure
+            create_compact_figure(
+                df_global=df_global,
+                df_zbin=df_zbin,
+                output_dir=plots_dir,
+                test_csv=test_csv if test_csv.exists() else None,
+                comparison_results=comparison_results if available_metrics else None,
+                baseline_kid=baseline_kid_mean,
+                baseline_lpips=baseline_lpips_mean,
+                formats=["pdf", "png"],
+            )
+            print("Publication figures generated successfully!")
+        except Exception as e:
+            print(f"Warning: Failed to create publication figure: {e}")
+            import traceback
+            traceback.print_exc()
 
     print("\n" + "=" * 70)
     print("PIPELINE COMPLETE")
