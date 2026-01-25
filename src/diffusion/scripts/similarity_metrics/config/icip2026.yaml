@@ -14,13 +14,13 @@
 paths:
   # Directory containing experiment folders (e.g., x0_lp_1.5/, epsilon_lp_2.0/)
   # Each experiment should have a 'replicas/' subdirectory with replica_XXX.npz files
-  runs_dir: /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs
+  runs_dir: /media/hddb/mario/data/epilepsy/synth/
 
   # Directory containing cached slices with train.csv, val.csv, test.csv
-  cache_dir: /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache
+  cache_dir: /media/hddb/mario/data/epilepsy/real/slice_cache
 
   # Output directory for results (CSVs, plots, reports)
-  output_dir: /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/similarity_metrics
+  output_dir: /media/hddb/mario/results/epilepsy/icip2026/similarity_metrics
 
 # =============================================================================
 # Experiment Configuration
@@ -87,7 +87,7 @@ metrics:
 # =============================================================================
 compute:
   # CUDA device (use "cpu" for CPU-only computation)
-  device: "cuda:0"
+  device: "cuda:1"
 
   # Batch size for feature extraction
   # Reduce if running out of GPU memory

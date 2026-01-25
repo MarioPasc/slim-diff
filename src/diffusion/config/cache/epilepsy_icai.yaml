@@ -1,0 +1,108 @@
+# Cache Configuration for Epilepsy Dataset (FCD Lesions)
+# This file is used to build the slice cache for the epilepsy dataset
+
+# =============================================================================
+# Dataset Selection
+# =============================================================================
+dataset_type: "epilepsy"
+
+# =============================================================================
+# Cache Settings
+# =============================================================================
+cache_dir: "/media/hddb/mario/data/epilepsy/real/slice_cache"
+
+# Z-position binning (30 bins is standard for epilepsy)
+z_bins: 30
+
+# Slice sampling configuration
+slice_sampling:
+  z_range: "auto"  # Fixed range for epilepsy, or use "auto" for auto-detection
+  auto_z_range_offset: 15  # Slices to remove from each side when using "auto" (tightens range)
+
+  filter_empty_brain: true
+  brain_threshold: -0.9
+  brain_min_fraction: 0.05
+
+# Filtering options
+lesion_area_min_pixels: 30  # Filter lesion slices with < N pixels
+drop_healthy_patients: true  # Drop all control/healthy subjects
+
+# =============================================================================
+# Dataset-Specific Configurations
+# =============================================================================
+datasets:
+  epilepsy:
+    root_dir: "/media/hddb/mario/data/epilepsy/real/source"
+
+    # Epilepsy (lesion) dataset
+    epilepsy_dataset:
+      name: "Dataset210_MRIe_none"
+      modality_index: 0  # 0=FLAIR, 1=T1N
+
+    # Control (healthy) dataset
+    control_dataset:
+      name: "Dataset310_MRIcontrol_none"
+      modality_index: 0
+
+    # Split configuration
+    splits:
+      use_predefined_test: true
+      val_fraction: 0.1
+      control_test_fraction: 0.15
+      seed: 42
+
+# =============================================================================
+# Stratification Settings
+# =============================================================================
+# When enabled, the cache builder will automatically:
+# 1. Generate pre-stratification visualizations
+# 2. Re-split train/val using stratified sampling based on subject characteristics
+# 3. Generate post-stratification visualizations
+# 4. Generate pre/post comparison visualizations
+stratification:
+  enabled: true  # Set to true to enable automatic stratification workflow
+  stratify_by:
+    - "lesion_percentage"  # Primary: ensures similar lesion prevalence in train/val
+  n_bins: 4
+  min_subjects_per_bin: 2
+  seed: 42
+
+# =============================================================================
+# Bias Analysis Configuration
+# =============================================================================
+bias_analysis:
+  thresholds:
+    lesion_percentage_diff: 5.0    # Warn if train/val lesion % differs by more
+    chi_squared_p_value: 0.05      # Significance level for z-bin distribution test
+    ks_statistic: 0.1              # KS statistic threshold for lesion area
+    significant_zbin_count: 3      # Number of significantly different z-bins
+
+# =============================================================================
+# Preprocessing Configuration
+# =============================================================================
+transforms:
+  target_spacing: [1.25, 1.25, 1.25]  
+  roi_size: [160, 160, 160]
+
+  intensity_norm:
+    type: "percentile"
+    lower: 0.5
+    upper: 99.5
+    b_min: -1.0
+    b_max: 1.0
+    clip: true
+
+# =============================================================================
+# Z-Bin Prior Computation
+# =============================================================================
+postprocessing:
+  zbin_priors:
+    enabled: true
+    priors_filename: "zbin_priors_brain_roi.npz"
+    prob_threshold: 0.20
+    dilate_radius_px: 1
+    gaussian_sigma_px: 0.7
+    min_component_px: 500
+    n_first_bins: 5
+    max_components_for_first_bins: 3
+    relaxed_threshold_factor: 0.1
