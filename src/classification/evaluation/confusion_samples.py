@@ -373,7 +373,10 @@ def _ensemble_aggregate_confusion_samples(
     When all folds evaluate the same held-out test set, this function:
     1. Groups samples by unique identifier (original_idx, is_real)
     2. Averages probabilities across folds
-    3. Reclassifies based on averaged probability
+    3. Reclassifies based on averaged probability using threshold=0.5
+
+    Note: Uses threshold=0.5 (natural decision boundary) instead of fold-specific
+    optimized thresholds, which may not be appropriate after averaging.
 
     Args:
         fold_samples: List of ConfusionMatrixSamples from each fold.
@@ -396,7 +399,9 @@ def _ensemble_aggregate_confusion_samples(
             sample_dict[key].append(sample)
 
     # Average probabilities and reclassify
-    threshold = fold_samples[0].threshold
+    # Use standard 0.5 threshold for ensemble predictions
+    # (fold-specific optimized thresholds are not appropriate after averaging)
+    threshold = 0.5
     aggregated = ConfusionMatrixSamples(
         threshold=threshold,
         fold_idx=-1,  # Indicates ensembled

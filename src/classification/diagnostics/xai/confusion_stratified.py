@@ -193,14 +193,27 @@ def _load_samples_by_category(
         indices_list = []
 
         for ref in samples:
+            # Only add to all lists if patch was successfully loaded
             if ref.is_real:
                 if ref.original_idx < len(real_patches):
                     patches_list.append(real_patches[ref.original_idx])
+                    zbins_list.append(ref.z_bin)
+                    indices_list.append(ref.original_idx)
+                else:
+                    logger.warning(
+                        f"Real sample index {ref.original_idx} out of bounds "
+                        f"(max={len(real_patches)-1}), skipping"
+                    )
             else:
                 if ref.original_idx < len(synth_patches):
                     patches_list.append(synth_patches[ref.original_idx])
-            zbins_list.append(ref.z_bin)
-            indices_list.append(ref.original_idx)
+                    zbins_list.append(ref.z_bin)
+                    indices_list.append(ref.original_idx)
+                else:
+                    logger.warning(
+                        f"Synthetic sample index {ref.original_idx} out of bounds "
+                        f"(max={len(synth_patches)-1}), skipping"
+                    )
 
         if patches_list:
             result[cat_name] = (

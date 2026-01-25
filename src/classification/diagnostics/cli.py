@@ -266,6 +266,12 @@ def _run_paired_comparison(cfg) -> dict:
     return run_paired_comparison(cfg)
 
 
+def _run_confusion_comparison(cfg) -> dict:
+    """Run confusion-stratified inter-experiment comparison."""
+    from src.classification.diagnostics.reporting.confusion_comparison import run_confusion_comparison
+    return run_confusion_comparison(cfg)
+
+
 def run_all(cfg, experiment_name: str, gpu: int = 0, skip: list[str] | None = None) -> dict:
     """Run all diagnostic analyses for one experiment.
 
@@ -436,6 +442,9 @@ def run_from_args(args: argparse.Namespace) -> None:
     if component == "paired-comparison":
         _run_paired_comparison(cfg)
         return
+    if component == "confusion-comparison":
+        _run_confusion_comparison(cfg)
+        return
 
     experiment = args.experiment
     gpu = args.gpu
@@ -557,6 +566,11 @@ def main() -> None:
     p_paired.add_argument("--config", required=True, help="Path to diagnostics.yaml")
     p_paired.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
+    p_confusion = subparsers.add_parser("confusion-comparison",
+                                        help="Run confusion-stratified inter-experiment comparison")
+    p_confusion.add_argument("--config", required=True, help="Path to diagnostics.yaml")
+    p_confusion.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
+
     args = parser.parse_args()
     _setup_logging(getattr(args, "verbose", False))
     cfg = _load_config(args.config)
@@ -569,6 +583,9 @@ def main() -> None:
         return
     if cmd == "paired-comparison":
         _run_paired_comparison(cfg)
+        return
+    if cmd == "confusion-comparison":
+        _run_confusion_comparison(cfg)
         return
 
     experiment = args.experiment
