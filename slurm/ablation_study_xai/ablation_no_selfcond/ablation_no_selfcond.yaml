@@ -2,24 +2,32 @@
 # JS-DDPM XAI Ablation B: Low Self-Conditioning (tests LF texture refinement)
 # =============================================================================
 #
+# DIAGNOSTIC ANALYSIS (2026-01-25):
+#   Baseline: x0_lp_1.5 (severity=0.185, AUC=0.996)
+#   Secondary artifact: Texture smoothness (GLCM dissimilarity d=0.47, homogeneity d=-0.30)
+#   Spectral concordance: -0.70 (classifier uses LF texture features)
+#
 # XAI ABLATION STUDY:
-#   Baseline: x0_lp_1.5 (severity=0.025)
-#   Proposal: Baseline + FFL + self_cond 0.8 + eta 0.1
+#   Proposal: Baseline + FFL(alpha=1.35) + self_cond 0.8 + eta 0.1
 #   Ablation A: Proposal - FFL
 #   >>> Ablation B: Proposal - self_cond 0.8  <--- THIS CONFIG
 #   Ablation C: Proposal - eta 0.1
 #
 # WHAT THIS TESTS:
 #   Does high self-conditioning (0.8) fix the LF texture anomaly?
-#   XAI concordance=-0.9 shows the classifier uses LF, not HF.
-#   Self-conditioning gives iterative x0 refinement; at 0.5 (baseline),
-#   the model only sees its previous estimate half the time.
-#   If severity worsens vs proposal, self_cond is a key LF mechanism.
+#   - Spectral concordance=-0.70 shows the classifier detects LF texture patterns
+#     that correlate with the HF deficit
+#   - Self-conditioning gives iterative x0 refinement; at 0.5 (baseline),
+#     the model only sees its previous estimate half the time
+#   - If GLCM dissimilarity d increases vs proposal, self_cond is key for LF texture
+#
+#   Expected outcome: Without high self_cond, texture smoothness persists
+#   (GLCM dissimilarity d=0.47 remains)
 #
 # CHANGES FROM PROPOSAL:
 #   [REVERTED] self_conditioning.probability: 0.8 -> 0.5 (back to baseline)
 #   [KEPT] loss.mode: mse_lp_norm_ffl_groups (FFL active)
-#   [KEPT] ffl: enabled with group_uncertainty [0.0, 1.5]
+#   [KEPT] ffl: enabled with alpha=1.35, patch_factor=1, group_uncertainty [0.0, 1.0]
 #   [KEPT] sampler.eta: 0.1
 #   [KEPT] devices: 2 (global batch 32)
 #   [KEPT] lesion_weight: 3.0
@@ -212,18 +220,20 @@ loss:
     learnable: true
     clamp_range: [-5.0, 5.0]
 
+  # Group uncertainty weighting: same as proposal
   group_uncertainty_weighting:
     enabled: true
-    initial_log_vars: [0.0, 1.5]
+    initial_log_vars: [0.0, 1.0]  # Updated from [0.0, 1.5] for moderate FFL weight
     learnable: true
     clamp_range: [-5.0, 5.0]
     intra_group_weights: [1.0, 1.0, 1.0]
 
+  # FFL parameters: same as proposal (alpha=1.35, patch_factor=1)
   ffl:
     enabled: true
     loss_weight: 1.0
-    alpha: 1.0
-    patch_factor: 2
+    alpha: 1.35           # Updated from 1.0 for focal HF emphasis
+    patch_factor: 1       # Updated from 2 for full frequency resolution
     ave_spectrum: false
     log_matrix: true
     batch_matrix: false
@@ -297,6 +307,12 @@ logging:
       n_samples: 100
       timestep_bins: 10
 
+    # Texture quality tracking: wavelet HH + GLCM dissimilarity + LBP
+    # Key metrics and targets:
+    #   1. wavelet_hh_ratio: target >0.85 (baseline: 0.787)
+    #   2. glcm_dissimilarity_ratio: target ~1.0 (baseline d=0.47)
+    #   3. lbp_code8_ratio: target ~1.0
+    # With lower self_cond (0.5), GLCM dissimilarity may remain low
     texture_quality:
       enabled: true
       log_every_n_epochs: 25

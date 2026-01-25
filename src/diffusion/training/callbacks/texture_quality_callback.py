@@ -4,11 +4,18 @@ Monitors texture fidelity metrics during training by comparing generated samples
 against real validation data. Tracks:
 - LBP code 8 fraction (uniform flat regions - key Component B marker)
 - Wavelet HH energy ratio at Level 1 (fine texture - Component A marker)
+- GLCM dissimilarity ratio (texture variation - over-smoothing indicator)
 
-These metrics directly address the two-component artifact structure identified
-in the XAI diagnostic analysis:
-- Component A: High-frequency deficit (wavelet HH ratio < 0.85)
+These metrics directly address the artifact structure identified in the
+XAI diagnostic analysis (2026-01-25):
+- Component A: High-frequency deficit (wavelet HH L1 ratio = 0.787, target > 0.85)
 - Component B: Low-frequency texture anomaly (LBP code 8 deficit)
+- Component C: Over-smoothing (GLCM dissimilarity d=0.47, target ratio ~1.0)
+
+Key targets:
+- wavelet_hh_ratio > 0.85 (addresses 21% HF deficit)
+- glcm_dissimilarity_ratio ~ 1.0 (addresses d=0.47 smoothing)
+- lbp_code8_ratio ~ 1.0 (addresses LF texture anomaly)
 
 Only runs on rank 0 in DDP to avoid redundant computation.
 """
@@ -33,7 +40,7 @@ except ImportError:
     PYWT_AVAILABLE = False
 
 try:
-    from skimage.feature import local_binary_pattern
+    from skimage.feature import local_binary_pattern, graycomatrix, graycoprops
     SKIMAGE_AVAILABLE = True
 except ImportError:
     SKIMAGE_AVAILABLE = False
@@ -75,6 +82,41 @@ def compute_lbp_histogram(
     # Normalize
     hist_sum = hist_sum / (hist_sum.sum() + 1e-12)
     return hist_sum
+
+
+def compute_glcm_dissimilarity(
+    images: np.ndarray,
+    distances: list[int] = [1],
+    angles: list[float] = [0],
+) -> float:
+    """Compute mean GLCM dissimilarity for a batch of images.
+
+    Dissimilarity measures local variation in texture. Higher values indicate
+    more textured/varied images. The diagnostic analysis found synthetic images
+    have lower dissimilarity (d=0.47), indicating over-smoothing.
+
+    Args:
+        images: Batch of 2D images, shape (N, H, W), values in [-1, 1].
+        distances: GLCM pixel distances.
+        angles: GLCM angles in radians.
+
+    Returns:
+        Mean dissimilarity across all images.
+    """
+    if not SKIMAGE_AVAILABLE:
+        raise ImportError("scikit-image required for GLCM computation")
+
+    dissimilarities = []
+    for img in images:
+        # Normalize to [0, 255] uint8 for GLCM
+        img_uint8 = ((img + 1) / 2 * 255).astype(np.uint8)
+        # Compute GLCM
+        glcm = graycomatrix(img_uint8, distances=distances, angles=angles, levels=256)
+        # Extract dissimilarity
+        diss = graycoprops(glcm, 'dissimilarity')
+        dissimilarities.append(np.mean(diss))
+
+    return float(np.mean(dissimilarities))
 
 
 def compute_wavelet_hh_energy(
@@ -386,6 +428,23 @@ class TextureQualityCallback(Callback):
                 logger.info(
                     f"  LBP code 8: real={lbp_code8_real:.4f}, synth={lbp_code8_synth:.4f}, "
                     f"ratio={lbp_code8_ratio:.4f} (target: 1.0)"
+                )
+
+                # Compute GLCM dissimilarity (key finding from diagnostic analysis: d=0.47)
+                # Lower dissimilarity in synthetic indicates over-smoothing
+                real_dissimilarity = compute_glcm_dissimilarity(real_images)
+                synth_dissimilarity = compute_glcm_dissimilarity(synth_images)
+                diss_ratio = synth_dissimilarity / (real_dissimilarity + 1e-12)
+
+                metrics.update({
+                    "texture/glcm_dissimilarity_real": real_dissimilarity,
+                    "texture/glcm_dissimilarity_synth": synth_dissimilarity,
+                    "texture/glcm_dissimilarity_ratio": diss_ratio,
+                })
+
+                logger.info(
+                    f"  GLCM dissimilarity: real={real_dissimilarity:.4f}, synth={synth_dissimilarity:.4f}, "
+                    f"ratio={diss_ratio:.4f} (target: 1.0, baseline d=0.47)"
                 )
 
             # Compute wavelet metrics

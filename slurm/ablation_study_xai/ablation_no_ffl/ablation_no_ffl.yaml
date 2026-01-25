@@ -2,17 +2,24 @@
 # JS-DDPM XAI Ablation A: No FFL (tests HF correction contribution)
 # =============================================================================
 #
+# DIAGNOSTIC ANALYSIS (2026-01-25):
+#   Baseline: x0_lp_1.5 (severity=0.185, AUC=0.996)
+#   Primary artifact: 21% HF energy deficit (wavelet HH L1 = 0.787, target > 0.85)
+#   Spectral concordance: -0.70 (classifier uses LF features correlated with HF deficit)
+#
 # XAI ABLATION STUDY:
-#   Baseline: x0_lp_1.5 (severity=0.025)
-#   Proposal: Baseline + FFL + self_cond 0.8 + eta 0.1
+#   Proposal: Baseline + FFL(alpha=1.35) + self_cond 0.8 + eta 0.1
 #   >>> Ablation A: Proposal - FFL  <--- THIS CONFIG
 #   Ablation B: Proposal - self_cond 0.8
 #   Ablation C: Proposal - eta 0.1
 #
 # WHAT THIS TESTS:
-#   Does FFL correct the 32% HF energy deficit (wavelet HH L1 ratio)?
-#   If severity drops WITHOUT FFL, then self_cond + eta alone handle it.
-#   If severity stays same as baseline, FFL is the critical component.
+#   Does FFL correct the 21% HF energy deficit (wavelet HH L1 ratio)?
+#   - If severity remains high WITHOUT FFL, then FFL is the critical component
+#   - If severity drops, self_cond + eta alone address the artifact
+#
+#   Expected outcome: Without FFL, wavelet HH L1 ratio stays at ~0.787 (baseline)
+#   With FFL (proposal), target is > 0.85
 #
 # CHANGES FROM PROPOSAL:
 #   [REVERTED] loss.mode: mse_lp_norm_ffl_groups -> mse_lp_norm
@@ -297,6 +304,12 @@ logging:
       n_samples: 100
       timestep_bins: 10
 
+    # Texture quality tracking: wavelet HH + GLCM dissimilarity + LBP
+    # Key metrics and targets:
+    #   1. wavelet_hh_ratio: target >0.85 (baseline: 0.787)
+    #   2. glcm_dissimilarity_ratio: target ~1.0 (baseline d=0.47)
+    #   3. lbp_code8_ratio: target ~1.0
+    # Without FFL, wavelet_hh_ratio should stay at baseline (~0.787)
     texture_quality:
       enabled: true
       log_every_n_epochs: 25

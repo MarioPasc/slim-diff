@@ -2,28 +2,36 @@
 # JS-DDPM XAI-Informed Proposal: Full Model (all improvements)
 # =============================================================================
 #
+# DIAGNOSTIC ANALYSIS (2026-01-25):
+#   Baseline: x0_lp_1.5 (severity=0.185, AUC=0.996)
+#   Primary artifact: 21% HF energy deficit (wavelet HH L1 = 0.787, target > 0.85)
+#   Secondary: Texture smoothness (GLCM dissimilarity d=0.47, homogeneity d=-0.30)
+#   Channel attribution: Image channel dominates (56% gradient, 10x ablation impact)
+#   Spectral concordance: -0.70 (classifier uses LF features correlated with HF deficit)
+#
 # XAI ABLATION STUDY:
-#   Baseline: x0_lp_1.5 (severity=0.025, but two residual deficits)
-#   Proposal: Baseline + FFL + self_cond 0.8 + eta 0.1  <--- THIS CONFIG
-#   Ablation A: Proposal - FFL (tests HF correction)
+#   Proposal: Baseline + FFL(alpha=1.35) + self_cond 0.8 + eta 0.1  <--- THIS CONFIG
+#   Ablation A: Proposal - FFL (tests HF correction hypothesis)
 #   Ablation B: Proposal - self_cond 0.8 (tests LF texture via self-conditioning)
 #   Ablation C: Proposal - eta 0.1 (tests LF texture via deterministic sampling)
 #
-# XAI EVIDENCE (from diagnostics):
-#   1. Spectral attribution concordance = -0.9: classifier uses LF, not HF
-#   2. Two-component artifact: (a) 32% HF deficit, (b) LF texture anomaly
-#   3. IG concentration 0.186 (x0) vs 0.10 (velocity): x0 has more localized
-#      attribution, suggesting specific fixable patterns
-#   4. Fisher separability 3.49 (x0) vs 341 (epsilon): x0 nearly indistinguishable
+# QUANTITATIVE EVIDENCE (from fresh diagnostics):
+#   1. Wavelet HH L1 ratio = 0.787 (21% deficit at finest scale) - PRIMARY TARGET
+#   2. Spectral band 4 (0.21-0.50 cycles/px) power ratio = 0.86 (14% deficit)
+#   3. Spectral attribution concordance = -0.70: classifier uses LF texture features
+#   4. GLCM dissimilarity d=0.47, homogeneity d=-0.30: over-smoothing signature
+#   5. Zero FP rate: no synthetic image fools the classifier
+#   6. Fisher separability: 121/128 features significant, silhouette=0.448
 #
 # CHANGES FROM x0_lp_1.5:
 #   [C1] loss.mode: mse_lp_norm -> mse_lp_norm_ffl_groups (HF correction)
-#   [C2] ffl: enabled with alpha=1.0, patch_factor=2, log_matrix=true
-#   [C3] group_uncertainty_weighting: enabled with initial_log_vars [0.0, 1.5]
-#        (conservative FFL start: exp(-1.5)=0.22 precision)
+#   [C2] ffl: enabled with alpha=1.35, patch_factor=1, log_matrix=true
+#        alpha=1.35 for focal HF emphasis; patch_factor=1 for full freq resolution
+#   [C3] group_uncertainty_weighting: enabled with initial_log_vars [0.0, 1.0]
+#        (moderate FFL start: exp(-1.0)=0.37 precision, stronger than 0.22)
 #   [C4] self_conditioning.probability: 0.5 -> 0.8 (LF texture refinement)
-#   [C5] sampler.eta: 0.2 -> 0.1 (reduced stochasticity, preserves diversity)
-#   [C6] lesion_weight: 1.0 -> 3.0 (stronger focus on small lesions)
+#   [C5] sampler.eta: 0.2 -> 0.1 (reduced stochasticity, preserves LF structure)
+#   [C6] lesion_weight: 1.0 -> 3.0 (lesion Wasserstein 3x higher than overall)
 #   [C7] devices: 1 -> 2 with batch=16 each (global batch=32 for stable FFT grads)
 #   [C8] max_epochs: 500 -> 1000 (FFL + high self-cond need longer convergence)
 #   [C9] patience: 25 -> 100 (dual-loss converges more slowly)
@@ -156,10 +164,15 @@ sampler:
   num_inference_steps: 500
 
   # [C5] Reduced stochasticity (eta 0.2 -> 0.1).
-  # XAI evidence: concordance=-0.9 shows LF texture anomalies dominate.
-  # Lower eta reduces stochastic noise injection during sampling, preserving
-  # the learned LF structure from the deterministic DDIM trajectory.
-  # eta=0.1 balances determinism with sample diversity (0.05 was too aggressive).
+  # Diagnostic evidence: concordance=-0.70 shows the classifier detects LF texture
+  # anomalies that correlate with HF deficit. Lower eta reduces stochastic noise
+  # injection during DDIM sampling, preserving the learned LF texture structure
+  # from the deterministic trajectory.
+  #
+  # DDIM: x_{t-1} = sqrt(alpha_{t-1}) * x0_pred + sqrt(1-alpha_{t-1}-sigma^2) * eps_pred + sigma * noise
+  # eta controls sigma: sigma = eta * sqrt((1-alpha_{t-1})/(1-alpha_t)) * sqrt(1-alpha_t/alpha_{t-1})
+  # eta=0.1 gives ~10% of the DDPM noise, preserving sample diversity while reducing
+  # texture degradation from stochastic noise.
   eta: 0.1
 
   guidance_scale: 1.0
@@ -179,10 +192,18 @@ training:
   strategy: "ddp"
 
   # [C4] Self-conditioning at 0.8 (up from 0.5).
-  # XAI evidence: spectral attribution concordance=-0.9 means the classifier
-  # detects LF texture anomalies, not HF deficit. High self-conditioning
-  # probability gives the model iterative access to its own x0 estimate,
-  # enabling LF texture refinement across denoising steps.
+  # Diagnostic evidence: spectral attribution concordance=-0.70 means the classifier
+  # detects LF texture anomalies that correlate with the HF deficit, rather than
+  # detecting HF deficit directly. High self-conditioning probability (0.8) gives
+  # the model iterative access to its own x0 estimate, enabling LF texture
+  # refinement across denoising steps.
+  #
+  # Mechanistically: at timestep t, the model sees its prediction from t+1,
+  # allowing it to refine texture consistency rather than regenerating from scratch.
+  # This is particularly important for subtle texture details (GLCM dissimilarity
+  # d=0.47, homogeneity d=-0.30).
+  #
+  # Reference: Chen et al. "Analog Bits" (2022)
   self_conditioning:
     enabled: true
     probability: 0.8
@@ -256,48 +277,64 @@ loss:
   #   Group 0: Lp norm image + Lp norm mask (spatial quality)
   #   Group 1: FFL (spectral quality)
   #
-  # Initial log_vars [0.0, 1.5] (conservative FFL start):
+  # Initial log_vars [0.0, 1.0] (moderate FFL start):
   #   Group 0 precision: exp(-0) = 1.0 (full weight)
-  #   Group 1 precision: exp(-1.5) = 0.22 (low initial weight)
-  #   This ensures the model first learns spatial structure with Lp,
-  #   then the learned sigma_2 decreases to bring FFL online.
-  # NOTE: [0.0, 1.0] was too aggressive; [0.0, 1.5] is more conservative.
+  #   Group 1 precision: exp(-1.0) = 0.37 (moderate initial weight)
+  #
+  # Justification for [0.0, 1.0] vs [0.0, 1.5]:
+  #   The diagnostic analysis shows the HF deficit (wavelet HH L1 = 0.787) is
+  #   the PRIMARY artifact causing near-perfect classification (AUC=0.996).
+  #   A 21% energy deficit requires meaningful FFL contribution from early training.
+  #   exp(-1.0) = 0.37 gives FFL 37% effective weight, vs only 22% with exp(-1.5).
+  #   The learnable log_vars will adjust this balance during training.
+  #
+  # Reference: Kendall et al. "Multi-Task Learning Using Uncertainty" (CVPR 2018)
   group_uncertainty_weighting:
     enabled: true
-    initial_log_vars: [0.0, 1.5]
+    initial_log_vars: [0.0, 1.0]
     learnable: true
     clamp_range: [-5.0, 5.0]
     intra_group_weights: [1.0, 1.0, 1.0]
 
   # [C2] Focal Frequency Loss.
   #
-  # Parameters chosen conservatively for a first ablation:
+  # Parameters tuned based on diagnostic analysis (2026-01-25):
   #
-  # alpha=1.0: Linear focal weighting.
-  #   Proportional emphasis on hard frequencies. Avoids the 39x HF excess
-  #   seen in epsilon experiments (which had aggressive optimization).
+  # alpha=1.35: Moderately focal weighting.
+  #   Wavelet HH L1 ratio = 0.787 indicates 21% HF deficit at finest scale.
+  #   alpha > 1 gives superlinear emphasis to hard-to-synthesize frequencies.
+  #   1.35 is aggressive enough to address the deficit without the 39x HF excess
+  #   seen in epsilon experiments (which used epsilon prediction, not x0).
+  #   Reference: Jiang et al. ICCV 2021 recommend alpha in [1.0, 2.0].
   #
-  # patch_factor=2: 4 patches of 80x80 from 160x160.
-  #   Provides local frequency analysis while maintaining sufficient
-  #   frequency resolution (80 bins from DC to Nyquist).
-  #   More stable than patch_factor=4 (which gives only 40 bins).
+  # patch_factor=1: No patching (full 160x160 FFT).
+  #   The HF deficit is at the finest wavelet scale (L1: 40-80 px wavelength).
+  #   Full-image FFT provides maximum frequency resolution (80 bins to Nyquist).
+  #   Patching would reduce resolution: patch_factor=2 gives only 40 bins,
+  #   potentially missing the critical 0.21-0.50 cycles/px band where ratio=0.86.
   #
   # log_matrix=true: Numerical stability.
-  #   MRI frequency content spans 4+ orders of magnitude.
+  #   MRI frequency content spans 4+ orders of magnitude (10^7 at DC to 10^1 at HF).
   #   log(1+x) normalizes the weight matrix to prevent DC dominance.
   ffl:
     enabled: true
     loss_weight: 1.0
-    alpha: 1.0
-    patch_factor: 2
+    alpha: 1.35
+    patch_factor: 1
     ave_spectrum: false
     log_matrix: true
     batch_matrix: false
 
   # [C6] Strong lesion weighting.
-  # 3.0x upweights small lesion regions that otherwise contribute little
-  # to the gradient due to their small pixel count. This ensures the model
-  # attends to lesion texture quality, not just background fidelity.
+  # Diagnostic evidence: Per-tissue Wasserstein distance analysis shows
+  # lesion regions have 3x higher distribution mismatch than overall:
+  #   - Lesion Wasserstein: 0.062
+  #   - Overall Wasserstein: 0.022
+  #   - Ratio: 2.8x
+  #
+  # 3.0x upweighting ensures the model attends to lesion texture quality,
+  # compensating for the small pixel count of lesion regions (~0.8% of image).
+  # Without upweighting, lesion errors contribute minimally to the gradient.
   lesion_weighted_image:
     enabled: true
     lesion_weight: 3.0
@@ -339,8 +376,8 @@ logging:
       project: "jsddpm-epilepsy"
       entity: "mario-pg02-icai-org"
       name: "xai_proposal_full"
-      tags: ["epilepsy", "diffusion", "jsddpm", "xai_ablation", "x0", "ffl", "lp_1.5", "self_cond_0.8", "eta_0.05"]
-      notes: "XAI-informed proposal: x0_lp_1.5 + FFL + self_cond 0.8 + eta 0.05 (all improvements)"
+      tags: ["epilepsy", "diffusion", "jsddpm", "xai_ablation", "x0", "ffl_alpha1.35", "lp_1.5", "self_cond_0.8", "eta_0.1"]
+      notes: "XAI-informed proposal: x0_lp_1.5 + FFL(alpha=1.35,pf=1) + self_cond 0.8 + eta 0.1. Target: wavelet HH L1 0.787->0.85+"
       offline: true
 
   checkpointing:
@@ -367,16 +404,23 @@ logging:
       n_samples: 100
       timestep_bins: 10
 
-    # [C12] Texture quality tracking: LBP code 8 + wavelet HH
-    # Monitors the two-component artifact markers identified by XAI analysis:
-    # - LBP code 8 ratio (Component B: LF texture anomaly, target: 1.0)
-    # - Wavelet HH L1 ratio (Component A: HF deficit, target: >0.85)
+    # [C12] Texture quality tracking: wavelet HH + GLCM dissimilarity + LBP
+    # Monitors the artifact markers identified by XAI analysis (2026-01-25):
+    #
+    # Key metrics and targets:
+    #   1. wavelet_hh_ratio: synth/real HH L1 energy (target: >0.85, baseline: 0.787)
+    #      Addresses 21% HF deficit - PRIMARY ARTIFACT
+    #   2. glcm_dissimilarity_ratio: synth/real (target: ~1.0, baseline d=0.47)
+    #      Addresses over-smoothing - texture variation deficit
+    #   3. lbp_code8_ratio: synth/real (target: ~1.0)
+    #      Addresses LF texture anomaly
+    #
     # Only runs on rank 0 in DDP to avoid duplicate computation.
-    # Uses fast generation (50 steps vs 500) for reasonable callback runtime (~1-2 min).
+    # Uses fast generation (50 steps vs 500) for reasonable callback runtime (~2-3 min).
     texture_quality:
       enabled: true
       log_every_n_epochs: 25
-      n_samples: 32               # Small sample for fast callback (was 200)
+      n_samples: 32               # Small sample for fast callback
       lbp_radius: 1
       lbp_n_points: 8
       wavelet: "db4"
