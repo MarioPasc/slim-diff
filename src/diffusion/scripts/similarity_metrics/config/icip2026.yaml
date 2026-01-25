@@ -1,0 +1,169 @@
+# ICIP 2026 Similarity Metrics Configuration
+#
+# Default configuration for computing KID, FID, and LPIPS metrics
+# across the 9 ablation study experiments.
+#
+# Usage:
+#   jsddpm-similarity-metrics compute-all --config config/icip2026.yaml
+#
+# CLI arguments override these settings.
+
+# =============================================================================
+# Path Configuration
+# =============================================================================
+paths:
+  # Directory containing experiment folders (e.g., x0_lp_1.5/, epsilon_lp_2.0/)
+  # Each experiment should have a 'replicas/' subdirectory with replica_XXX.npz files
+  runs_dir: /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs
+
+  # Directory containing cached slices with train.csv, val.csv, test.csv
+  cache_dir: /media/mpascual/Sandisk2TB/research/epilepsy/data/slice_cache
+
+  # Output directory for results (CSVs, plots, reports)
+  output_dir: /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/similarity_metrics
+
+# =============================================================================
+# Experiment Configuration
+# =============================================================================
+experiments:
+  # Pattern to match experiment directories
+  # Format: {prediction_type}_lp_{norm}
+  pattern: "*_lp_*"
+
+  # Prediction types to include (auto-discovered if not specified)
+  prediction_types:
+    - epsilon
+    - velocity
+    - x0
+
+  # Lp norm values (auto-discovered if not specified)
+  lp_norms:
+    - 1.5
+    - 2.0
+    - 2.5
+
+  # Number of replicas per experiment
+  n_replicas: 5
+
+  # Valid z-bins to include (default: 0-29)
+  valid_zbins: null  # null = use all 30 bins
+
+# =============================================================================
+# Metric Configuration
+# =============================================================================
+metrics:
+  kid:
+    enabled: true
+    # Subset size for KID computation (smaller = faster, less stable)
+    subset_size: 1000
+    # Number of subsets for KID statistics
+    num_subsets: 100
+    # Polynomial kernel degree
+    degree: 3
+    # Compute per-zbin KID (uses merged replicas)
+    per_zbin: true
+    # Smaller subset size for per-zbin (fewer samples per bin)
+    per_zbin_subset_size: 250
+    per_zbin_num_subsets: 50
+
+  fid:
+    enabled: true
+    # FID only computed globally (not per-zbin) due to sample size requirements
+    per_zbin: false
+
+  lpips:
+    enabled: true
+    # Network backbone: "vgg" (default) or "alex"
+    net: vgg
+    # Number of random pairs for LPIPS computation
+    n_pairs: 1000
+    # Compute per-zbin LPIPS
+    per_zbin: true
+    # Pairs per z-bin (fewer available samples per bin)
+    n_pairs_per_zbin: 100
+
+# =============================================================================
+# Compute Configuration
+# =============================================================================
+compute:
+  # CUDA device (use "cpu" for CPU-only computation)
+  device: "cuda:0"
+
+  # Batch size for feature extraction
+  # Reduce if running out of GPU memory
+  batch_size: 32
+
+  # Number of replicas to merge for per-zbin computation
+  # 5 = merge all replicas for maximum stability
+  merge_replicas_for_zbin: 5
+
+  # Random seed for reproducibility
+  seed: 42
+
+# =============================================================================
+# Statistical Analysis Configuration
+# =============================================================================
+statistics:
+  # Significance level for hypothesis tests
+  alpha: 0.05
+
+  # Multiple comparison correction method
+  # Options: "fdr_bh" (Benjamini-Hochberg), "bonferroni", "holm"
+  correction_method: fdr_bh
+
+  # Tests to run
+  tests:
+    # Within-group: Compare Lp norms within each prediction type
+    within_group:
+      enabled: true
+      test: friedman  # Non-parametric repeated measures
+      posthoc: nemenyi
+
+    # Between-group: Compare prediction types
+    between_group:
+      enabled: true
+      test: kruskal_wallis  # Non-parametric one-way ANOVA
+      posthoc: dunn
+
+# =============================================================================
+# Plotting Configuration
+# =============================================================================
+plotting:
+  # Output formats for figures
+  formats:
+    - png
+    - pdf
+
+  # DPI for raster formats
+  dpi: 300
+
+  # Figure sizes (width, height in inches)
+  figsize_zbin: [14, 8]
+  figsize_global: [12, 6]
+
+  # Color scheme for prediction types
+  colors:
+    epsilon: "#E74C3C"  # Red
+    velocity: "#27AE60"  # Green
+    x0: "#3498DB"       # Blue
+
+  # Line styles for Lp norms
+  linestyles:
+    1.5: "-"    # Solid
+    2.0: "--"   # Dashed
+    2.5: ":"    # Dotted
+
+  # Alpha values for Lp norms (transparency gradient)
+  alphas:
+    1.5: 1.0
+    2.0: 0.75
+    2.5: 0.5
+
+  # Show error bands on per-zbin plots
+  show_error_bands: true
+
+  # Show significance brackets on global plots
+  show_significance: true
+
+  # Highlight best configuration
+  highlight_best: true

@@ -44,6 +44,10 @@ dev = [
     "ruff>=0.1.0",
 ]
 wandb = ["wandb>=0.15.0"]
+similarity = [
+    "lpips>=0.1.4",
+    "scikit-posthocs>=0.7.0",
+]
 
 [project.scripts]
 jsddpm-train = "src.diffusion.training.runners.train:main"
@@ -54,6 +58,7 @@ jsddpm-evaluate = "src.diffusion.model_comparison.runner:main"
 jsddpm-classification-task = "src.classification.__main__:main"
 jsddpm-diagnostics = "src.classification.diagnostics.cli:main"
 jsddpm-segmentation-kfold = "src.segmentation.cli.kfold_segmentation:main"
+jsddpm-similarity-metrics = "src.diffusion.scripts.similarity_metrics.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
