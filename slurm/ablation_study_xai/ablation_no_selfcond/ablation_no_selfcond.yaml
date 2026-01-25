@@ -4,10 +4,10 @@
 #
 # XAI ABLATION STUDY:
 #   Baseline: x0_lp_1.5 (severity=0.025)
-#   Proposal: Baseline + FFL + self_cond 0.8 + eta 0.05
+#   Proposal: Baseline + FFL + self_cond 0.8 + eta 0.1
 #   Ablation A: Proposal - FFL
 #   >>> Ablation B: Proposal - self_cond 0.8  <--- THIS CONFIG
-#   Ablation C: Proposal - eta 0.05
+#   Ablation C: Proposal - eta 0.1
 #
 # WHAT THIS TESTS:
 #   Does high self-conditioning (0.8) fix the LF texture anomaly?
@@ -19,11 +19,11 @@
 # CHANGES FROM PROPOSAL:
 #   [REVERTED] self_conditioning.probability: 0.8 -> 0.5 (back to baseline)
 #   [KEPT] loss.mode: mse_lp_norm_ffl_groups (FFL active)
-#   [KEPT] ffl: enabled
-#   [KEPT] group_uncertainty_weighting: enabled
-#   [KEPT] sampler.eta: 0.05
-#   [KEPT] ema.decay: 0.9995
-#   [KEPT] batch_size: 16, dropout: 0.05, max_epochs: 1000, patience: 100
+#   [KEPT] ffl: enabled with group_uncertainty [0.0, 1.5]
+#   [KEPT] sampler.eta: 0.1
+#   [KEPT] devices: 2 (global batch 32)
+#   [KEPT] lesion_weight: 3.0
+#   [KEPT] ema.decay: 0.9995, dropout: 0.05, max_epochs: 1000, patience: 100
 
 
 # =============================================================================
@@ -134,8 +134,8 @@ sampler:
   type: "DDIM"
   num_inference_steps: 500
 
-  # [KEPT] Near-deterministic sampling (from proposal)
-  eta: 0.05
+  # [KEPT] Reduced stochasticity (from proposal)
+  eta: 0.1
 
   guidance_scale: 1.0
 
@@ -148,8 +148,8 @@ training:
   pin_memory: true
 
   accelerator: "gpu"
-  devices: 1
-  strategy: "auto"
+  devices: 2
+  strategy: "ddp"
 
   # [REVERTED] Self-conditioning back to baseline probability (0.5)
   # This tests whether the high self-conditioning (0.8) is responsible
@@ -214,7 +214,7 @@ loss:
 
   group_uncertainty_weighting:
     enabled: true
-    initial_log_vars: [0.0, 1.0]
+    initial_log_vars: [0.0, 1.5]
     learnable: true
     clamp_range: [-5.0, 5.0]
     intra_group_weights: [1.0, 1.0, 1.0]
@@ -230,12 +230,12 @@ loss:
 
   lesion_weighted_image:
     enabled: true
-    lesion_weight: 1.5
+    lesion_weight: 3.0
     background_weight: 1.0
 
   lesion_weighted_mask:
     enabled: true
-    lesion_weight: 1.5
+    lesion_weight: 3.0
     background_weight: 1.0
 
 # =============================================================================
@@ -243,7 +243,7 @@ loss:
 # =============================================================================
 postprocessing:
   zbin_priors:
-    enabled: true
+    enabled: false
     priors_filename: "zbin_priors_brain_roi.npz"
     prob_threshold: 0.20
     dilate_radius_px: 1
@@ -269,7 +269,7 @@ logging:
       project: "jsddpm-epilepsy"
       entity: "mario-pg02-icai-org"
       name: "xai_ablation_no_selfcond"
-      tags: ["epilepsy", "diffusion", "jsddpm", "xai_ablation", "x0", "ffl", "lp_1.5", "self_cond_0.5", "eta_0.05"]
+      tags: ["epilepsy", "diffusion", "jsddpm", "xai_ablation", "x0", "ffl", "lp_1.5", "self_cond_0.5", "eta_0.1"]
       notes: "XAI ablation B: proposal with self_cond=0.5 (tests LF texture refinement via self-conditioning)"
       offline: true
 
@@ -296,6 +296,15 @@ logging:
       log_every_n_epochs: 5
       n_samples: 100
       timestep_bins: 10
+
+    texture_quality:
+      enabled: true
+      log_every_n_epochs: 25
+      n_samples: 200
+      lbp_radius: 1
+      lbp_n_points: 8
+      wavelet: "db4"
+      compute_full_texture: false
 
 # =============================================================================
 # Visualization Configuration

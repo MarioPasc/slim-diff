@@ -36,6 +36,9 @@ from src.diffusion.training.callbacks.epoch_callbacks import (
 from src.diffusion.training.callbacks.encoder_monitoring_callback import (
     build_encoder_monitoring_callback,
 )
+from src.diffusion.training.callbacks.texture_quality_callback import (
+    build_texture_quality_callback,
+)
 from src.diffusion.training.callbacks.step_callbacks import GradientNormCallback
 from src.diffusion.training.lit_modules import JSDDPMLightningModule
 from src.diffusion.utils.logging import setup_logger
@@ -149,6 +152,15 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
     encoder_callback = build_encoder_monitoring_callback(cfg)
     if encoder_callback is not None:
         callbacks.append(encoder_callback)
+
+    # Texture quality tracking callback (XAI-informed: LBP code 8, wavelet HH)
+    texture_callback = build_texture_quality_callback(cfg)
+    if texture_callback is not None:
+        callbacks.append(texture_callback)
+        logger.info(
+            f"Texture quality callback enabled: "
+            f"every {cfg.logging.callbacks.texture_quality.log_every_n_epochs} epochs"
+        )
 
     return callbacks
 

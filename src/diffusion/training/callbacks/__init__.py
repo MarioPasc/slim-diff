@@ -6,10 +6,16 @@ from src.diffusion.training.callbacks.encoder_monitoring_callback import (
     AnatomicalEncoderMonitoringCallback,
     build_encoder_monitoring_callback,
 )
+from src.diffusion.training.callbacks.texture_quality_callback import (
+    TextureQualityCallback,
+    build_texture_quality_callback,
+)
 
 __all__ = [
     "VisualizationCallback",
     "CSVLoggingCallback",
     "AnatomicalEncoderMonitoringCallback",
     "build_encoder_monitoring_callback",
+    "TextureQualityCallback",
+    "build_texture_quality_callback",
 ]

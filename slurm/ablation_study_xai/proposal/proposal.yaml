@@ -4,10 +4,10 @@
 #
 # XAI ABLATION STUDY:
 #   Baseline: x0_lp_1.5 (severity=0.025, but two residual deficits)
-#   Proposal: Baseline + FFL + self_cond 0.8 + eta 0.05  <--- THIS CONFIG
+#   Proposal: Baseline + FFL + self_cond 0.8 + eta 0.1  <--- THIS CONFIG
 #   Ablation A: Proposal - FFL (tests HF correction)
 #   Ablation B: Proposal - self_cond 0.8 (tests LF texture via self-conditioning)
-#   Ablation C: Proposal - eta 0.05 (tests LF texture via deterministic sampling)
+#   Ablation C: Proposal - eta 0.1 (tests LF texture via deterministic sampling)
 #
 # XAI EVIDENCE (from diagnostics):
 #   1. Spectral attribution concordance = -0.9: classifier uses LF, not HF
@@ -19,15 +19,17 @@
 # CHANGES FROM x0_lp_1.5:
 #   [C1] loss.mode: mse_lp_norm -> mse_lp_norm_ffl_groups (HF correction)
 #   [C2] ffl: enabled with alpha=1.0, patch_factor=2, log_matrix=true
-#   [C3] group_uncertainty_weighting: enabled (auto-balances Lp vs FFL)
+#   [C3] group_uncertainty_weighting: enabled with initial_log_vars [0.0, 1.5]
+#        (conservative FFL start: exp(-1.5)=0.22 precision)
 #   [C4] self_conditioning.probability: 0.5 -> 0.8 (LF texture refinement)
-#   [C5] sampler.eta: 0.2 -> 0.05 (near-deterministic for LF preservation)
-#   [C6] lesion_weight: 1.0 -> 1.5 (moderate focus on lesion quality)
-#   [C7] batch_size: 16 -> 32 (more stable frequency-domain gradients)
+#   [C5] sampler.eta: 0.2 -> 0.1 (reduced stochasticity, preserves diversity)
+#   [C6] lesion_weight: 1.0 -> 3.0 (stronger focus on small lesions)
+#   [C7] devices: 1 -> 2 with batch=16 each (global batch=32 for stable FFT grads)
 #   [C8] max_epochs: 500 -> 1000 (FFL + high self-cond need longer convergence)
 #   [C9] patience: 25 -> 100 (dual-loss converges more slowly)
 #   [C10] dropout: 0.0 -> 0.05 (regularization for combined loss)
 #   [C11] ema.decay: 0.999 -> 0.9995 (smoother averaging with longer training)
+#   [C12] texture_quality callback: LBP code 8 + wavelet HH tracking every 25 epochs
 
 
 # =============================================================================
@@ -153,12 +155,12 @@ sampler:
   type: "DDIM"
   num_inference_steps: 500
 
-  # [C5] Near-deterministic sampling (eta 0.2 -> 0.05).
+  # [C5] Reduced stochasticity (eta 0.2 -> 0.1).
   # XAI evidence: concordance=-0.9 shows LF texture anomalies dominate.
-  # Low eta reduces stochastic noise injection during sampling, preserving
+  # Lower eta reduces stochastic noise injection during sampling, preserving
   # the learned LF structure from the deterministic DDIM trajectory.
-  # At eta=0, DDIM is fully deterministic; eta=0.05 adds minimal variation.
-  eta: 0.05
+  # eta=0.1 balances determinism with sample diversity (0.05 was too aggressive).
+  eta: 0.1
 
   guidance_scale: 1.0
 
@@ -166,13 +168,15 @@ sampler:
 # Training Configuration
 # =============================================================================
 training:
+  # [C7] Per-GPU batch size 16, with 2 GPUs -> global batch 32
+  # Larger effective batch stabilizes FFT-based FFL gradients
   batch_size: 16
   num_workers: 0
   pin_memory: true
 
   accelerator: "gpu"
-  devices: 1
-  strategy: "auto"
+  devices: 2
+  strategy: "ddp"
 
   # [C4] Self-conditioning at 0.8 (up from 0.5).
   # XAI evidence: spectral attribution concordance=-0.9 means the classifier
@@ -252,14 +256,15 @@ loss:
   #   Group 0: Lp norm image + Lp norm mask (spatial quality)
   #   Group 1: FFL (spectral quality)
   #
-  # Initial log_vars [0.0, 1.5]:
+  # Initial log_vars [0.0, 1.5] (conservative FFL start):
   #   Group 0 precision: exp(-0) = 1.0 (full weight)
   #   Group 1 precision: exp(-1.5) = 0.22 (low initial weight)
   #   This ensures the model first learns spatial structure with Lp,
   #   then the learned sigma_2 decreases to bring FFL online.
+  # NOTE: [0.0, 1.0] was too aggressive; [0.0, 1.5] is more conservative.
   group_uncertainty_weighting:
     enabled: true
-    initial_log_vars: [0.0, 1.0]
+    initial_log_vars: [0.0, 1.5]
     learnable: true
     clamp_range: [-5.0, 5.0]
     intra_group_weights: [1.0, 1.0, 1.0]
@@ -289,17 +294,18 @@ loss:
     log_matrix: true
     batch_matrix: false
 
-  # [C4] Moderate lesion weighting.
-  # 1.5x is conservative: enough to focus attention on lesion synthesis,
-  # not so aggressive as to distort the frequency-domain loss.
+  # [C6] Strong lesion weighting.
+  # 3.0x upweights small lesion regions that otherwise contribute little
+  # to the gradient due to their small pixel count. This ensures the model
+  # attends to lesion texture quality, not just background fidelity.
   lesion_weighted_image:
     enabled: true
-    lesion_weight: 1.5
+    lesion_weight: 3.0
     background_weight: 1.0
 
   lesion_weighted_mask:
     enabled: true
-    lesion_weight: 1.5
+    lesion_weight: 3.0
     background_weight: 1.0
 
 # =============================================================================
@@ -307,7 +313,7 @@ loss:
 # =============================================================================
 postprocessing:
   zbin_priors:
-    enabled: true
+    enabled: false
     priors_filename: "zbin_priors_brain_roi.npz"
     prob_threshold: 0.20
     dilate_radius_px: 1
@@ -360,6 +366,20 @@ logging:
       log_every_n_epochs: 5
       n_samples: 100
       timestep_bins: 10
+
+    # [C12] Texture quality tracking: LBP code 8 + wavelet HH
+    # Monitors the two-component artifact markers identified by XAI analysis:
+    # - LBP code 8 ratio (Component B: LF texture anomaly, target: 1.0)
+    # - Wavelet HH L1 ratio (Component A: HF deficit, target: >0.85)
+    # Only runs on rank 0 in DDP to avoid duplicate computation.
+    texture_quality:
+      enabled: true
+      log_every_n_epochs: 25
+      n_samples: 200
+      lbp_radius: 1
+      lbp_n_points: 8
+      wavelet: "db4"
+      compute_full_texture: false  # Only key markers for efficiency
 
 # =============================================================================
 # Visualization Configuration
