@@ -128,6 +128,7 @@ class TextureQualityCallback(Callback):
         lbp_n_points: int = 8,
         wavelet: str = "db4",
         compute_full_texture: bool = False,
+        run_on_first_epoch: bool = True,
     ) -> None:
         """Initialize the callback.
 
@@ -140,6 +141,8 @@ class TextureQualityCallback(Callback):
             wavelet: Wavelet name for DWT.
             compute_full_texture: If True, compute full GLCM/texture suite.
                                  If False, only compute key markers (faster).
+            run_on_first_epoch: If True, also run after epoch 1 to establish
+                               a worst-case baseline early in training.
         """
         super().__init__()
         self.cfg = cfg
@@ -149,6 +152,7 @@ class TextureQualityCallback(Callback):
         self.lbp_n_points = lbp_n_points
         self.wavelet = wavelet
         self.compute_full_texture = compute_full_texture
+        self.run_on_first_epoch = run_on_first_epoch
 
         # Output directory for CSV logs
         self.output_dir = Path(cfg.experiment.output_dir) / "texture_quality"
@@ -285,8 +289,12 @@ class TextureQualityCallback(Callback):
         """
         current_epoch = trainer.current_epoch
 
-        # Check frequency
-        if current_epoch % self.log_every_n_epochs != 0:
+        # Check frequency: run on regular interval OR on epoch 1 for baseline
+        should_run = (current_epoch % self.log_every_n_epochs == 0)
+        if self.run_on_first_epoch and current_epoch == 1:
+            should_run = True
+
+        if not should_run:
             return
 
         # Only run on rank 0 in DDP
@@ -453,4 +461,5 @@ def build_texture_quality_callback(cfg: DictConfig) -> TextureQualityCallback | 
         lbp_n_points=callback_cfg.get("lbp_n_points", 8),
         wavelet=callback_cfg.get("wavelet", "db4"),
         compute_full_texture=callback_cfg.get("compute_full_texture", False),
+        run_on_first_epoch=callback_cfg.get("run_on_first_epoch", True),
     )

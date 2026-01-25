@@ -380,6 +380,7 @@ logging:
       lbp_n_points: 8
       wavelet: "db4"
       compute_full_texture: false  # Only key markers for efficiency
+      run_on_first_epoch: true     # Establish worst-case baseline early
 
 # =============================================================================
 # Visualization Configuration

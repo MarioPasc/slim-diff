@@ -364,14 +364,37 @@ def train(cfg: DictConfig) -> None:
             if torch.cuda.device_count() > 1:
                 distributed = True
 
+    # Get num_replicas and rank for distributed sampling
+    # These must be determined before process group init for DDP dataloader creation
+    num_replicas = None
+    rank = None
+    if distributed:
+        import os
+        # Determine number of replicas from config
+        if isinstance(devices, int):
+            num_replicas = devices
+        elif isinstance(devices, list):
+            num_replicas = len(devices)
+        elif devices == "auto":
+            num_replicas = torch.cuda.device_count()
+        else:
+            num_replicas = 1
+
+        # Get rank from environment variable (set by DDP launcher)
+        rank = int(os.environ.get("LOCAL_RANK", 0))
+
     logger.info(
         f"Distributed training: {distributed}, "
-        f"strategy={strategy}, devices={devices}, accelerator={accelerator}"
+        f"strategy={strategy}, devices={devices}, accelerator={accelerator}, "
+        f"num_replicas={num_replicas}, rank={rank}"
     )
 
     # Create dataloaders with distributed flag
     logger.info("Creating dataloaders...")
-    train_loader = create_dataloader(cfg, split="train", distributed=distributed)
+    train_loader = create_dataloader(
+        cfg, split="train", distributed=distributed,
+        num_replicas=num_replicas, rank=rank
+    )
     val_loader = create_dataloader(cfg, split="val", shuffle=False, distributed=False)
 
     # Create model

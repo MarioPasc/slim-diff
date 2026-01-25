@@ -304,6 +304,7 @@ logging:
       lbp_n_points: 8
       wavelet: "db4"
       compute_full_texture: false
+      run_on_first_epoch: true
 
 # =============================================================================
 # Visualization Configuration

@@ -219,6 +219,8 @@ def get_weighted_sampler(
     mode: str = "balance",
     lesion_weight: float = 5.0,
     distributed: bool = False,
+    num_replicas: int | None = None,
+    rank: int | None = None,
 ) -> WeightedRandomSampler | DistributedWeightedRandomSampler:
     """Create a weighted random sampler for class balancing.
 
@@ -230,6 +232,10 @@ def get_weighted_sampler(
             - "weight": Use the provided lesion_weight as a fixed multiplier.
         lesion_weight: Weight multiplier for lesion slices (only used when mode="weight").
         distributed: Whether to use distributed sampling (DDP mode).
+        num_replicas: Number of distributed processes (required if distributed=True
+            and process group not yet initialized).
+        rank: Rank of current process (required if distributed=True and process
+            group not yet initialized).
 
     Returns:
         WeightedRandomSampler or DistributedWeightedRandomSampler for the dataloader.
@@ -277,12 +283,17 @@ def get_weighted_sampler(
     weights = weights / weights.sum() * len(weights)
 
     if distributed:
-        logger.info("Using DistributedWeightedRandomSampler for DDP training")
+        logger.info(
+            f"Using DistributedWeightedRandomSampler for DDP training "
+            f"(num_replicas={num_replicas}, rank={rank})"
+        )
         return DistributedWeightedRandomSampler(
             dataset=dataset,
             weights=weights,
             num_samples=len(weights),
             replacement=True,
+            num_replicas=num_replicas,
+            rank=rank,
         )
     else:
         return WeightedRandomSampler(
@@ -330,6 +341,8 @@ def create_dataloader(
     shuffle: bool | None = None,
     use_weighted_sampler: bool | None = None,
     distributed: bool = False,
+    num_replicas: int | None = None,
+    rank: int | None = None,
 ) -> torch.utils.data.DataLoader:
     """Create a dataloader for the specified split.
 
@@ -340,6 +353,10 @@ def create_dataloader(
         use_weighted_sampler: Whether to use lesion oversampling
             (default: from config for train, False otherwise).
         distributed: Whether running in DDP mode (enables distributed sampling).
+        num_replicas: Number of distributed processes (required for DDP before
+            process group initialization).
+        rank: Rank of current process (required for DDP before process group
+            initialization).
 
     Returns:
         Configured DataLoader instance.
@@ -369,11 +386,15 @@ def create_dataloader(
             mode=mode,
             lesion_weight=cfg.data.lesion_oversampling.weight,
             distributed=distributed,
+            num_replicas=num_replicas,
+            rank=rank,
         )
         shuffle = False  # Sampler handles randomization
     elif distributed and split == "train":
         # For training without weighted sampling in DDP mode
-        sampler = DistributedSampler(dataset, shuffle=True)
+        sampler = DistributedSampler(
+            dataset, shuffle=True, num_replicas=num_replicas, rank=rank
+        )
         shuffle = False
         logger.info("Using DistributedSampler for DDP training (no weighted sampling)")
 
