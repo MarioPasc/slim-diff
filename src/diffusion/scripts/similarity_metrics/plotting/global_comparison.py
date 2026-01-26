@@ -27,6 +27,7 @@ from .settings import (
     PREDICTION_TYPE_LABELS_SHORT,
     LP_NORM_LABELS,
     LP_NORM_HATCHES,
+    LP_NORM_MARKERS,
     apply_ieee_style,
     format_metric_label,
     get_significance_stars,
@@ -129,7 +130,7 @@ def plot_global_boxplots(
             )
 
     # Position calculations
-    group_spacing = 1.0
+    group_spacing = 1.5
     box_width = PLOT_SETTINGS.get("boxplot_width_factor", 0.25)
     box_whis = PLOT_SETTINGS.get("boxplot_whis", (5, 95))
     positions = []
@@ -200,12 +201,14 @@ def plot_global_boxplots(
 
     # Overlay individual points with jitter
     if show_points:
-        for pos, values, color in zip(positions, data_to_plot, colors):
+        for pos, values, color, lp_norm in zip(positions, data_to_plot, colors, lp_norms_for_boxes):
             jitter = np.random.uniform(-box_width * 0.3, box_width * 0.3, len(values))
+            marker = LP_NORM_MARKERS.get(lp_norm, "o")
             ax.scatter(
                 pos + jitter,
                 values,
                 c=color,
+                marker=marker,
                 s=PLOT_SETTINGS["marker_size"] ** 2,
                 alpha=0.8,
                 edgecolors="white",
@@ -222,7 +225,7 @@ def plot_global_boxplots(
 
         # Place star just above the box (Q3) - smaller offset
         y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
-        star_y = q3 + y_range * 0.03
+        star_y = q3 + y_range * 0.12
 
         ax.scatter(
             best_pos,
@@ -344,9 +347,9 @@ def _add_significance_brackets_boxplot(
     y_range = y_max - y_min
 
     # Starting y position and increment
-    bracket_y = y_max + y_range * 0.08
-    bracket_increment = y_range * 0.12
-    bracket_height = y_range * 0.015
+    bracket_y = y_max + y_range * 0.1
+    bracket_increment = y_range * 0.35
+    bracket_height = y_range * 0.02
 
     for span, idx1, idx2, comp_key, p_val in significant_comps:
         x1 = idx1 * group_spacing
@@ -376,7 +379,7 @@ def _add_significance_brackets_boxplot(
         # Place annotation above bracket
         ax.text(
             (x1 + x2) / 2,
-            bracket_y + bracket_height + y_range * 0.01,
+            bracket_y + bracket_height + y_range * 0.015,
             annotation,
             ha="center",
             va="bottom",

@@ -143,9 +143,10 @@ plotting:
   # Paul Tol colorblind-safe color scheme for prediction types
   # Reference: https://personal.sron.nl/~pault/
   colors:
-    epsilon: "#EE6677"  # Paul Tol Bright Red
-    velocity: "#228833"  # Paul Tol Bright Green
-    x0: "#4477AA"       # Paul Tol Bright Blue
+    epsilon: "#EE7733"  # Paul Tol Bright Red
+    velocity: "#009988"  # Paul Tol Bright Green
+    x0: "#0077BB"       # Paul Tol Bright Blue 
+    # '#EE7733', '#0077BB', '#33BBEE', '#EE3377', '#CC3311', '#009988', '#BBBBBB'
 
   # Line styles for Lp norms
   linestyles:
@@ -196,10 +197,10 @@ plotting:
     enabled: true
     step: 5        # Sample every Nth z-bin (~6 images for 30 bins)
     zoom: 0.18     # Zoom factor for images
-    x_offset: 0.06  # Horizontal offset (fraction) - adjust to align images
-    y_offset: 0.07 # Vertical offset above axis (fraction)
+    x_offset: 0.075  # Horizontal offset (fraction) - adjust to align images
+    y_offset: -0.35 # Vertical offset above axis (fraction)
 
-  # ICIP 2026 publication figure (2x2 layout)
+  # ICIP 2026 publication figure (2x2 layout for \begin{figure*})
   icip2026_figure:
     enabled: true
     # Metrics to include (kid, lpips - FID excluded as highly correlated with KID)
@@ -208,3 +209,9 @@ plotting:
       - lpips
     # Show per-subplot legends for Lp norms (if false, all in unified bottom legend)
     show_subplot_legends: false
+    # Show brain images above LPIPS plot (in addition to KID plot)
+    show_images_on_lpips: true
+    # Number of columns in unified legend (8 = single row for figure*)
+    legend_ncol: 8
+    # Aspect ratio (height/width) - 0.55 for wider than tall (figure*)
+    aspect_ratio: 0.55

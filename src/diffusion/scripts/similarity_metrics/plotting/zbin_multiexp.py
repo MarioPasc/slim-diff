@@ -177,14 +177,14 @@ def add_representative_images(
         ax.add_artist(ab)
 
         # Add z-bin label below image
-        ax.annotate(
-            f"z={zb}",
-            xy=(x_frac, 1.0 + image_y_offset - 0.015),
-            xycoords="axes fraction",
-            ha="center",
-            va="top",
-            fontsize=PLOT_SETTINGS["annotation_fontsize"],
-        )
+        #ax.annotate(
+        #    f"z={zb}",
+        #    xy=(x_frac, 1.0 + image_y_offset - 0.015),
+        #    xycoords="axes fraction",
+        #    ha="center",
+        #    va="top",
+        #    fontsize=PLOT_SETTINGS["annotation_fontsize"],
+        #)
 
 
 def plot_zbin_multiexperiment(

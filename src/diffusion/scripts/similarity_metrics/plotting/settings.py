@@ -43,14 +43,27 @@ PAUL_TOL_MUTED = [
     "#AA4499",  # purple
 ]
 
+PAU_TOL_TENSORBOARD = {
+    "orange": '#EE7733',
+    "blue": '#0077BB',
+    "cyan": '#33BBEE',
+    "magenta": '#EE3377',
+    "red": '#CC3311',
+    "green": '#009988',
+    "wine": '#882255',
+    "grey": '#BBBBBB',
+}
+
+
+
 # =============================================================================
 # Prediction Type Visual Encoding
 # =============================================================================
 
 PREDICTION_TYPE_COLORS = {
-    "epsilon": PAUL_TOL_BRIGHT["red"],    # #EE6677
-    "velocity": PAUL_TOL_BRIGHT["green"],  # #228833
-    "x0": PAUL_TOL_BRIGHT["blue"],         # #4477AA
+    "epsilon": PAU_TOL_TENSORBOARD["orange"],    # #EE7733
+    "velocity": PAU_TOL_TENSORBOARD["green"],  # #009988
+    "x0": PAU_TOL_TENSORBOARD["wine"],         # #882255
 }
 
 # LaTeX-formatted labels for prediction types
@@ -104,36 +117,41 @@ LP_NORM_LABELS = {
 }
 
 # =============================================================================
-# IEEE Column Width Specifications
+# IEEE ICIP Column Width Specifications
+# From template: "Columns are to be 3.39 inches (86 mm) wide, with a 0.24 inch
+# (6 mm) space between them." Print area: 7 inches wide by 9 inches high.
 # =============================================================================
 
-IEEE_COLUMN_WIDTH_INCHES = 3.5   # Single column
-IEEE_TEXT_WIDTH_INCHES = 7.16   # Full width (2 columns)
+IEEE_COLUMN_WIDTH_INCHES = 3.39   # Single column (86 mm)
+IEEE_COLUMN_GAP_INCHES = 0.24     # Gap between columns (6 mm)
+IEEE_TEXT_WIDTH_INCHES = 7.0      # Full print area width (178 mm)
+IEEE_TEXT_HEIGHT_INCHES = 9.0     # Full print area height (229 mm)
 
 # =============================================================================
 # Main Plot Settings Dictionary
 # =============================================================================
 
 PLOT_SETTINGS = {
-    # Figure dimensions (IEEE compliant)
-    "figure_width_single": IEEE_COLUMN_WIDTH_INCHES,
-    "figure_width_double": IEEE_TEXT_WIDTH_INCHES,
-    "figure_height_ratio": 0.75,  # Height = width * ratio
+    # Figure dimensions (IEEE ICIP compliant)
+    "figure_width_single": IEEE_COLUMN_WIDTH_INCHES,  # 3.39 inches
+    "figure_width_double": IEEE_TEXT_WIDTH_INCHES,    # 7.0 inches
+    "figure_height_max": IEEE_TEXT_HEIGHT_INCHES,     # 9.0 inches (max)
+    "figure_height_ratio": 0.75,  # Height = width * ratio (for plots)
 
     # Fonts (IEEE requires Times or similar serif)
     "font_family": "serif",
     "font_serif": ["Times New Roman", "Times", "DejaVu Serif"],
     "mathtext_fontset": "stix",  # STIX for math (matches Times)
-    "text_usetex": False,  # Set True if LaTeX is installed
+    "text_usetex": True,  # Set True if LaTeX is installed
 
     # Font sizes (IEEE guidelines)
-    "font_size": 8,
-    "axes_labelsize": 9,
-    "axes_titlesize": 10,
-    "tick_labelsize": 8,
-    "legend_fontsize": 7,
-    "annotation_fontsize": 6,
-    "panel_label_fontsize": 10,
+    "font_size": 12,
+    "axes_labelsize": 13,
+    "axes_titlesize": 14,
+    "tick_labelsize": 12,
+    "legend_fontsize": 11,
+    "annotation_fontsize": 10,
+    "panel_label_fontsize": 12,
 
     # Line properties
     "line_width": 1.0,
@@ -195,8 +213,8 @@ PLOT_SETTINGS = {
 
     # Significance annotations
     "significance_bracket_linewidth": 0.8,
-    "significance_text_fontsize": 7,
-    "effect_size_fontsize": 6,
+    "significance_text_fontsize": 9,  # Stars (*, **, ***)
+    "effect_size_fontsize": 8,        # Cliff's delta (d=0.XX)
 }
 
 

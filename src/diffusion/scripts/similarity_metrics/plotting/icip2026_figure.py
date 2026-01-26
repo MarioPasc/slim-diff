@@ -44,6 +44,8 @@ def create_unified_legend(
     include_baseline: bool = True,
     include_lp_norms: bool = False,
     include_best: bool = False,
+    ncol: int | None = None,
+    bbox_y: float = -0.04,
 ) -> None:
     """Create unified legend below all subplots.
 
@@ -54,6 +56,8 @@ def create_unified_legend(
         include_baseline: Whether to include baseline in legend.
         include_lp_norms: Whether to include Lp norm line styles in legend.
         include_best: Whether to include best star marker in legend.
+        ncol: Number of columns for legend. If None, auto-determined.
+        bbox_y: Y position of legend bbox_to_anchor.
     """
     if prediction_types is None:
         prediction_types = ["epsilon", "velocity", "x0"]
@@ -113,12 +117,14 @@ def create_unified_legend(
         handles.append(star)
         labels.append("Best")
 
-    # Determine layout: 2 rows x 4 columns if many items, otherwise single row
+    # Determine layout
     n_items = len(handles)
-    if n_items > 5:
-        ncol = 4
-    else:
-        ncol = n_items
+    if ncol is None:
+        # Auto-determine: single row if fits, otherwise 4 columns
+        if n_items > 5:
+            ncol = 4
+        else:
+            ncol = n_items
 
     # Place legend below figure
     fig.legend(
@@ -128,7 +134,7 @@ def create_unified_legend(
         ncol=ncol,
         fontsize=PLOT_SETTINGS["legend_fontsize"],
         frameon=False,
-        bbox_to_anchor=(0.5, -0.02),
+        bbox_to_anchor=(0.5, bbox_y),
         columnspacing=PLOT_SETTINGS["legend_columnspacing"],
         handletextpad=PLOT_SETTINGS["legend_handletextpad"],
     )
@@ -242,23 +248,30 @@ def create_icip2026_figure(
     baseline_lpips_std: float | None = None,
     formats: list[str] = ["pdf", "png"],
     show_images: bool = True,
+    show_images_on_lpips: bool = False,
     image_x_offset: float | None = None,
     image_y_offset: float | None = None,
     show_subplot_legends: bool = True,
     show_effect_sizes: bool = False,
+    legend_ncol: int = 8,
+    aspect_ratio: float = 0.55,
 ) -> None:
     """Create the main 2x2 publication figure for ICIP 2026.
 
-    New Layout (columns = per-zbin, rows share y-axis):
+    Designed for LaTeX \\begin{figure*} environment (two-column, wider than tall).
+
+    Layout (columns = per-zbin, rows share y-axis):
         +--------------------------------------------------+
         |        Representative MRI Images (6 total)       |
         +--------------------------------------------------+
         | (A) Per-zbin KID        | (B) Global KID (sharey)|
         +-------------------------+------------------------+
+        |        (Optional MRI Images for LPIPS)           |
+        +--------------------------------------------------+
         | (C) Per-zbin LPIPS      | (D) Global LPIPS       |
         |     (sharex with A)     |     (sharey with C)    |
         +-------------------------+------------------------+
-        |   Unified Legend (prediction types + baseline)   |
+        |      Unified Legend (8-column, single row)       |
         +--------------------------------------------------+
 
     Args:
@@ -272,19 +285,22 @@ def create_icip2026_figure(
         baseline_lpips: Real baseline LPIPS value.
         baseline_lpips_std: Real baseline LPIPS std.
         formats: Output formats (pdf, png).
-        show_images: Whether to show representative MRI images.
+        show_images: Whether to show representative MRI images on KID plot.
+        show_images_on_lpips: Whether to also show images above LPIPS plot.
         image_x_offset: Horizontal offset for images (fraction).
         image_y_offset: Vertical offset for images (fraction).
         show_subplot_legends: Whether to show per-subplot legends (Lp norms).
             If False, all legend items are shown in unified bottom legend.
         show_effect_sizes: Whether to show effect sizes (Cliff's delta) on
             significance brackets.
+        legend_ncol: Number of columns for unified legend (default: 8 for figure*).
+        aspect_ratio: Height/width ratio (default: 0.55 for wider than tall).
     """
     apply_ieee_style()
 
-    # Figure dimensions (IEEE double column)
+    # Figure dimensions (IEEE double column, wider than tall for figure*)
     fig_width = PLOT_SETTINGS["figure_width_double"]
-    fig_height = fig_width * 0.9  # Slightly less tall with new layout
+    fig_height = fig_width * aspect_ratio
 
     fig = plt.figure(figsize=(fig_width, fig_height))
 
@@ -295,12 +311,12 @@ def create_icip2026_figure(
         ncols=2,
         width_ratios=[1.4, 1],  # Per-zbin wider
         height_ratios=[1, 1],
-        hspace=0.30,
+        hspace=0.35,
         wspace=0.08,  # Tight for shared y-axis
-        left=0.08,
-        right=0.95,
+        left=0.07,
+        right=0.96,
         top=0.88 if show_images else 0.95,
-        bottom=0.12,  # Space for legend
+        bottom=0.10,  # Space for legend
     )
 
     # Get z-bins for image positioning
@@ -420,6 +436,17 @@ def create_icip2026_figure(
     if show_subplot_legends:
         create_subplot_legend_lines(ax_lpips_zbin, lp_norms, loc="upper right")
 
+    # Add representative images above LPIPS panel (if enabled)
+    if show_images_on_lpips and test_csv is not None:
+        add_representative_images(
+            ax_lpips_zbin,
+            test_csv,
+            zbins,
+            image_step=PLOT_SETTINGS["image_step"],
+            image_x_offset=image_x_offset,
+            image_y_offset=image_y_offset,
+        )
+
     # Panel D: Global LPIPS boxplots (row 1, col 1) - shares y with C
     ax_lpips_global = fig.add_subplot(gs[1, 1], sharey=ax_lpips_zbin)
     if "lpips_global" in df_global.columns:
@@ -461,7 +488,7 @@ def create_icip2026_figure(
 
     # =========================================================================
     # Unified legend at bottom
-    # If subplot legends disabled, include all items (2 rows x 4 cols)
+    # Uses configurable ncol for figure* (default: 8 columns, single row)
     # =========================================================================
     create_unified_legend(
         fig,
@@ -470,6 +497,8 @@ def create_icip2026_figure(
         include_baseline=baseline_kid is not None or baseline_lpips is not None,
         include_lp_norms=not show_subplot_legends,  # Include if no subplot legends
         include_best=not show_subplot_legends,       # Include if no subplot legends
+        ncol=legend_ncol,
+        bbox_y=-0.1,
     )
 
     # Save
@@ -827,6 +856,12 @@ def generate_plots_from_config(
     # Generate ICIP 2026 publication figure (2x2 layout)
     if plot_config.get("icip2026_figure", {}).get("enabled", True) and df_zbin is not None:
         print("\n--- Generating ICIP 2026 publication figure ---")
+
+        # Extract ICIP figure-specific settings
+        show_images_on_lpips = icip_config.get("show_images_on_lpips", False)
+        legend_ncol = icip_config.get("legend_ncol", 8)
+        aspect_ratio = icip_config.get("aspect_ratio", 0.55)
+
         try:
             create_icip2026_figure(
                 df_global=df_global,
@@ -840,10 +875,13 @@ def generate_plots_from_config(
                 baseline_lpips_std=baseline_lpips_std,
                 formats=formats,
                 show_images=show_images and test_csv is not None,
+                show_images_on_lpips=show_images_on_lpips,
                 image_x_offset=image_x_offset,
                 image_y_offset=image_y_offset,
                 show_subplot_legends=show_subplot_legends,
                 show_effect_sizes=show_effect_sizes,
+                legend_ncol=legend_ncol,
+                aspect_ratio=aspect_ratio,
             )
             print("  Generated ICIP 2026 2x2 figure")
         except Exception as e:

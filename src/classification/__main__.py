@@ -6,6 +6,7 @@ Usage:
     python -m src.classification run --config <path> --experiment <name> [--input-mode joint] [--dithering] [--full-image]
     python -m src.classification run-all --config <path> [--dithering] [--full-image]
     python -m src.classification report --config <path>
+    python -m src.classification plot --patches-dir <path> [--output-dir <path>] [--publication]
 """
 
 from __future__ import annotations
@@ -74,6 +75,49 @@ def main() -> None:
     )
     p_diag.add_argument("--gpu", type=int, default=0, help="GPU device index")
 
+    # --- plot ---
+    p_plot = subparsers.add_parser(
+        "plot",
+        help="Generate analysis plots from extracted full images.",
+    )
+    p_plot.add_argument(
+        "--patches-dir",
+        type=str,
+        required=True,
+        help="Directory containing experiment subdirectories with patches.",
+    )
+    p_plot.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Output directory. Default: patches_dir/analysis",
+    )
+    p_plot.add_argument(
+        "--experiments",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Specific experiments to include. Default: all found.",
+    )
+    p_plot.add_argument(
+        "--publication",
+        action="store_true",
+        help="Generate publication-ready plots (IEEE style, Paul Tol colors).",
+    )
+    p_plot.add_argument(
+        "--n-zbins",
+        type=int,
+        default=6,
+        help="Number of representative z-bins (default: 6).",
+    )
+    p_plot.add_argument(
+        "--formats",
+        type=str,
+        nargs="+",
+        default=["pdf", "png"],
+        help="Output formats (default: pdf png).",
+    )
+
     args = parser.parse_args()
 
     if args.command == "extract":
@@ -94,6 +138,41 @@ def main() -> None:
     elif args.command == "diagnose":
         from src.classification.diagnostics.cli import run_from_args
         run_from_args(args)
+    elif args.command == "plot":
+        from pathlib import Path
+        import logging
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(levelname)s | %(name)s | %(message)s",
+        )
+
+        patches_dir = Path(args.patches_dir)
+        output_dir = Path(args.output_dir) if args.output_dir else patches_dir / "analysis"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        if args.publication:
+            # Publication-ready plots (IEEE style)
+            from src.classification.plotting.image_grid import plot_publication_image_grid
+
+            plot_publication_image_grid(
+                patches_dir=patches_dir,
+                output_path=output_dir / "image_grid_publication",
+                experiments=args.experiments,
+                n_zbins=args.n_zbins,
+                show_lesion=True,
+                formats=args.formats,
+            )
+        else:
+            # Standard analysis plots
+            from src.classification.data.dataset_analysis import run_dataset_analysis
+
+            run_dataset_analysis(
+                patches_dir=patches_dir,
+                output_dir=output_dir,
+                experiments=args.experiments,
+                dpi=150,
+            )
     else:
         parser.print_help()
         sys.exit(1)
