@@ -2,11 +2,70 @@
 # =========================
 # Configuration for the real vs. synthetic diagnostic analysis pipeline.
 
+# ---------------------------------------------------------------------------
+# Ablation Study Configuration
+# ---------------------------------------------------------------------------
+# Defines the multi-axis parameter space for experiment discovery and comparison.
+ablation:
+  axes:
+    self_cond_p:
+      values: [0.0, 0.5, 0.8]
+      display_format: "{:.1f}"
+      folder_format: "self_cond_p{value}"
+    prediction_type:
+      values: ["epsilon", "velocity", "x0"]
+      display_format: "{}"
+      folder_format: "{value}"
+    lp_norm:
+      values: [1.5, 2.0, 2.5]
+      display_format: "{:.1f}"
+      folder_format: "lp_{value}"
+
+  hierarchy: ["self_cond_p", "prediction_type_lp_norm"]
+  default_self_cond_p: 0.5
+
+# ---------------------------------------------------------------------------
+# Cross-Experiment Comparison Configuration
+# ---------------------------------------------------------------------------
+# Defines which comparisons to generate in aggregate reports.
+comparison:
+  analyses:
+    # Compare across prediction types (fix self_cond_p and lp_norm)
+    - name: "by_prediction_type"
+      varying_axis: "prediction_type"
+      fixed_axes: {}
+
+    # Compare across Lp norms (fix self_cond_p and prediction_type)
+    - name: "by_lp_norm"
+      varying_axis: "lp_norm"
+      fixed_axes: {}
+
+    # Compare across self-conditioning probabilities
+    - name: "by_self_cond_p"
+      varying_axis: "self_cond_p"
+      fixed_axes: {}
+
+    # Focused comparisons: x0 only, varying self_cond_p
+    - name: "x0_self_cond_sweep"
+      varying_axis: "self_cond_p"
+      fixed_axes:
+        prediction_type: "x0"
+
+    # Focused comparisons: x0_lp_1.5, varying self_cond_p
+    - name: "x0_lp1.5_self_cond_sweep"
+      varying_axis: "self_cond_p"
+      fixed_axes:
+        prediction_type: "x0"
+        lp_norm: 1.5
+
+# ---------------------------------------------------------------------------
+# Data Paths
+# ---------------------------------------------------------------------------
 data:
   patches_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/classification/patches"
   checkpoints_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/classification/checkpoints"
   classification_results_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/classification/results"
-  replicas_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs"
+  replicas_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/self_cond_ablation"
   real_cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
   full_image_replica_ids: [0, 1, 2, 3, 4]
 

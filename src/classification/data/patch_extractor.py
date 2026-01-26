@@ -17,6 +17,8 @@ import pandas as pd
 from omegaconf import DictConfig
 from tqdm import tqdm
 
+from src.shared.ablation import ExperimentCoordinate, ExperimentDiscoverer, AblationSpace
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,10 +70,17 @@ class PatchExtractor:
 
     Args:
         cfg: Master configuration (classification_task.yaml).
-        experiment_name: Name of the synthetic experiment to extract from.
+        experiment: Experiment to extract from. Can be:
+            - ExperimentCoordinate: Direct coordinate object
+            - str: Display name (e.g., "sc_0.5__x0_lp_1.5") or legacy name (e.g., "x0_lp_1.5")
+            - None: Extract only real patches
     """
 
-    def __init__(self, cfg: DictConfig, experiment_name: str | None = None) -> None:
+    def __init__(
+        self,
+        cfg: DictConfig,
+        experiment: ExperimentCoordinate | str | None = None,
+    ) -> None:
         self.cfg = cfg
         self.seed = cfg.experiment.seed
         self.patch_cfg = cfg.data.patch_extraction
@@ -82,8 +91,21 @@ class PatchExtractor:
         self.csv_files = cfg.data.real.csv_files
 
         # Synthetic data paths (per experiment)
-        self.experiment_name = experiment_name
-        self.synthetic_cfg = self._find_experiment_cfg(experiment_name) if experiment_name else None
+        self.experiment_coord = self._resolve_experiment(experiment)
+        self.experiment_name = self.experiment_coord.to_display_name() if self.experiment_coord else None
+
+        # Create discoverer for path resolution
+        self._discoverer: ExperimentDiscoverer | None = None
+        if self.experiment_coord is not None:
+            try:
+                space = AblationSpace.from_config(cfg)
+            except (KeyError, TypeError):
+                space = AblationSpace.default()
+            self._discoverer = ExperimentDiscoverer(
+                base_dir=Path(cfg.data.synthetic.results_base_dir),
+                space=space,
+                default_self_cond_p=cfg.get("ablation", {}).get("default_self_cond_p", 0.5),
+            )
 
         # Patch settings
         self.padding = self.patch_cfg.padding
@@ -91,12 +113,47 @@ class PatchExtractor:
         self.max_patch_size = self.patch_cfg.max_patch_size
         self.method = self.patch_cfg.method
 
-    def _find_experiment_cfg(self, name: str) -> DictConfig | None:
-        """Find experiment config by name."""
-        for exp in self.cfg.data.synthetic.experiments:
-            if exp.name == name:
-                return exp
-        raise ValueError(f"Experiment '{name}' not found in config.")
+    def _resolve_experiment(
+        self, experiment: ExperimentCoordinate | str | None
+    ) -> ExperimentCoordinate | None:
+        """Resolve experiment argument to ExperimentCoordinate.
+
+        Args:
+            experiment: ExperimentCoordinate, display name, legacy name, or None.
+
+        Returns:
+            ExperimentCoordinate or None.
+        """
+        if experiment is None:
+            return None
+
+        if isinstance(experiment, ExperimentCoordinate):
+            return experiment
+
+        # Try parsing as display name first (sc_0.5__x0_lp_1.5)
+        try:
+            return ExperimentCoordinate.from_display_name(experiment)
+        except ValueError:
+            pass
+
+        # Try parsing as legacy name (x0_lp_1.5)
+        default_sc = self.cfg.get("ablation", {}).get("default_self_cond_p", 0.5)
+        try:
+            return ExperimentCoordinate.from_legacy_name(experiment, default_self_cond_p=default_sc)
+        except ValueError as e:
+            raise ValueError(f"Cannot parse experiment: {experiment}") from e
+
+    def _get_replicas_dir(self) -> Path:
+        """Get the replicas directory for the current experiment."""
+        if self._discoverer is None or self.experiment_coord is None:
+            raise ValueError("No experiment configured")
+
+        replicas_subdir = self.cfg.data.synthetic.get("replicas_subdir", "replicas")
+        return self._discoverer.get_replicas_path(self.experiment_coord, replicas_subdir)
+
+    def _get_replica_ids(self) -> list[int]:
+        """Get replica IDs to process."""
+        return list(self.cfg.data.synthetic.get("replica_ids", [0, 1, 2, 3, 4]))
 
     def extract_all(self, output_dir: Path) -> ExtractionStats:
         """Extract patches from both real and synthetic datasets.
@@ -117,7 +174,7 @@ class PatchExtractor:
 
         synth_samples: list[dict] = []
         synth_bboxes: list[tuple[int, int, int, int]] = []
-        if self.synthetic_cfg is not None:
+        if self.experiment_coord is not None:
             logger.info(f"Scanning synthetic dataset ({self.experiment_name})...")
             synth_samples, synth_bboxes = self._scan_synthetic_dataset()
             logger.info(f"Found {len(synth_samples)} synthetic lesion samples")
@@ -242,15 +299,13 @@ class PatchExtractor:
         samples: list[dict] = []
         bboxes: list[tuple[int, int, int, int]] = []
 
-        if self.synthetic_cfg is None:
+        if self.experiment_coord is None:
             return samples, bboxes
 
-        results_base = Path(self.cfg.data.synthetic.results_base_dir)
-        replicas_dir = results_base / self.experiment_name / self.synthetic_cfg.replicas_subdir
+        replicas_dir = self._get_replicas_dir()
+        replica_ids = self._get_replica_ids()
 
-        for replica_id in tqdm(
-            list(self.synthetic_cfg.replica_ids), desc="Scanning replicas"
-        ):
+        for replica_id in tqdm(replica_ids, desc="Scanning replicas"):
             replica_path = replicas_dir / f"replica_{replica_id:03d}.npz"
             if not replica_path.exists():
                 logger.warning(f"Replica not found: {replica_path}")

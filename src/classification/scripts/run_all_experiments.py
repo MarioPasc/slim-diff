@@ -1,7 +1,7 @@
 """CLI script for running all experiments and generating reports.
 
 Usage:
-    python -m src.classification run-all --config <path> [--include-control]
+    python -m src.classification run-all --config <path> [--include-control] [--filter key=value ...]
     python -m src.classification report --config <path> [--format latex]
 """
 
@@ -38,8 +38,28 @@ from src.classification.evaluation.statistical_tests import (
 )
 from src.classification.scripts.run_experiment import run_experiment
 from src.classification.training.lit_module import ClassificationLightningModule
+from src.shared.ablation import ExperimentCoordinate, ExperimentDiscoverer, AblationSpace
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_filters(filter_args: list[str] | None) -> dict:
+    """Parse filter arguments like 'prediction_type=x0' into dict."""
+    if not filter_args:
+        return {}
+
+    filters = {}
+    for f in filter_args:
+        if "=" not in f:
+            raise ValueError(f"Invalid filter format: {f}. Expected 'key=value'.")
+        key, value = f.split("=", 1)
+        # Try to parse as number
+        try:
+            value = float(value)
+        except ValueError:
+            pass
+        filters[key] = value
+    return filters
 
 
 def run_all(args: argparse.Namespace) -> None:
@@ -53,7 +73,34 @@ def run_all(args: argparse.Namespace) -> None:
 
     cfg = OmegaConf.load(args.config)
     input_modes: list[str] = list(cfg.data.input_modes)
-    experiments = [exp.name for exp in cfg.data.synthetic.experiments]
+
+    # Discover experiments using ablation space
+    try:
+        space = AblationSpace.from_config(cfg)
+    except (KeyError, TypeError):
+        space = AblationSpace.default()
+
+    default_sc = cfg.get("ablation", {}).get("default_self_cond_p", 0.5)
+    discoverer = ExperimentDiscoverer(
+        base_dir=Path(cfg.data.synthetic.results_base_dir),
+        space=space,
+        default_self_cond_p=default_sc,
+    )
+
+    # Apply filters if provided
+    filters = _parse_filters(getattr(args, "filter", None))
+    if filters:
+        coordinates = discoverer.discover_matching(**filters)
+    else:
+        coordinates = discoverer.discover_all()
+
+    if not coordinates:
+        logger.warning("No experiments found to process.")
+        return
+
+    # Get display names for experiments
+    experiments = [coord.to_display_name() for coord in coordinates]
+    logger.info(f"Found {len(experiments)} experiments to process")
 
     use_dithering = getattr(args, "dithering", False)
     use_full_image = getattr(args, "full_image", False)
@@ -122,21 +169,47 @@ def generate_report(args: argparse.Namespace) -> None:
     summaries = [load_experiment_result_summary(f) for f in result_files]
     logger.info(f"Loaded {len(summaries)} experiment results")
 
-    # Generate table from summaries
+    # Get default self_cond_p from config
+    default_sc = cfg.get("ablation", {}).get("default_self_cond_p", 0.5)
+
+    # Generate table from summaries using ExperimentCoordinate for parsing
     rows = []
     for s in summaries:
-        parts = s["experiment_name"].split("_lp_")
-        pred_type = parts[0] if len(parts) == 2 else s["experiment_name"]
-        lp_value = parts[1] if len(parts) == 2 else ""
-        rows.append({
-            "Experiment": s["experiment_name"],
-            "Prediction": pred_type,
-            "Lp": lp_value,
-            "Mode": s["input_mode"],
-            "AUC (mean)": f"{s['mean_auc']:.3f}",
-            "AUC (std)": f"{s['std_auc']:.3f}",
-            "95% CI": f"[{s['pooled_ci_lower']:.3f}, {s['pooled_ci_upper']:.3f}]",
-        })
+        exp_name = s["experiment_name"]
+
+        # Parse experiment name using coordinate system
+        try:
+            coord = ExperimentCoordinate.from_display_name(exp_name)
+        except ValueError:
+            try:
+                coord = ExperimentCoordinate.from_legacy_name(exp_name, default_self_cond_p=default_sc)
+            except ValueError:
+                # Fall back to partial parsing
+                coord = None
+
+        if coord:
+            rows.append({
+                "Experiment": exp_name,
+                "prediction_type": coord.prediction_type,
+                "lp_norm": coord.lp_norm,
+                "self_cond_p": coord.self_cond_p,
+                "Mode": s["input_mode"],
+                "AUC (mean)": f"{s['mean_auc']:.3f}",
+                "AUC (std)": f"{s['std_auc']:.3f}",
+                "95% CI": f"[{s['pooled_ci_lower']:.3f}, {s['pooled_ci_upper']:.3f}]",
+            })
+        else:
+            # Fallback for unparseable experiment names
+            rows.append({
+                "Experiment": exp_name,
+                "prediction_type": exp_name,
+                "lp_norm": "",
+                "self_cond_p": "",
+                "Mode": s["input_mode"],
+                "AUC (mean)": f"{s['mean_auc']:.3f}",
+                "AUC (std)": f"{s['std_auc']:.3f}",
+                "95% CI": f"[{s['pooled_ci_lower']:.3f}, {s['pooled_ci_upper']:.3f}]",
+            })
 
     import pandas as pd
     df = pd.DataFrame(rows)

@@ -1,12 +1,21 @@
 """CLI entry point for the classification module.
 
 Usage:
-    python -m src.classification extract --config <path> [--experiment <name>] [--all]
+    python -m src.classification extract --config <path> [--experiment <name>] [--all] [--filter key=value ...]
     python -m src.classification extract-full --config <path> --experiment <name>
     python -m src.classification run --config <path> --experiment <name> [--input-mode joint] [--dithering] [--full-image]
-    python -m src.classification run-all --config <path> [--dithering] [--full-image]
+    python -m src.classification run-all --config <path> [--dithering] [--full-image] [--filter key=value ...]
     python -m src.classification report --config <path>
     python -m src.classification plot --patches-dir <path> [--output-dir <path>] [--publication]
+
+Experiment names can be specified as:
+    - Display name: sc_0.5__x0_lp_1.5 (full coordinate)
+    - Legacy name: x0_lp_1.5 (uses default self_cond_p from config)
+
+Filters allow selecting subsets of experiments:
+    --filter prediction_type=x0           # Only x0 prediction type
+    --filter self_cond_p=0.5              # Only self_cond_p=0.5
+    --filter prediction_type=x0 lp_norm=1.5  # Multiple filters (AND)
 """
 
 from __future__ import annotations
@@ -25,8 +34,10 @@ def main() -> None:
     # --- extract ---
     p_extract = subparsers.add_parser("extract", help="Extract lesion-centered patches.")
     p_extract.add_argument("--config", required=True, help="Path to classification_task.yaml")
-    p_extract.add_argument("--experiment", help="Single experiment name to extract")
-    p_extract.add_argument("--all", action="store_true", help="Extract for all experiments")
+    p_extract.add_argument("--experiment", help="Single experiment name (display or legacy format)")
+    p_extract.add_argument("--all", action="store_true", help="Extract for all discovered experiments")
+    p_extract.add_argument("--filter", nargs="*",
+                           help="Filter experiments: --filter prediction_type=x0 self_cond_p=0.5")
     p_extract.add_argument("--skip-analysis", action="store_true",
                            help="Skip generating dataset analysis plots")
 
@@ -55,6 +66,8 @@ def main() -> None:
     p_all = subparsers.add_parser("run-all", help="Run all experiments and input modes.")
     p_all.add_argument("--config", required=True, help="Path to classification_task.yaml")
     p_all.add_argument("--include-control", action="store_true", help="Run real-vs-real control")
+    p_all.add_argument("--filter", nargs="*",
+                       help="Filter experiments: --filter prediction_type=x0 self_cond_p=0.5")
     p_all.add_argument("--dithering", action="store_true",
                        help="Apply uniform dithering to synthetic data before classification")
     p_all.add_argument("--full-image", action="store_true",

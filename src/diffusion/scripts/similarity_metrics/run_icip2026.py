@@ -21,6 +21,7 @@ import torch
 from tqdm import tqdm
 
 from .data.loaders import ICIPExperimentLoader
+from src.shared.ablation import AblationSpace
 from .metrics.kid import KIDComputer, compute_per_zbin_kid
 from .metrics.fid import FIDComputer
 from .metrics.lpips import LPIPSComputer, compute_per_zbin_lpips
@@ -82,8 +83,8 @@ def run_full_pipeline(
     # Initialize experiment loader
     loader = ICIPExperimentLoader(runs_dir, cache_dir)
     print(f"\nDiscovered {len(loader.experiments)} experiments:")
-    for exp in loader.experiments:
-        print(f"  - {exp}")
+    for coord in loader.experiments:
+        print(f"  - {coord.to_display_name()}")
 
     # Print experiment summary
     summary_df = loader.get_experiment_summary()
@@ -110,13 +111,14 @@ def run_full_pipeline(
 
     global_results = []
 
-    for exp_name, pred_type, lp_norm in tqdm(
+    for coord in tqdm(
         list(loader.iter_experiments()),
         desc="Experiments",
     ):
+        exp_name = coord.to_display_name()
         print(f"\n--- {exp_name} ---")
 
-        replica_paths = loader.get_replica_paths(exp_name)
+        replica_paths = loader.get_replica_paths(coord)
         print(f"  Found {len(replica_paths)} replicas")
 
         for replica_path in replica_paths:
@@ -124,12 +126,13 @@ def run_full_pipeline(
             print(f"  Replica {replica_id}...", end=" ", flush=True)
 
             # Load replica
-            synth_images, synth_zbins = loader.load_replica(exp_name, replica_id)
+            synth_images, synth_zbins = loader.load_replica(coord, replica_id)
 
             result_row = {
                 "experiment": exp_name,
-                "prediction_type": pred_type,
-                "lp_norm": lp_norm,
+                "prediction_type": coord.prediction_type,
+                "lp_norm": coord.lp_norm,
+                "self_cond_p": coord.self_cond_p,
                 "replica_id": replica_id,
                 "n_real": len(real_images),
                 "n_synth": len(synth_images),
@@ -190,14 +193,15 @@ def run_full_pipeline(
         print("PHASE 4: Computing per-zbin metrics")
         print("=" * 70)
 
-        for exp_name, pred_type, lp_norm in tqdm(
+        for coord in tqdm(
             list(loader.iter_experiments()),
             desc="Per-zbin metrics",
         ):
+            exp_name = coord.to_display_name()
             print(f"\n--- {exp_name} ---")
 
             # Load and merge all replicas for this experiment
-            synth_images, synth_zbins, _ = loader.load_all_replicas(exp_name)
+            synth_images, synth_zbins, _ = loader.load_all_replicas(coord)
             print(f"  Merged {len(synth_images)} synthetic samples")
 
             # Per-zbin KID
@@ -215,8 +219,9 @@ def run_full_pipeline(
                 for row in kid_zbin_results:
                     row.update({
                         "experiment": exp_name,
-                        "prediction_type": pred_type,
-                        "lp_norm": lp_norm,
+                        "prediction_type": coord.prediction_type,
+                        "lp_norm": coord.lp_norm,
+                        "self_cond_p": coord.self_cond_p,
                         "kid_zbin": row.pop("kid"),
                         "kid_zbin_std": row.pop("kid_std"),
                     })

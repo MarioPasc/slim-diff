@@ -8,6 +8,42 @@ experiment:
   seed: 42
 
 # ---------------------------------------------------------------------------
+# Ablation Study Configuration
+# ---------------------------------------------------------------------------
+# Defines the multi-axis parameter space for experiment discovery.
+# Experiments are discovered automatically from hierarchical folder structure:
+#   {results_base_dir}/self_cond_p{X}/{pred_type}_lp_{Y}/replicas/
+ablation:
+  axes:
+    self_cond_p:
+      values: [0.0, 0.5, 0.8]
+      display_format: "{:.1f}"
+      folder_format: "self_cond_p{value}"
+    prediction_type:
+      values: ["epsilon", "velocity", "x0"]
+      display_format: "{}"
+      folder_format: "{value}"
+    lp_norm:
+      values: [1.5, 2.0, 2.5]
+      display_format: "{:.1f}"
+      folder_format: "lp_{value}"
+
+  # Folder hierarchy: outermost to innermost
+  hierarchy: ["self_cond_p", "prediction_type_lp_norm"]
+
+  # Default self_cond_p for legacy experiment names without it
+  default_self_cond_p: 0.5
+
+  # Filter which experiments to process (empty = all discovered experiments)
+  # Examples:
+  #   - {}  # All experiments
+  #   - prediction_type: x0
+  #   - self_cond_p: [0.5, 0.8]
+  #   - prediction_type: x0
+  #     lp_norm: 1.5
+  include: []
+
+# ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
 data:
@@ -18,37 +54,11 @@ data:
     slices_subdir: "slices"
 
   # Synthetic data
-  # Expected structure: {results_base_dir}/{experiment_name}/{replicas_subdir}/replica_NNN.npz
+  # Hierarchical structure: {results_base_dir}/self_cond_p{X}/{pred_type}_lp_{Y}/replicas/
   synthetic:
-    results_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs"
-    experiments:
-      - name: "epsilon_lp_1.5"
-        replicas_subdir: "replicas"
-        replica_ids: [0, 1, 2, 3, 4]
-      - name: "epsilon_lp_2.0"
-        replicas_subdir: "replicas"
-        replica_ids: [0, 1, 2, 3, 4]
-      - name: "epsilon_lp_2.5"
-        replicas_subdir: "replicas"
-        replica_ids: [0, 1, 2, 3, 4]
-      - name: "velocity_lp_1.5"
-        replicas_subdir: "replicas"
-        replica_ids: [0, 1, 2, 3, 4]
-      - name: "velocity_lp_2.0"
-        replicas_subdir: "replicas"
-        replica_ids: [0, 1, 2, 3, 4]
-      - name: "velocity_lp_2.5"
-        replicas_subdir: "replicas"
-        replica_ids: [0, 1, 2, 3, 4]
-      - name: "x0_lp_1.5"
-        replicas_subdir: "replicas"
-        replica_ids: [0, 1, 2, 3, 4]
-      - name: "x0_lp_2.0"
-        replicas_subdir: "replicas"
-        replica_ids: [0, 1, 2, 3, 4]
-      - name: "x0_lp_2.5"
-        replicas_subdir: "replicas"
-        replica_ids: [0, 1, 2, 3, 4]
+    results_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/self_cond_ablation"
+    replicas_subdir: "replicas"
+    replica_ids: [0, 1, 2, 3, 4]
 
   # Patch extraction settings
   patch_extraction:

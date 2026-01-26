@@ -1,6 +1,8 @@
 """Data loaders for ICIP 2026 ablation study experiments.
 
 Provides unified loading of real and synthetic data across multiple experiments.
+Supports both hierarchical (self_cond_p{X}/{pred}_lp_{Y}/) and legacy flat
+({pred}_lp_{Y}/) folder structures.
 """
 
 from __future__ import annotations
@@ -13,104 +15,150 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from src.shared.ablation import (
+    ExperimentCoordinate,
+    ExperimentDiscoverer,
+    AblationSpace,
+)
+
 
 class ICIPExperimentLoader:
     """Load data from ICIP 2026 ablation study structure.
 
-    Expected directory structure:
+    Supports both hierarchical and legacy flat folder structures:
+
+    Hierarchical (new):
+        runs_dir/
+        ├── self_cond_p0.0/
+        │   └── x0_lp_1.5/
+        │       └── replicas/
+        ├── self_cond_p0.5/
+        │   └── x0_lp_1.5/
+        │       └── replicas/
+        └── ...
+
+    Legacy flat (old):
         runs_dir/
         ├── epsilon_lp_1.5/
         │   └── replicas/
-        │       ├── replica_000.npz
-        │       └── ...
         ├── x0_lp_2.0/
         │   └── replicas/
-        │       └── ...
         └── ...
 
     Attributes:
         runs_dir: Path to the runs directory containing experiment folders.
         cache_dir: Path to the slice cache directory with train/val/test.csv.
-        experiments: List of discovered experiment names.
+        experiments: List of discovered ExperimentCoordinate objects.
         valid_zbins: List of valid z-bins (default: 0-29).
     """
-
-    # Pattern to match experiment names: {prediction_type}_lp_{norm}
-    EXPERIMENT_PATTERN = re.compile(r"^(epsilon|velocity|x0)_lp_([\d.]+)$")
 
     def __init__(
         self,
         runs_dir: Path,
         cache_dir: Path,
+        space: AblationSpace | None = None,
         valid_zbins: list[int] | None = None,
+        default_self_cond_p: float = 0.5,
     ):
         """Initialize the experiment loader.
 
         Args:
             runs_dir: Path to the runs directory containing experiment folders.
             cache_dir: Path to the slice cache directory with train/val/test.csv.
+            space: AblationSpace defining parameter values (uses default if None).
             valid_zbins: List of valid z-bins to include (default: 0-29).
+            default_self_cond_p: Default self_cond_p for legacy folder names.
         """
         self.runs_dir = Path(runs_dir)
         self.cache_dir = Path(cache_dir)
         self.valid_zbins = valid_zbins if valid_zbins is not None else list(range(30))
-        self.experiments = self._discover_experiments()
+        self.space = space or AblationSpace.default()
+        self.default_self_cond_p = default_self_cond_p
 
-    def _discover_experiments(self) -> list[str]:
-        """Discover all valid experiment directories.
-
-        Returns:
-            Sorted list of experiment names matching the expected pattern.
-        """
-        experiments = []
-        for d in self.runs_dir.iterdir():
-            if d.is_dir() and self.EXPERIMENT_PATTERN.match(d.name):
-                # Verify replicas directory exists
-                replicas_dir = d / "replicas"
-                if replicas_dir.exists():
-                    experiments.append(d.name)
-        return sorted(experiments)
+        # Discover experiments using the unified discoverer
+        self._discoverer = ExperimentDiscoverer(
+            base_dir=self.runs_dir,
+            space=self.space,
+            default_self_cond_p=default_self_cond_p,
+        )
+        self.experiments = self._discoverer.discover_all()
 
     @staticmethod
-    def parse_experiment_name(name: str) -> tuple[str, float]:
-        """Extract prediction_type and lp_norm from experiment name.
+    def parse_experiment_name(name: str, default_self_cond_p: float = 0.5) -> tuple[str, float, float]:
+        """Extract prediction_type, lp_norm, and self_cond_p from experiment name.
+
+        Supports both display format (sc_0.5__x0_lp_1.5) and legacy format (x0_lp_1.5).
 
         Args:
-            name: Experiment name (e.g., "x0_lp_1.5").
+            name: Experiment name.
+            default_self_cond_p: Default self_cond_p for legacy names.
 
         Returns:
-            Tuple of (prediction_type, lp_norm).
+            Tuple of (prediction_type, lp_norm, self_cond_p).
 
         Raises:
             ValueError: If name doesn't match expected pattern.
         """
-        match = ICIPExperimentLoader.EXPERIMENT_PATTERN.match(name)
-        if not match:
-            raise ValueError(f"Invalid experiment name: {name}")
-        return match.group(1), float(match.group(2))
+        # Try display format first
+        try:
+            coord = ExperimentCoordinate.from_display_name(name)
+            return coord.prediction_type, coord.lp_norm, coord.self_cond_p
+        except ValueError:
+            pass
 
-    def get_replica_paths(self, experiment: str) -> list[Path]:
+        # Try legacy format
+        try:
+            coord = ExperimentCoordinate.from_legacy_name(name, default_self_cond_p=default_self_cond_p)
+            return coord.prediction_type, coord.lp_norm, coord.self_cond_p
+        except ValueError as e:
+            raise ValueError(f"Invalid experiment name: {name}") from e
+
+    def get_experiment_path(self, experiment: ExperimentCoordinate | str) -> Path:
+        """Get the filesystem path for an experiment.
+
+        Args:
+            experiment: ExperimentCoordinate or display/legacy name.
+
+        Returns:
+            Absolute path to the experiment folder.
+        """
+        coord = self._resolve_coordinate(experiment)
+        return self._discoverer.get_experiment_path(coord)
+
+    def _resolve_coordinate(self, experiment: ExperimentCoordinate | str) -> ExperimentCoordinate:
+        """Resolve experiment argument to ExperimentCoordinate."""
+        if isinstance(experiment, ExperimentCoordinate):
+            return experiment
+
+        # Try display format, then legacy
+        try:
+            return ExperimentCoordinate.from_display_name(experiment)
+        except ValueError:
+            return ExperimentCoordinate.from_legacy_name(experiment, self.default_self_cond_p)
+
+    def get_replica_paths(self, experiment: ExperimentCoordinate | str) -> list[Path]:
         """Get sorted list of replica NPZ paths for an experiment.
 
         Args:
-            experiment: Experiment name.
+            experiment: ExperimentCoordinate or experiment name.
 
         Returns:
             List of Path objects for replica files.
         """
-        replicas_dir = self.runs_dir / experiment / "replicas"
+        exp_path = self.get_experiment_path(experiment)
+        replicas_dir = exp_path / "replicas"
         return sorted(replicas_dir.glob("replica_*.npz"))
 
     def load_replica(
         self,
-        experiment: str,
+        experiment: ExperimentCoordinate | str,
         replica_id: int,
         channel: str = "image",
     ) -> tuple[np.ndarray, np.ndarray]:
         """Load replica images and z-bins from NPZ file.
 
         Args:
-            experiment: Experiment name.
+            experiment: ExperimentCoordinate or experiment name.
             replica_id: Replica index (0-4).
             channel: Which channel to load ("image", "mask", or "joint").
 
@@ -118,7 +166,8 @@ class ICIPExperimentLoader:
             images: (N, H, W) or (N, 2, H, W) float32 array in [-1, 1].
             zbins: (N,) int32 array.
         """
-        replica_path = self.runs_dir / experiment / "replicas" / f"replica_{replica_id:03d}.npz"
+        exp_path = self.get_experiment_path(experiment)
+        replica_path = exp_path / "replicas" / f"replica_{replica_id:03d}.npz"
         if not replica_path.exists():
             raise FileNotFoundError(f"Replica not found: {replica_path}")
 
@@ -147,13 +196,13 @@ class ICIPExperimentLoader:
 
     def load_all_replicas(
         self,
-        experiment: str,
+        experiment: ExperimentCoordinate | str,
         channel: str = "image",
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Load and concatenate all replicas for an experiment.
 
         Args:
-            experiment: Experiment name.
+            experiment: ExperimentCoordinate or experiment name.
             channel: Which channel to load ("image", "mask", or "joint").
 
         Returns:
@@ -275,29 +324,29 @@ class ICIPExperimentLoader:
             np.array(zbins_list, dtype=np.int32),
         )
 
-    def iter_experiments(self) -> Iterator[tuple[str, str, float]]:
-        """Iterate over experiments with parsed metadata.
+    def iter_experiments(self) -> Iterator[ExperimentCoordinate]:
+        """Iterate over discovered experiments.
 
         Yields:
-            Tuples of (experiment_name, prediction_type, lp_norm).
+            ExperimentCoordinate objects for each discovered experiment.
         """
-        for exp in self.experiments:
-            pred_type, lp_norm = self.parse_experiment_name(exp)
-            yield exp, pred_type, lp_norm
+        yield from self.experiments
 
     def get_experiment_summary(self) -> pd.DataFrame:
         """Get summary DataFrame of all experiments.
 
         Returns:
-            DataFrame with columns: experiment, prediction_type, lp_norm, n_replicas.
+            DataFrame with columns: experiment, prediction_type, lp_norm,
+            self_cond_p, n_replicas.
         """
         rows = []
-        for exp, pred_type, lp_norm in self.iter_experiments():
-            n_replicas = len(self.get_replica_paths(exp))
+        for coord in self.experiments:
+            n_replicas = len(self.get_replica_paths(coord))
             rows.append({
-                "experiment": exp,
-                "prediction_type": pred_type,
-                "lp_norm": lp_norm,
+                "experiment": coord.to_display_name(),
+                "prediction_type": coord.prediction_type,
+                "lp_norm": coord.lp_norm,
+                "self_cond_p": coord.self_cond_p,
                 "n_replicas": n_replicas,
             })
         return pd.DataFrame(rows)

@@ -31,8 +31,12 @@ import pandas as pd
 from omegaconf import DictConfig
 
 from src.classification.diagnostics.utils import save_csv
+from src.shared.ablation import ExperimentCoordinate
 
 logger = logging.getLogger(__name__)
+
+# Default self_cond_p for legacy experiment names
+_DEFAULT_SELF_COND_P = 0.5
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -62,16 +66,45 @@ ANALYSIS_JSON_FILES = {
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _parse_experiment_name(name: str) -> dict[str, str]:
-    """Parse experiment name into prediction_type and lp_norm.
+def _parse_experiment_name(name: str, default_self_cond_p: float | None = None) -> dict[str, Any]:
+    """Parse experiment name into all ablation axes.
 
-    Expected format: '{prediction_type}_lp_{norm_value}'
-    E.g., 'epsilon_lp_1.5' -> {'prediction_type': 'epsilon', 'lp_norm': '1.5'}
+    Supports both new display format (sc_0.5__x0_lp_1.5) and legacy format (x0_lp_1.5).
+
+    Args:
+        name: Experiment name.
+        default_self_cond_p: Default self_cond_p for legacy names.
+
+    Returns:
+        Dict with keys: prediction_type, lp_norm, self_cond_p
     """
-    parts = name.split("_lp_")
-    if len(parts) == 2:
-        return {"prediction_type": parts[0], "lp_norm": parts[1]}
-    return {"prediction_type": name, "lp_norm": "unknown"}
+    if default_self_cond_p is None:
+        default_self_cond_p = _DEFAULT_SELF_COND_P
+
+    # Try new display format first (sc_0.5__x0_lp_1.5)
+    try:
+        coord = ExperimentCoordinate.from_display_name(name)
+        return {
+            "prediction_type": coord.prediction_type,
+            "lp_norm": coord.lp_norm,
+            "self_cond_p": coord.self_cond_p,
+        }
+    except ValueError:
+        pass
+
+    # Try legacy format (x0_lp_1.5)
+    try:
+        coord = ExperimentCoordinate.from_legacy_name(name, default_self_cond_p=default_self_cond_p)
+        return {
+            "prediction_type": coord.prediction_type,
+            "lp_norm": coord.lp_norm,
+            "self_cond_p": coord.self_cond_p,
+        }
+    except ValueError:
+        pass
+
+    # Fallback for unparseable names
+    return {"prediction_type": name, "lp_norm": "unknown", "self_cond_p": default_self_cond_p}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

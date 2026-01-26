@@ -22,16 +22,53 @@ from src.classification.diagnostics.utils import (
     save_figure,
     save_result_json,
 )
+from src.shared.ablation import ExperimentCoordinate
 
 logger = logging.getLogger(__name__)
 
+# Default self_cond_p for legacy experiment names
+_DEFAULT_SELF_COND_P = 0.5
 
-def _parse_experiment_name(name: str) -> dict[str, str]:
-    """Parse experiment into components."""
-    parts = name.split("_lp_")
-    if len(parts) == 2:
-        return {"prediction_type": parts[0], "lp_norm": parts[1]}
-    return {"prediction_type": name, "lp_norm": "unknown"}
+
+def _parse_experiment_name(name: str, default_self_cond_p: float | None = None) -> dict[str, Any]:
+    """Parse experiment into all ablation axes.
+
+    Supports both new display format (sc_0.5__x0_lp_1.5) and legacy format (x0_lp_1.5).
+
+    Args:
+        name: Experiment name.
+        default_self_cond_p: Default self_cond_p for legacy names.
+
+    Returns:
+        Dict with keys: prediction_type, lp_norm, self_cond_p
+    """
+    if default_self_cond_p is None:
+        default_self_cond_p = _DEFAULT_SELF_COND_P
+
+    # Try new display format first
+    try:
+        coord = ExperimentCoordinate.from_display_name(name)
+        return {
+            "prediction_type": coord.prediction_type,
+            "lp_norm": coord.lp_norm,
+            "self_cond_p": coord.self_cond_p,
+        }
+    except ValueError:
+        pass
+
+    # Try legacy format
+    try:
+        coord = ExperimentCoordinate.from_legacy_name(name, default_self_cond_p=default_self_cond_p)
+        return {
+            "prediction_type": coord.prediction_type,
+            "lp_norm": coord.lp_norm,
+            "self_cond_p": coord.self_cond_p,
+        }
+    except ValueError:
+        pass
+
+    # Fallback
+    return {"prediction_type": name, "lp_norm": "unknown", "self_cond_p": default_self_cond_p}
 
 
 def _load_diagnostic_report(output_dir: Path) -> pd.DataFrame | None:
@@ -43,11 +80,28 @@ def _load_diagnostic_report(output_dir: Path) -> pd.DataFrame | None:
     return pd.read_csv(report_path)
 
 
+def _differ_by_one_axis(meta_a: dict, meta_b: dict) -> str | None:
+    """Check if two experiments differ by exactly one axis.
+
+    Args:
+        meta_a: Parsed metadata for first experiment.
+        meta_b: Parsed metadata for second experiment.
+
+    Returns:
+        Name of the single differing axis, or None if 0 or >1 differ.
+    """
+    axes = ["prediction_type", "lp_norm", "self_cond_p"]
+    diff_axes = [ax for ax in axes if meta_a.get(ax) != meta_b.get(ax)]
+    return diff_axes[0] if len(diff_axes) == 1 else None
+
+
 def _compute_paired_deltas(
     df: pd.DataFrame,
     metric_cols: list[str],
 ) -> list[dict[str, Any]]:
     """Compute metric deltas for experiment pairs differing by one parameter.
+
+    Generalized to handle all 3 ablation axes (prediction_type, lp_norm, self_cond_p).
 
     Returns list of dicts describing each paired comparison.
     """
@@ -59,13 +113,10 @@ def _compute_paired_deltas(
         meta_b = _parse_experiment_name(exp_b)
 
         # Only compare pairs that differ by exactly one parameter
-        same_pred = meta_a["prediction_type"] == meta_b["prediction_type"]
-        same_norm = meta_a["lp_norm"] == meta_b["lp_norm"]
-
-        if not (same_pred ^ same_norm):  # XOR: exactly one must differ
+        varying_axis = _differ_by_one_axis(meta_a, meta_b)
+        if varying_axis is None:
             continue
 
-        varying_param = "lp_norm" if same_pred else "prediction_type"
         row_a = df[df["experiment"] == exp_a].iloc[0]
         row_b = df[df["experiment"] == exp_b].iloc[0]
 
@@ -76,14 +127,16 @@ def _compute_paired_deltas(
             if pd.notna(val_a) and pd.notna(val_b):
                 deltas[col] = float(val_b - val_a)
 
+        # Get fixed axes (all except the varying one)
+        fixed_axes = {k: v for k, v in meta_a.items() if k != varying_axis}
+
         pairs.append({
             "exp_a": exp_a,
             "exp_b": exp_b,
-            "varying_param": varying_param,
-            "value_a": meta_a[varying_param],
-            "value_b": meta_b[varying_param],
-            "fixed_param": "prediction_type" if varying_param == "lp_norm" else "lp_norm",
-            "fixed_value": meta_a["prediction_type"] if varying_param == "lp_norm" else meta_a["lp_norm"],
+            "varying_param": varying_axis,
+            "value_a": meta_a[varying_axis],
+            "value_b": meta_b[varying_axis],
+            "fixed_axes": fixed_axes,
             "severity_a": float(row_a.get("overall_artifact_severity", 0)),
             "severity_b": float(row_b.get("overall_artifact_severity", 0)),
             "deltas": deltas,

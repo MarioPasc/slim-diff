@@ -1,7 +1,7 @@
 # ICIP 2026 Similarity Metrics Configuration
 #
 # Default configuration for computing KID, FID, and LPIPS metrics
-# across the 9 ablation study experiments.
+# across the multi-axis ablation study experiments.
 #
 # Usage:
 #   jsddpm-similarity-metrics compute-all --config config/icip2026.yaml
@@ -9,12 +9,58 @@
 # CLI arguments override these settings.
 
 # =============================================================================
+# Ablation Study Configuration
+# =============================================================================
+# Defines the multi-axis parameter space for experiment discovery.
+# Experiments are discovered automatically from hierarchical folder structure:
+#   {runs_dir}/self_cond_p{X}/{pred_type}_lp_{Y}/replicas/
+ablation:
+  axes:
+    self_cond_p:
+      values: [0.0, 0.5, 0.8]
+      display_format: "{:.1f}"
+      folder_format: "self_cond_p{value}"
+    prediction_type:
+      values: ["epsilon", "velocity", "x0"]
+      display_format: "{}"
+      folder_format: "{value}"
+    lp_norm:
+      values: [1.5, 2.0, 2.5]
+      display_format: "{:.1f}"
+      folder_format: "lp_{value}"
+
+  hierarchy: ["self_cond_p", "prediction_type_lp_norm"]
+  default_self_cond_p: 0.5
+
+  # Filter experiments to process (empty = all discovered experiments)
+  include: []
+
+# =============================================================================
+# Cross-Experiment Comparison Configuration
+# =============================================================================
+comparison:
+  analyses:
+    - name: "by_prediction_type"
+      varying_axis: "prediction_type"
+      fixed_axes: {}
+    - name: "by_lp_norm"
+      varying_axis: "lp_norm"
+      fixed_axes: {}
+    - name: "by_self_cond_p"
+      varying_axis: "self_cond_p"
+      fixed_axes: {}
+    - name: "x0_self_cond_sweep"
+      varying_axis: "self_cond_p"
+      fixed_axes:
+        prediction_type: "x0"
+
+# =============================================================================
 # Path Configuration
 # =============================================================================
 paths:
-  # Directory containing experiment folders (e.g., x0_lp_1.5/, epsilon_lp_2.0/)
-  # Each experiment should have a 'replicas/' subdirectory with replica_XXX.npz files
-  runs_dir: /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs
+  # Directory containing experiment folders in hierarchical structure
+  # Structure: {runs_dir}/self_cond_p{X}/{pred_type}_lp_{Y}/replicas/
+  runs_dir: /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/self_cond_ablation
 
   # Directory containing cached slices with train.csv, val.csv, test.csv
   cache_dir: /media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache
@@ -23,20 +69,17 @@ paths:
   output_dir: /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/similarity_metrics
 
 # =============================================================================
-# Experiment Configuration
+# Experiment Configuration (legacy - preserved for backward compatibility)
 # =============================================================================
 experiments:
-  # Pattern to match experiment directories
-  # Format: {prediction_type}_lp_{norm}
-  pattern: "*_lp_*"
-
-  # Prediction types to include (auto-discovered if not specified)
+  # These settings are now superseded by the ablation section above
+  # Prediction types to include (auto-discovered from ablation.axes)
   prediction_types:
     - epsilon
     - velocity
     - x0
 
-  # Lp norm values (auto-discovered if not specified)
+  # Lp norm values (auto-discovered from ablation.axes)
   lp_norms:
     - 1.5
     - 2.0

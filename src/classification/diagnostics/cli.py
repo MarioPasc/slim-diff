@@ -44,7 +44,28 @@ from pathlib import Path
 
 from omegaconf import OmegaConf
 
+from src.shared.ablation import ExperimentCoordinate, ExperimentDiscoverer, AblationSpace
+
 logger = logging.getLogger(__name__)
+
+
+def _parse_filters(filter_args: list[str] | None) -> dict:
+    """Parse filter arguments like 'prediction_type=x0' into dict."""
+    if not filter_args:
+        return {}
+
+    filters = {}
+    for f in filter_args:
+        if "=" not in f:
+            raise ValueError(f"Invalid filter format: {f}. Expected 'key=value'.")
+        key, value = f.split("=", 1)
+        # Try to parse as number
+        try:
+            value = float(value)
+        except ValueError:
+            pass
+        filters[key] = value
+    return filters
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -63,8 +84,16 @@ def _load_config(config_path: str):
     return cfg
 
 
-def _discover_experiments(cfg) -> list[str]:
-    """Discover available experiments from patches or full_images directory."""
+def _discover_experiments(cfg, filters: dict | None = None) -> list[str]:
+    """Discover available experiments from patches or full_images directory.
+
+    Args:
+        cfg: Diagnostics configuration.
+        filters: Optional filter dict for ablation axes (e.g., {'prediction_type': 'x0'}).
+
+    Returns:
+        Sorted list of experiment display names.
+    """
     patches_dir = Path(cfg.data.patches_base_dir)
     full_images_dir = patches_dir.parent / "full_images"
 
@@ -85,6 +114,23 @@ def _discover_experiments(cfg) -> list[str]:
     if not experiments:
         logger.error(f"No experiments found in {patches_dir} or {full_images_dir}")
         return []
+
+    # Apply filters if provided
+    if filters:
+        default_sc = cfg.get("ablation", {}).get("default_self_cond_p", 0.5)
+        filtered = []
+        for exp_name in experiments:
+            # Parse to coordinate and check filter
+            try:
+                coord = ExperimentCoordinate.from_display_name(exp_name)
+            except ValueError:
+                try:
+                    coord = ExperimentCoordinate.from_legacy_name(exp_name, default_self_cond_p=default_sc)
+                except ValueError:
+                    continue  # Can't parse, skip
+            if coord.matches_filter(**filters):
+                filtered.append(exp_name)
+        return sorted(filtered)
 
     return sorted(experiments)
 
@@ -517,6 +563,8 @@ def main() -> None:
     p_all.add_argument("--config", required=True, help="Path to diagnostics.yaml")
     p_all.add_argument("--experiment", required=True,
                        help="Experiment name or 'all' to run all detected experiments")
+    p_all.add_argument("--filter", nargs="*",
+                       help="Filter experiments: --filter prediction_type=x0 self_cond_p=0.5")
     p_all.add_argument("--gpu", type=int, default=0, help="GPU device index")
     p_all.add_argument("--skip", nargs="*", default=[], help="Analyses to skip")
     p_all.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
@@ -592,7 +640,8 @@ def main() -> None:
 
     # Handle --experiment all for any command
     if experiment == "all":
-        experiments = _discover_experiments(cfg)
+        filters = _parse_filters(getattr(args, "filter", None))
+        experiments = _discover_experiments(cfg, filters=filters)
         if not experiments:
             logger.error("No experiments found. Check data.patches_base_dir in config.")
             sys.exit(1)
