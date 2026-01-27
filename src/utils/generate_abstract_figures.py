@@ -38,6 +38,8 @@ try:
     from src.diffusion.scripts.similarity_metrics.plotting.settings import (
         PAUL_TOL_BRIGHT,
         PLOT_SETTINGS,
+        PREDICTION_TYPE_COLORS,
+        PREDICTION_TYPE_LABELS,
         apply_ieee_style,
     )
 except ImportError:
@@ -51,6 +53,16 @@ except ImportError:
         "purple": "#AA3377",
         "grey": "#BBBBBB",
     }
+    PREDICTION_TYPE_COLORS = {
+        "epsilon": "#EE7733",  # orange
+        "velocity": "#009988",  # green
+        "x0": "#882255",  # wine
+    }
+    PREDICTION_TYPE_LABELS = {
+        "epsilon": r"$\epsilon$-prediction",
+        "velocity": r"$\mathbf{v}$-prediction",
+        "x0": r"$\mathbf{x}_0$-prediction",
+    }
     PLOT_SETTINGS = {
         "font_size": 10,
         "dpi_print": 300,
@@ -58,6 +70,8 @@ except ImportError:
     }
     def apply_ieee_style():
         pass
+
+import matplotlib.colors as mcolors
 
 
 # =============================================================================
@@ -322,6 +336,390 @@ def create_zbin_barplot(
 
 
 # =============================================================================
+# Assessment Visualization Functions
+# =============================================================================
+
+def hex_to_rgb(hex_color: str) -> Tuple[float, float, float]:
+    """Convert hex color to RGB tuple (0-1 range)."""
+    return mcolors.to_rgb(hex_color)
+
+
+def add_frame_to_image(
+    image: np.ndarray,
+    frame_color: Tuple[float, float, float],
+    frame_width: int = 8
+) -> np.ndarray:
+    """Add a colored frame around an image."""
+    h, w = image.shape[:2]
+
+    # Ensure image is RGB
+    if image.ndim == 2:
+        img_rgb = np.stack([image, image, image], axis=-1)
+    else:
+        img_rgb = image.copy()
+
+    # Normalize to [0, 1] if needed
+    if img_rgb.max() > 1.0:
+        img_rgb = img_rgb / 255.0
+
+    # Create framed image (larger canvas)
+    framed_h = h + 2 * frame_width
+    framed_w = w + 2 * frame_width
+    framed = np.zeros((framed_h, framed_w, 3), dtype=np.float32)
+
+    # Fill with frame color
+    framed[:, :] = frame_color
+
+    # Place image in center
+    framed[frame_width:frame_width+h, frame_width:frame_width+w] = img_rgb
+
+    return framed
+
+
+def save_framed_image(
+    image: np.ndarray,
+    output_path: pathlib.Path,
+    frame_color: Tuple[float, float, float],
+    frame_width: int = 8,
+    cmap: str = "gray",
+    dpi: int = 300
+) -> None:
+    """Save image with colored frame."""
+    # Normalize grayscale to [0, 1]
+    if image.ndim == 2:
+        img_norm = (image - image.min()) / (image.max() - image.min() + 1e-8)
+    else:
+        img_norm = image
+
+    framed = add_frame_to_image(img_norm, frame_color, frame_width)
+
+    fig, ax = plt.subplots(figsize=(4, 4))
+    ax.imshow(framed, aspect='equal')
+    ax.axis('off')
+    fig.tight_layout(pad=0)
+    fig.savefig(output_path, dpi=dpi, bbox_inches='tight', pad_inches=0)
+    plt.close(fig)
+
+
+def load_synthetic_samples(
+    results_dir: pathlib.Path,
+    prediction_type: str,
+    p_cond: float,
+    lp_norm: float,
+    n_samples: int = 5,
+    lesion_only: bool = True
+) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Load synthetic samples from experiment replicas."""
+    # Build experiment path
+    p_cond_str = f"self_cond_p_{p_cond}"
+    lp_str = f"lp_{lp_norm}"
+
+    # Handle different naming for prediction types
+    pred_name = prediction_type if prediction_type != "x0" else "x0"
+    exp_name = f"{pred_name}_{lp_str}"
+
+    exp_path = results_dir / p_cond_str / exp_name / "replicas"
+
+    if not exp_path.exists():
+        print(f"Warning: Experiment path not found: {exp_path}")
+        return []
+
+    # Find replica files
+    replica_files = sorted(exp_path.glob("replica_*.npz"))
+    replica_files = [f for f in replica_files if "meta" not in f.name]
+
+    if not replica_files:
+        print(f"Warning: No replica files found in {exp_path}")
+        return []
+
+    # Load samples from first replica
+    data = np.load(replica_files[0])
+    images = data['images']
+    masks = data['masks']
+    lesion_present = data['lesion_present']
+
+    # Filter for lesion samples if requested
+    if lesion_only:
+        lesion_idx = np.where(lesion_present == 1)[0]
+        if len(lesion_idx) == 0:
+            print(f"Warning: No lesion samples found for {prediction_type}")
+            return []
+        # Select random samples
+        np.random.seed(42)
+        selected_idx = np.random.choice(lesion_idx, min(n_samples, len(lesion_idx)), replace=False)
+    else:
+        np.random.seed(42)
+        selected_idx = np.random.choice(len(images), min(n_samples, len(images)), replace=False)
+
+    samples = []
+    for idx in selected_idx:
+        img = images[idx].astype(np.float32)
+        mask = masks[idx].astype(np.float32)
+        samples.append((img, mask))
+
+    return samples
+
+
+def load_real_samples(
+    cache_dir: pathlib.Path,
+    n_samples: int = 5,
+    lesion_only: bool = True
+) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Load real samples from slice cache."""
+    df = load_csv_data(cache_dir)
+
+    if lesion_only:
+        df = df[df['has_lesion'] == True]
+
+    # Select samples with good lesion area
+    df = df.sort_values('lesion_area_px', ascending=False)
+
+    samples = []
+    for _, row in df.head(n_samples).iterrows():
+        image, mask = load_slice(cache_dir, row['filepath'])
+        samples.append((image, mask))
+
+    return samples
+
+
+def generate_assessment_samples(
+    results_dir: pathlib.Path,
+    cache_dir: pathlib.Path,
+    output_dir: pathlib.Path,
+    p_cond: float,
+    lp_norm: float,
+    n_samples: int,
+    cfg: FigureConfig
+) -> None:
+    """Generate framed sample images for each prediction type and real data."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    prediction_types = ["epsilon", "velocity", "x0"]
+
+    # Generate synthetic samples for each prediction type
+    for pred_type in prediction_types:
+        print(f"\n  Loading {pred_type} samples...")
+        samples = load_synthetic_samples(
+            results_dir, pred_type, p_cond, lp_norm, n_samples, lesion_only=True
+        )
+
+        if not samples:
+            continue
+
+        frame_color = hex_to_rgb(PREDICTION_TYPE_COLORS[pred_type])
+
+        for i, (image, mask) in enumerate(samples):
+            # Save with overlay and frame
+            overlay = create_overlay(image, mask, cfg.lesion_color, cfg.lesion_alpha)
+            save_framed_image(
+                overlay,
+                output_dir / f"{pred_type}_sample{i:02d}_overlay.png",
+                frame_color, frame_width=8, dpi=cfg.dpi
+            )
+
+            # Save image only with frame
+            img_norm = (image - image.min()) / (image.max() - image.min() + 1e-8)
+            save_framed_image(
+                img_norm,
+                output_dir / f"{pred_type}_sample{i:02d}_image.png",
+                frame_color, frame_width=8, dpi=cfg.dpi
+            )
+
+            # Save mask only with frame (binary)
+            mask_binary = (mask > 0).astype(np.float32)
+            save_framed_image(
+                mask_binary,
+                output_dir / f"{pred_type}_sample{i:02d}_mask.png",
+                frame_color, frame_width=8, dpi=cfg.dpi
+            )
+
+        print(f"    Saved {len(samples)} samples for {pred_type}")
+
+    # Generate real samples (no frame or neutral frame)
+    print(f"\n  Loading real samples...")
+    real_samples = load_real_samples(cache_dir, n_samples, lesion_only=True)
+
+    real_frame_color = (0.3, 0.3, 0.3)  # Dark gray for real
+
+    for i, (image, mask) in enumerate(real_samples):
+        # Save with overlay
+        overlay = create_overlay(image, mask, cfg.lesion_color, cfg.lesion_alpha)
+        save_framed_image(
+            overlay,
+            output_dir / f"real_sample{i:02d}_overlay.png",
+            real_frame_color, frame_width=8, dpi=cfg.dpi
+        )
+
+        # Save image only
+        img_norm = (image - image.min()) / (image.max() - image.min() + 1e-8)
+        save_framed_image(
+            img_norm,
+            output_dir / f"real_sample{i:02d}_image.png",
+            real_frame_color, frame_width=8, dpi=cfg.dpi
+        )
+
+        # Save mask only
+        mask_binary = (mask > 0).astype(np.float32)
+        save_framed_image(
+            mask_binary,
+            output_dir / f"real_sample{i:02d}_mask.png",
+            real_frame_color, frame_width=8, dpi=cfg.dpi
+        )
+
+    print(f"    Saved {len(real_samples)} real samples")
+
+
+def compute_simple_features(images: np.ndarray) -> np.ndarray:
+    """Compute simple feature vectors for embedding visualization.
+
+    Uses a combination of statistics to create discriminative features:
+    - Mean intensity in different regions
+    - Variance/texture measures
+    - Edge density
+    """
+    features = []
+    for img in images:
+        img = img.astype(np.float32)
+
+        # Global stats
+        mean_val = np.mean(img)
+        std_val = np.std(img)
+
+        # Quadrant means
+        h, w = img.shape
+        q1 = np.mean(img[:h//2, :w//2])
+        q2 = np.mean(img[:h//2, w//2:])
+        q3 = np.mean(img[h//2:, :w//2])
+        q4 = np.mean(img[h//2:, w//2:])
+
+        # Edge features (gradient magnitude)
+        gy, gx = np.gradient(img)
+        grad_mag = np.sqrt(gx**2 + gy**2)
+        edge_mean = np.mean(grad_mag)
+        edge_std = np.std(grad_mag)
+
+        # High-frequency content (difference from smoothed)
+        from scipy.ndimage import gaussian_filter
+        smoothed = gaussian_filter(img, sigma=3)
+        hf_content = np.mean(np.abs(img - smoothed))
+
+        # Histogram features
+        hist, _ = np.histogram(img.flatten(), bins=16, range=(-1, 1))
+        hist = hist / hist.sum()
+
+        feat = [mean_val, std_val, q1, q2, q3, q4, edge_mean, edge_std, hf_content]
+        feat.extend(hist.tolist())
+        features.append(feat)
+
+    return np.array(features)
+
+
+def create_embedding_plot(
+    results_dir: pathlib.Path,
+    cache_dir: pathlib.Path,
+    output_dir: pathlib.Path,
+    p_cond: float,
+    lp_norm: float,
+    n_samples: int,
+    cfg: FigureConfig
+) -> None:
+    """Create 2D embedding plots comparing real vs synthetic distributions."""
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    prediction_types = ["x0", "velocity", "epsilon"]  # Order: closest to farthest
+
+    # Load real samples
+    print("  Loading real samples for embedding...")
+    real_samples = load_real_samples(cache_dir, n_samples=100, lesion_only=True)
+    real_images = np.array([s[0] for s in real_samples])
+    real_features = compute_simple_features(real_images)
+
+    # Load synthetic samples for each prediction type
+    all_synthetic = {}
+    for pred_type in prediction_types:
+        print(f"  Loading {pred_type} samples for embedding...")
+        samples = load_synthetic_samples(
+            results_dir, pred_type, p_cond, lp_norm, n_samples=100, lesion_only=True
+        )
+        if samples:
+            images = np.array([s[0] for s in samples])
+            features = compute_simple_features(images)
+            all_synthetic[pred_type] = features
+
+    if not all_synthetic:
+        print("  Warning: No synthetic samples found for embedding plot")
+        return
+
+    # Combine all features for dimensionality reduction
+    all_features = [real_features]
+    labels = ['Real'] * len(real_features)
+
+    for pred_type in prediction_types:
+        if pred_type in all_synthetic:
+            all_features.append(all_synthetic[pred_type])
+            labels.extend([pred_type] * len(all_synthetic[pred_type]))
+
+    combined = np.vstack(all_features)
+
+    # Apply PCA first, then t-SNE for better visualization
+    print("  Computing embeddings (PCA + t-SNE)...")
+    pca = PCA(n_components=min(20, combined.shape[1]))
+    pca_features = pca.fit_transform(combined)
+
+    tsne = TSNE(n_components=2, perplexity=30, random_state=42, max_iter=1000)
+    embeddings = tsne.fit_transform(pca_features)
+
+    # Create the plot
+    try:
+        apply_ieee_style()
+    except Exception:
+        pass
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+
+    # Plot each group
+    labels = np.array(labels)
+
+    # Real data
+    real_mask = labels == 'Real'
+    ax.scatter(
+        embeddings[real_mask, 0], embeddings[real_mask, 1],
+        c='#333333', marker='o', s=30, alpha=0.6, label='Real', zorder=5
+    )
+
+    # Synthetic data by prediction type (in order: x0, velocity, epsilon)
+    for pred_type in prediction_types:
+        if pred_type in all_synthetic:
+            mask = labels == pred_type
+            ax.scatter(
+                embeddings[mask, 0], embeddings[mask, 1],
+                c=PREDICTION_TYPE_COLORS[pred_type],
+                marker='s', s=25, alpha=0.5,
+                label=PREDICTION_TYPE_LABELS[pred_type],
+                zorder=4
+            )
+
+    ax.set_xlabel('t-SNE 1', fontsize=11)
+    ax.set_ylabel('t-SNE 2', fontsize=11)
+    ax.legend(loc='upper right', fontsize=9, frameon=False)
+
+    # Remove spines
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    ax.tick_params(axis='both', labelsize=9)
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "embedding_comparison.pdf", dpi=cfg.dpi, bbox_inches='tight')
+    fig.savefig(output_dir / "embedding_comparison.png", dpi=cfg.dpi, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  Saved: {output_dir / 'embedding_comparison.pdf'}")
+
+
+# =============================================================================
 # Main Generation Functions
 # =============================================================================
 
@@ -455,6 +853,29 @@ def parse_args() -> argparse.Namespace:
         "--dpi", type=int, default=300,
         help="Output DPI (default: 300)"
     )
+
+    # Assessment arguments
+    parser.add_argument(
+        "--assessment", action="store_true",
+        help="Generate assessment figures (framed samples + embedding plots)"
+    )
+    parser.add_argument(
+        "--results-dir", type=pathlib.Path, default=None,
+        help="Path to results directory (for assessment mode)"
+    )
+    parser.add_argument(
+        "--p-cond", type=float, default=0.5,
+        help="Self-conditioning probability for assessment (default: 0.5)"
+    )
+    parser.add_argument(
+        "--lp-norm", type=float, default=2.0,
+        help="Lp norm value for assessment (default: 2.0)"
+    )
+    parser.add_argument(
+        "--n-assessment-samples", type=int, default=5,
+        help="Number of samples per prediction type for assessment (default: 5)"
+    )
+
     return parser.parse_args()
 
 
@@ -498,6 +919,32 @@ def main() -> None:
     # (4) Z-bin distribution bar plot
     print(f"\n=== Generating z-bin distribution bar plot ===")
     create_zbin_barplot(df, args.output_dir / "zbin_distribution.pdf", cfg)
+
+    # (5) Assessment figures (if requested)
+    if args.assessment:
+        if args.results_dir is None:
+            print("\nWarning: --results-dir required for assessment mode")
+        else:
+            assessment_dir = args.output_dir / "Assessment"
+            print(f"\n=== Generating assessment figures ===")
+            print(f"  Results dir: {args.results_dir}")
+            print(f"  p_cond: {args.p_cond}, lp_norm: {args.lp_norm}")
+
+            # (5.1) Framed samples per prediction type
+            print(f"\n--- Generating framed samples ---")
+            generate_assessment_samples(
+                args.results_dir, args.cache_dir, assessment_dir,
+                args.p_cond, args.lp_norm, args.n_assessment_samples, cfg
+            )
+
+            # (5.2) Embedding visualization
+            print(f"\n--- Generating embedding plots ---")
+            create_embedding_plot(
+                args.results_dir, args.cache_dir, assessment_dir,
+                args.p_cond, args.lp_norm, args.n_assessment_samples, cfg
+            )
+
+            print(f"\n=== Assessment figures saved to {assessment_dir} ===")
 
     print(f"\n=== All figures saved to {args.output_dir} ===")
 
