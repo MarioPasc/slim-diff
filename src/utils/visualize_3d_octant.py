@@ -23,6 +23,11 @@ Usage:
         --subject MRIe_001 \
         --show-surface \
         --output output.png
+    
+    # Our usage
+    python -m src.utils.visualize_3d_octant --dataset /media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/source/Dataset210_MRIe_none \
+    --subject MRIe_004 --output ./outputs/ouctant_surface_MRIe_004.pdf --modality 0 --show-surface --axial 75 --coronal 100 --sagittal 105 \
+    --octant="-++" --mesh-color 0.85 --camera-azimuth 130 --camera-elevation 15 --zoom 2.4
 
 Coordinates follow the RAS convention:
     +x → anterior   |  +y → right-lateral   |  +z → cranial
