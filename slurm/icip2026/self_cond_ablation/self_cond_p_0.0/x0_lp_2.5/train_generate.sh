@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J self_cond_p_0.0_x0
+#SBATCH -J self_cond_p_0.0_x0_lp_2.5
 #SBATCH --time=3-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -17,13 +17,13 @@ echo "Job started at: $(date)"
 # ========================================================================
 # DISTRIBUTED TRAINING CONFIGURATION
 # ========================================================================
-EXPERIMENT_NAME="self_cond_p_0.0_x0"
+EXPERIMENT_NAME="self_cond_p_0.0_x0_lp_2.5"
 CONDA_ENV_NAME="jsddpm"
 
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
 RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/self_cond_ablation/${EXPERIMENT_NAME}"
-CONFIG_FILE="${REPO_SRC}/slurm/icip2026/self_cond_ablation/self_cond_p_0.0/x0_lp_2.0/self_cond_p_0.0_x0_lp_2.0.yaml"
+CONFIG_FILE="${REPO_SRC}/slurm/icip2026/self_cond_ablation/self_cond_p_0.0/x0_lp_2.5/self_cond_p_0.0_x0_lp_2.5.yaml"
 
 # ========================================================================
 # GENERATION CONFIGURATION (after training)
