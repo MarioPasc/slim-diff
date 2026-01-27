@@ -237,6 +237,128 @@ def cmd_compare(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_mask_plot(args: argparse.Namespace) -> int:
+    """Regenerate mask quality plots from saved CSV/JSON files.
+
+    Args:
+        args: Parsed arguments.
+
+    Returns:
+        Exit code.
+    """
+    import json
+    import pandas as pd
+    from .plotting.mask_comparison import create_mask_quality_figure
+
+    input_dir = Path(args.input_dir)
+    output_dir = Path(args.output_dir) if args.output_dir else input_dir / "plots"
+
+    # Load required files
+    global_csv = input_dir / "mask_metrics_global.csv"
+    wasserstein_csv = input_dir / "mask_wasserstein_features.csv"
+    comparison_json = input_dir / "mask_metrics_comparison.json"
+
+    if not global_csv.exists():
+        print(f"Error: {global_csv} not found")
+        return 1
+    if not wasserstein_csv.exists():
+        print(f"Error: {wasserstein_csv} not found")
+        return 1
+
+    print(f"Loading data from {input_dir}...")
+    df_global = pd.read_csv(global_csv)
+    df_wasserstein = pd.read_csv(wasserstein_csv)
+
+    # Load comparison results (optional - for significance brackets)
+    comparison_results = None
+    if comparison_json.exists():
+        with open(comparison_json) as f:
+            comparison_data = json.load(f)
+        if "mmd_mf_global" in comparison_data:
+            comparison_results = comparison_data["mmd_mf_global"].get("between_group")
+        print(f"Loaded comparison results from {comparison_json}")
+    else:
+        print(f"Warning: {comparison_json} not found, plots will lack significance brackets")
+
+    # Determine output formats
+    formats = args.format.split(",") if args.format else ["pdf", "png"]
+
+    # Generate plots
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Generating plots to {output_dir}...")
+
+    try:
+        create_mask_quality_figure(
+            df_global=df_global,
+            wasserstein_df=df_wasserstein,
+            output_dir=output_dir,
+            comparison_results=comparison_results,
+            formats=formats,
+        )
+        print("Done!")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def cmd_mask_metrics(args: argparse.Namespace) -> int:
+    """Run mask morphology metrics (MMD-MF) only.
+
+    Computes MMD on morphological features extracted from lesion masks,
+    without recomputing KID/FID/LPIPS for images.
+
+    Args:
+        args: Parsed arguments.
+
+    Returns:
+        Exit code.
+    """
+    from .run_mask_metrics import main as run_mask_metrics_main, setup_logging
+
+    # Default paths (same as in run_mask_metrics.py)
+    DEFAULT_RUNS_DIR = "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/self_cond_ablation"
+    DEFAULT_CACHE_DIR = "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
+    DEFAULT_OUTPUT_DIR = "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/mask_metrics"
+
+    # Setup logging
+    setup_logging(verbose=args.verbose)
+
+    # Load config if provided
+    config = load_config(args.config)
+    paths = config.get("paths", {})
+
+    # Determine paths (CLI args override config, config overrides defaults)
+    runs_dir = args.runs_dir or paths.get("runs_dir") or DEFAULT_RUNS_DIR
+    cache_dir = args.cache_dir or paths.get("cache_dir") or DEFAULT_CACHE_DIR
+    output_dir = args.output_dir or paths.get("output_dir")
+
+    # Use mask_metrics subdirectory if using config's output_dir
+    if output_dir and not args.output_dir:
+        output_dir = str(Path(output_dir).parent / "mask_metrics")
+    elif not output_dir:
+        output_dir = DEFAULT_OUTPUT_DIR
+
+    # Get mask_morphology config
+    mask_config = config.get("metrics", {}).get("mask_morphology", {})
+
+    # Create args namespace for run_mask_metrics
+    mask_args = argparse.Namespace(
+        runs_dir=runs_dir,
+        cache_dir=cache_dir,
+        output_dir=output_dir,
+        self_cond_p=args.self_cond_p,
+        min_lesion_size=args.min_lesion_size or mask_config.get("min_lesion_size_px", 5),
+        subset_size=args.subset_size or mask_config.get("subset_size", 500),
+        num_subsets=args.num_subsets or mask_config.get("num_subsets", 100),
+        verbose=args.verbose,
+    )
+
+    return run_mask_metrics_main(mask_args)
+
+
 def cmd_plot(args: argparse.Namespace) -> int:
     """Generate plots from existing CSV files or config.
 
@@ -354,18 +476,21 @@ def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         prog="jsddpm-similarity-metrics",
-        description="Compute and analyze similarity metrics (KID, FID, LPIPS) for JSDDPM experiments",
+        description="Compute and analyze similarity metrics (KID, FID, LPIPS, MMD-MF) for JSDDPM experiments",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
     # Full pipeline with config file
     jsddpm-similarity-metrics compute-all --config config/icip2026.yaml
 
-    # Full pipeline with CLI args
-    jsddpm-similarity-metrics compute-all \\
-        --runs-dir /path/to/icip2026/runs \\
-        --cache-dir /path/to/slice_cache \\
-        --output-dir /path/to/output
+    # Mask metrics only (MMD-MF) - fast, no GPU needed
+    jsddpm-similarity-metrics mask-metrics --config config/pred_type_lp_norm.yaml
+
+    # Mask metrics with CLI args
+    jsddpm-similarity-metrics mask-metrics \\
+        --runs-dir /path/to/runs \\
+        --cache-dir /path/to/cache \\
+        --self-cond-p 0.5
 
     # Compute baseline only
     jsddpm-similarity-metrics baseline \\
@@ -374,12 +499,6 @@ Examples:
 
     # Generate all plots from config (recommended)
     jsddpm-similarity-metrics plot --config config/icip2026.yaml
-
-    # Generate plots from existing CSVs
-    jsddpm-similarity-metrics plot \\
-        --global-csv output/similarity_metrics_global.csv \\
-        --zbin-csv output/similarity_metrics_zbin.csv \\
-        --output-dir output/plots
         """,
     )
 
@@ -487,6 +606,102 @@ Examples:
         help="Output directory for comparison results",
     )
     p_comp.set_defaults(func=cmd_compare)
+
+    # ===== mask-plot =====
+    p_mask_plot = subparsers.add_parser(
+        "mask-plot",
+        help="Regenerate mask quality plots from saved data",
+        description="""
+Regenerate mask quality plots from previously saved CSV/JSON files.
+Use this to adjust plot appearance without recomputing metrics.
+
+Required files in input-dir:
+  - mask_metrics_global.csv
+  - mask_wasserstein_features.csv
+  - mask_metrics_comparison.json (optional, for significance brackets)
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_mask_plot.add_argument(
+        "--input-dir", "-i",
+        type=str,
+        required=True,
+        help="Directory containing saved mask metrics files",
+    )
+    p_mask_plot.add_argument(
+        "--output-dir", "-o",
+        type=str,
+        help="Output directory for plots (default: input-dir/plots)",
+    )
+    p_mask_plot.add_argument(
+        "--format",
+        type=str,
+        default="pdf,png",
+        help="Output formats, comma-separated (default: pdf,png)",
+    )
+    p_mask_plot.set_defaults(func=cmd_mask_plot)
+
+    # ===== mask-metrics =====
+    p_mask = subparsers.add_parser(
+        "mask-metrics",
+        help="Compute mask morphology metrics (MMD-MF) only",
+        description="""
+Compute MMD-MF (Maximum Mean Discrepancy on Morphological Features) for
+evaluating generated lesion masks. This runs independently of KID/FID/LPIPS.
+
+Answers the questions:
+- Which prediction type yields masks most similar to real masks?
+- Within each type, which Lp norm maximizes this similarity?
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_mask.add_argument(
+        "--config", "-c",
+        type=str,
+        help="Path to YAML config file",
+    )
+    p_mask.add_argument(
+        "--runs-dir",
+        type=str,
+        help="Path to runs directory (overrides config)",
+    )
+    p_mask.add_argument(
+        "--cache-dir",
+        type=str,
+        help="Path to cache directory (overrides config)",
+    )
+    p_mask.add_argument(
+        "--output-dir",
+        type=str,
+        help="Output directory for results (overrides config)",
+    )
+    p_mask.add_argument(
+        "--self-cond-p",
+        type=float,
+        default=0.5,
+        help="Self-conditioning probability to analyze (default: 0.5)",
+    )
+    p_mask.add_argument(
+        "--min-lesion-size",
+        type=int,
+        help="Minimum lesion size in pixels (default: 5)",
+    )
+    p_mask.add_argument(
+        "--subset-size",
+        type=int,
+        help="MMD subset size (default: 500)",
+    )
+    p_mask.add_argument(
+        "--num-subsets",
+        type=int,
+        help="Number of MMD subsets (default: 100)",
+    )
+    p_mask.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose (DEBUG) logging",
+    )
+    p_mask.set_defaults(func=cmd_mask_metrics)
 
     # ===== plot =====
     p_plot = subparsers.add_parser(

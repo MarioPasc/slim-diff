@@ -25,10 +25,12 @@ from src.shared.ablation import AblationSpace
 from .metrics.kid import KIDComputer, compute_per_zbin_kid
 from .metrics.fid import FIDComputer
 from .metrics.lpips import LPIPSComputer, compute_per_zbin_lpips
+from .metrics.mask_morphology import MaskMorphologyDistanceComputer
 from .statistics.comparison import run_all_comparisons, comparison_results_to_dataframe
 from .plotting.zbin_multiexp import plot_zbin_multiexperiment
 from .plotting.global_comparison import plot_global_comparison, plot_metric_summary_table
 from .plotting.icip2026_figure import create_icip2026_figure, create_compact_figure
+from .plotting.mask_comparison import create_mask_quality_figure, plot_mask_metrics_comparison
 
 
 def run_full_pipeline(
@@ -42,6 +44,7 @@ def run_full_pipeline(
     n_lpips_pairs: int = 1000,
     test_csv: Path | None = None,
     create_publication_figure: bool = True,
+    compute_mask_metrics: bool = True,
 ) -> dict[str, Any]:
     """Execute full ICIP 2026 similarity metrics pipeline.
 
@@ -174,6 +177,87 @@ def run_full_pipeline(
     df_global.to_csv(global_csv_path, index=False)
     print(f"\nSaved global metrics: {global_csv_path}")
 
+    # ===== PHASE 2b: Compute mask morphology metrics =====
+    wasserstein_results = []
+    if compute_mask_metrics:
+        print("\n" + "=" * 70)
+        print("PHASE 2b: Computing mask morphology metrics (MMD-MF)")
+        print("=" * 70)
+
+        # Initialize mask metrics computer
+        mmd_mf_computer = MaskMorphologyDistanceComputer(
+            min_lesion_size_px=5,
+            subset_size=500,
+            num_subsets=100,
+            degree=3,
+            normalize_features=True,
+        )
+
+        # Load real masks
+        print("Loading real masks...")
+        real_masks, real_zbins = loader.load_real_data(splits=["test"], channel="mask")
+        print(f"Loaded {len(real_masks)} real test masks")
+
+        # Compute mask metrics per experiment
+        for coord in tqdm(
+            list(loader.iter_experiments()),
+            desc="Mask metrics",
+        ):
+            exp_name = coord.to_display_name()
+            print(f"\n--- {exp_name} (masks) ---")
+
+            replica_paths = loader.get_replica_paths(coord)
+
+            for replica_path in replica_paths:
+                replica_id = int(replica_path.stem.split("_")[-1])
+                print(f"  Replica {replica_id}...", end=" ", flush=True)
+
+                # Load replica masks
+                synth_masks, synth_zbins = loader.load_replica(
+                    coord, replica_id, channel="mask"
+                )
+
+                # Compute MMD-MF
+                mmd_result = mmd_mf_computer.compute(
+                    real_masks, synth_masks, show_progress=False
+                )
+                print(f"MMD-MF={mmd_result.value:.5f}", end=" ", flush=True)
+
+                # Update global results DataFrame
+                mask_row = (
+                    (df_global["experiment"] == exp_name)
+                    & (df_global["replica_id"] == replica_id)
+                )
+                if mask_row.any():
+                    df_global.loc[mask_row, "mmd_mf_global"] = mmd_result.value
+                    df_global.loc[mask_row, "mmd_mf_global_std"] = mmd_result.std
+
+                # Compute per-feature Wasserstein
+                wasserstein_dists = mmd_mf_computer.compute_per_feature_wasserstein(
+                    real_masks, synth_masks, show_progress=False
+                )
+                print(f"W_geom={wasserstein_dists.get('geometric_mean', float('nan')):.3f}")
+
+                wasserstein_results.append({
+                    "experiment": exp_name,
+                    "prediction_type": coord.prediction_type,
+                    "lp_norm": coord.lp_norm,
+                    "self_cond_p": coord.self_cond_p,
+                    "replica_id": replica_id,
+                    **wasserstein_dists,
+                })
+
+        # Save updated global results with mask metrics
+        df_global.to_csv(global_csv_path, index=False)
+        print(f"\nUpdated global metrics with MMD-MF: {global_csv_path}")
+
+        # Save Wasserstein results
+        if wasserstein_results:
+            df_wasserstein = pd.DataFrame(wasserstein_results)
+            wasserstein_csv_path = output_dir / "mask_wasserstein_features.csv"
+            df_wasserstein.to_csv(wasserstein_csv_path, index=False)
+            print(f"Saved Wasserstein features: {wasserstein_csv_path}")
+
     # ===== PHASE 3: Compute baseline =====
     print("\n" + "=" * 70)
     print("PHASE 3: Computing baseline (real vs real)")
@@ -263,6 +347,9 @@ def run_full_pipeline(
     print("=" * 70)
 
     available_metrics = [f"{m}_global" for m in metrics if f"{m}_global" in df_global.columns]
+    # Add mask metrics if computed
+    if compute_mask_metrics and "mmd_mf_global" in df_global.columns:
+        available_metrics.append("mmd_mf_global")
     if available_metrics:
         comparison_results = run_all_comparisons(df_global, metrics=available_metrics)
 
@@ -329,6 +416,30 @@ def run_full_pipeline(
     except Exception as e:
         print(f"Warning: Failed to create summary table: {e}")
 
+    # Mask quality figure (2-panel: boxplots + heatmap)
+    if compute_mask_metrics and wasserstein_results:
+        print("\nGenerating mask quality figure...")
+        try:
+            df_wasserstein = pd.DataFrame(wasserstein_results)
+
+            # Get comparison results for mask metrics
+            mask_comparison = None
+            if "mmd_mf_global" in comparison_results:
+                mask_comparison = comparison_results["mmd_mf_global"].get("between_group")
+
+            create_mask_quality_figure(
+                df_global=df_global,
+                wasserstein_df=df_wasserstein,
+                output_dir=plots_dir,
+                comparison_results=mask_comparison,
+                formats=["pdf", "png"],
+            )
+            print("Mask quality figure generated successfully!")
+        except Exception as e:
+            print(f"Warning: Failed to create mask quality figure: {e}")
+            import traceback
+            traceback.print_exc()
+
     # ICIP 2026 Publication Figure (2x2 layout)
     if create_publication_figure and compute_per_zbin and zbin_results_list:
         print("\nGenerating ICIP 2026 publication figure...")
@@ -378,12 +489,15 @@ def run_full_pipeline(
     print(f"  Global metrics: {global_csv_path}")
     if compute_per_zbin and zbin_results_list:
         print(f"  Per-zbin metrics: {zbin_csv_path}")
+    if compute_mask_metrics and wasserstein_results:
+        print(f"  Mask Wasserstein features: {output_dir / 'mask_wasserstein_features.csv'}")
     print(f"  Comparison results: {comparison_csv_path}")
     print(f"  Plots: {plots_dir}")
 
     return {
         "global_csv": str(global_csv_path),
         "zbin_csv": str(output_dir / "similarity_metrics_zbin.csv") if compute_per_zbin else None,
+        "wasserstein_csv": str(output_dir / "mask_wasserstein_features.csv") if wasserstein_results else None,
         "comparison_csv": str(comparison_csv_path),
         "plots_dir": str(plots_dir),
         "baseline": baseline_results,
