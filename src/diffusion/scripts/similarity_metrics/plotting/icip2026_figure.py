@@ -665,6 +665,130 @@ def create_compact_figure(
     plt.close(fig)
 
 
+def create_global_only_figure(
+    df_global: pd.DataFrame,
+    output_dir: Path,
+    comparison_results: dict | None = None,
+    baseline_kid: float | None = None,
+    baseline_lpips: float | None = None,
+    formats: list[str] = ["pdf", "png"],
+) -> None:
+    """Create publication figure with global boxplots only (no zbin data).
+
+    Creates a 1x2 or 1x3 figure showing global KID, LPIPS, and optionally FID
+    boxplots when per-zbin data is not available.
+
+    Args:
+        df_global: DataFrame with global metrics.
+        output_dir: Directory for output files.
+        comparison_results: Statistical comparison results.
+        baseline_kid: Real baseline KID value.
+        baseline_lpips: Real baseline LPIPS value.
+        formats: Output formats.
+    """
+    apply_ieee_style()
+
+    # Determine which metrics are available
+    metrics = []
+    if "kid_global" in df_global.columns:
+        metrics.append(("kid_global", "KID", baseline_kid))
+    if "lpips_global" in df_global.columns:
+        metrics.append(("lpips_global", "LPIPS", baseline_lpips))
+    if "fid_global" in df_global.columns:
+        metrics.append(("fid_global", "FID", None))
+
+    if not metrics:
+        print("  No metrics available for global figure")
+        return
+
+    n_metrics = len(metrics)
+
+    # Figure size
+    fig_width = PLOT_SETTINGS["figure_width_double"]
+    fig_height = fig_width * 0.4
+
+    fig, axes = plt.subplots(1, n_metrics, figsize=(fig_width, fig_height))
+    if n_metrics == 1:
+        axes = [axes]
+
+    panel_labels = ["(A)", "(B)", "(C)"]
+
+    for i, (metric_col, metric_name, baseline) in enumerate(metrics):
+        ax = axes[i]
+
+        metric_comparison = None
+        if comparison_results is not None:
+            metric_comparison = comparison_results.get(metric_col, {}).get("between_group")
+
+        plot_global_boxplots(
+            df_global,
+            metric_col,
+            output_dir=None,
+            comparison_results=metric_comparison,
+            baseline_real=baseline,
+            show_significance=True,
+            show_effect_sizes=False,
+            show_points=True,
+            highlight_best=True,
+            ax=ax,
+        )
+
+        ax.text(
+            -0.12, 1.05, panel_labels[i],
+            transform=ax.transAxes,
+            fontsize=PLOT_SETTINGS["panel_label_fontsize"],
+            fontweight="bold",
+        )
+
+    # Unified legend
+    prediction_types = sorted(df_global["prediction_type"].unique())
+    lp_norms = sorted(df_global["lp_norm"].unique())
+
+    handles = []
+    labels = []
+
+    for pred_type in prediction_types:
+        color = PREDICTION_TYPE_COLORS.get(pred_type, "#888888")
+        pred_label = PREDICTION_TYPE_LABELS_SHORT.get(pred_type, pred_type)
+        patch = mpatches.Patch(facecolor=color, edgecolor="black", alpha=0.8)
+        handles.append(patch)
+        labels.append(pred_label)
+
+    # Add baseline to legend
+    if any(b is not None for _, _, b in metrics):
+        line = Line2D([0], [0], color="gray", linestyle="--", linewidth=1.5)
+        handles.append(line)
+        labels.append("Baseline")
+
+    fig.legend(
+        handles, labels,
+        loc="lower center",
+        ncol=len(handles),
+        fontsize=PLOT_SETTINGS["legend_fontsize"],
+        frameon=False,
+        bbox_to_anchor=(0.5, -0.08),
+    )
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.2)
+
+    # Save
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for fmt in formats:
+        output_path = output_dir / f"icip2026_global_only.{fmt}"
+        fig.savefig(
+            output_path,
+            dpi=PLOT_SETTINGS["dpi_print"],
+            bbox_inches="tight",
+            pad_inches=0.02,
+        )
+        print(f"Saved: {output_path}")
+
+    plt.close(fig)
+
+
 def generate_plots_from_config(
     config_path: Path | str,
     output_subdir: str | None = None,
@@ -760,6 +884,16 @@ def generate_plots_from_config(
         raise FileNotFoundError(f"Global metrics CSV not found: {global_csv}")
     df_global = pd.read_csv(global_csv)
     print(f"Loaded global metrics: {len(df_global)} rows")
+
+    # Filter by self_cond_p if specified in config
+    ablation_config = config.get("ablation", {})
+    include_filters = ablation_config.get("include", [])
+    if include_filters and "self_cond_p" in df_global.columns:
+        # Extract self_cond_p values to include
+        sc_values = [f.get("self_cond_p") for f in include_filters if "self_cond_p" in f]
+        if sc_values:
+            df_global = df_global[df_global["self_cond_p"].isin(sc_values)]
+            print(f"  Filtered to self_cond_p={sc_values}: {len(df_global)} rows")
 
     # Load per-zbin metrics CSV
     zbin_csv = output_dir / "similarity_metrics_zbin.csv"
@@ -884,8 +1018,8 @@ def generate_plots_from_config(
                 except Exception as e:
                     print(f"  Warning: Failed to generate {metric} zbin plot: {e}")
 
-    # Generate ICIP 2026 publication figure (2x2 layout)
-    if plot_config.get("icip2026_figure", {}).get("enabled", True) and df_zbin is not None:
+    # Generate ICIP 2026 publication figure
+    if plot_config.get("icip2026_figure", {}).get("enabled", True):
         print("\n--- Generating ICIP 2026 publication figure ---")
 
         # Extract ICIP figure-specific settings
@@ -893,48 +1027,67 @@ def generate_plots_from_config(
         legend_ncol = icip_config.get("legend_ncol", 8)
         aspect_ratio = icip_config.get("aspect_ratio", 0.55)
 
-        try:
-            create_icip2026_figure(
-                df_global=df_global,
-                df_zbin=df_zbin,
-                output_dir=plots_dir,
-                test_csv=test_csv if show_images else None,
-                comparison_results=comparison_results,
-                baseline_kid=baseline_kid,
-                baseline_kid_std=baseline_kid_std,
-                baseline_lpips=baseline_lpips,
-                baseline_lpips_std=baseline_lpips_std,
-                formats=formats,
-                show_images=show_images and test_csv is not None,
-                show_images_on_lpips=show_images_on_lpips,
-                image_x_offset=image_x_offset,
-                image_y_offset=image_y_offset,
-                show_subplot_legends=show_subplot_legends,
-                show_effect_sizes=show_effect_sizes,
-                legend_ncol=legend_ncol,
-                aspect_ratio=aspect_ratio,
-            )
-            print("  Generated ICIP 2026 2x2 figure")
-        except Exception as e:
-            print(f"  Warning: Failed to generate ICIP 2026 figure: {e}")
-            import traceback
-            traceback.print_exc()
+        if df_zbin is not None:
+            # Full 2x2 figure with zbin plots
+            try:
+                create_icip2026_figure(
+                    df_global=df_global,
+                    df_zbin=df_zbin,
+                    output_dir=plots_dir,
+                    test_csv=test_csv if show_images else None,
+                    comparison_results=comparison_results,
+                    baseline_kid=baseline_kid,
+                    baseline_kid_std=baseline_kid_std,
+                    baseline_lpips=baseline_lpips,
+                    baseline_lpips_std=baseline_lpips_std,
+                    formats=formats,
+                    show_images=show_images and test_csv is not None,
+                    show_images_on_lpips=show_images_on_lpips,
+                    image_x_offset=image_x_offset,
+                    image_y_offset=image_y_offset,
+                    show_subplot_legends=show_subplot_legends,
+                    show_effect_sizes=show_effect_sizes,
+                    legend_ncol=legend_ncol,
+                    aspect_ratio=aspect_ratio,
+                )
+                print("  Generated ICIP 2026 2x2 figure")
+            except Exception as e:
+                print(f"  Warning: Failed to generate ICIP 2026 figure: {e}")
+                import traceback
+                traceback.print_exc()
 
-        # Compact single-column version
-        try:
-            create_compact_figure(
-                df_global=df_global,
-                df_zbin=df_zbin,
-                output_dir=plots_dir,
-                test_csv=test_csv if show_images else None,
-                comparison_results=comparison_results,
-                baseline_kid=baseline_kid,
-                baseline_lpips=baseline_lpips,
-                formats=formats,
-            )
-            print("  Generated compact single-column figure")
-        except Exception as e:
-            print(f"  Warning: Failed to generate compact figure: {e}")
+            # Compact single-column version
+            try:
+                create_compact_figure(
+                    df_global=df_global,
+                    df_zbin=df_zbin,
+                    output_dir=plots_dir,
+                    test_csv=test_csv if show_images else None,
+                    comparison_results=comparison_results,
+                    baseline_kid=baseline_kid,
+                    baseline_lpips=baseline_lpips,
+                    formats=formats,
+                )
+                print("  Generated compact single-column figure")
+            except Exception as e:
+                print(f"  Warning: Failed to generate compact figure: {e}")
+        else:
+            # Global-only figure (no zbin data available)
+            print("  No per-zbin data available, generating global-only figure...")
+            try:
+                create_global_only_figure(
+                    df_global=df_global,
+                    output_dir=plots_dir,
+                    comparison_results=comparison_results,
+                    baseline_kid=baseline_kid,
+                    baseline_lpips=baseline_lpips,
+                    formats=formats,
+                )
+                print("  Generated global-only publication figure")
+            except Exception as e:
+                print(f"  Warning: Failed to generate global-only figure: {e}")
+                import traceback
+                traceback.print_exc()
 
     # Generate summary table
     try:
