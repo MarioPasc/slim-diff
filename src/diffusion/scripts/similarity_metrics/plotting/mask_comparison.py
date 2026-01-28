@@ -546,6 +546,157 @@ def _plot_wasserstein_heatmap(
         ax.axhline(y=i - 0.5, color="black", linewidth=1.5)
 
 
+def _plot_wasserstein_heatmap_transposed(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    cmap: str = "RdYlGn_r",
+    show_annotations: bool = False,
+) -> None:
+    """Plot per-feature Wasserstein distance heatmap with transposed axes.
+
+    This variant is designed for the combined ICIP figure where the X axis
+    should align with the MMD-MF boxplot (prediction types on X).
+
+    Layout:
+    - X axis: Configurations (prediction_type × lp_norm), encoded with colored markers
+    - Y axis: Morphological features
+
+    Args:
+        ax: Matplotlib axes.
+        df: DataFrame with columns: experiment, prediction_type, lp_norm,
+            and feature columns (area, circularity, etc.).
+        cmap: Colormap (red=high distance=bad, green=low=good).
+        show_annotations: Whether to show cell value annotations (default: False).
+    """
+    # Identify feature columns (exclude metadata)
+    exclude_cols = {
+        "experiment",
+        "prediction_type",
+        "lp_norm",
+        "self_cond_p",
+        "replica_id",
+        "geometric_mean",
+    }
+    feature_cols = [c for c in df.columns if c not in exclude_cols]
+
+    if not feature_cols:
+        ax.text(
+            0.5,
+            0.5,
+            "No feature data available",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+        return
+
+    # Order feature columns consistently
+    ordered_features = [
+        f for f in FEATURE_DISPLAY_LABELS.keys() if f in feature_cols
+    ]
+    # Add any remaining features not in display labels
+    ordered_features += [f for f in feature_cols if f not in ordered_features]
+
+    # Average across replicas and pivot
+    pivot_df = df.groupby(["prediction_type", "lp_norm"])[ordered_features].mean()
+
+    # Sort by prediction type then lp_norm for consistent ordering
+    pred_order = ["epsilon", "velocity", "x0"]
+    lp_order = [1.5, 2.0, 2.5]
+
+    # Create ordered index
+    ordered_index = []
+    for pred in pred_order:
+        for lp in lp_order:
+            try:
+                if (pred, lp) in pivot_df.index:
+                    ordered_index.append((pred, lp))
+            except Exception:
+                pass
+
+    if ordered_index:
+        pivot_df = pivot_df.loc[ordered_index]
+
+    # Create feature labels for Y axis
+    feature_labels = [FEATURE_DISPLAY_LABELS.get(f, f) for f in ordered_features]
+
+    # Get data and transpose: rows=features, cols=configs
+    data = pivot_df.values.T  # Transpose!
+
+    # Create heatmap
+    im = ax.imshow(data, aspect="auto", cmap=cmap)
+
+    # Add colorbar below the plot (horizontal orientation)
+    cbar = plt.colorbar(
+        im, ax=ax,
+        shrink=0.8,
+        pad=0.15,  # More padding to place below markers
+        orientation="horizontal",
+        location="bottom",
+    )
+    cbar.set_label("Wasserstein", fontsize=PLOT_SETTINGS["legend_fontsize"] - 1)
+    cbar.ax.tick_params(labelsize=PLOT_SETTINGS["tick_labelsize"] - 2)
+
+    # Set Y axis ticks (features)
+    ax.set_yticks(np.arange(len(feature_labels)))
+    ax.set_yticklabels(feature_labels, fontsize=PLOT_SETTINGS["tick_labelsize"] - 1)
+
+    # Set X axis: use colored markers instead of text labels
+    n_configs = len(ordered_index)
+    ax.set_xticks(np.arange(n_configs))
+
+    # Create marker-based X tick labels
+    # Position markers at tick locations, color by pred_type, shape by lp_norm
+    ax.set_xticklabels([""] * n_configs)  # Empty text labels
+
+    # Draw markers below the heatmap as pseudo-tick labels
+    marker_y = -0.8  # Position below the plot
+    for i, (pred_type, lp_norm) in enumerate(ordered_index):
+        color = PREDICTION_TYPE_COLORS.get(pred_type, "#888888")
+        marker = LP_NORM_MARKERS.get(lp_norm, "o")
+        ax.scatter(
+            i,
+            marker_y,
+            c=color,
+            marker=marker,
+            s=PLOT_SETTINGS["marker_size"] ** 2 * 1.5,
+            edgecolors="black",
+            linewidths=0.5,
+            clip_on=False,
+            zorder=10,
+        )
+
+    # Adjust y-limits to show markers
+    ax.set_ylim(len(feature_labels) - 0.5, -1.2)
+
+    # Add cell annotations if requested
+    if show_annotations:
+        for i in range(len(feature_labels)):  # rows = features
+            for j in range(n_configs):  # cols = configs
+                val = data[i, j]
+                if not np.isnan(val):
+                    text_color = "white" if val > np.nanmedian(data) else "black"
+                    ax.text(
+                        j,
+                        i,
+                        f"{val:.2f}",
+                        ha="center",
+                        va="center",
+                        fontsize=PLOT_SETTINGS["annotation_fontsize"] - 2,
+                        color=text_color,
+                    )
+
+    # Add grid lines between cells
+    ax.set_xticks(np.arange(n_configs + 1) - 0.5, minor=True)
+    ax.set_yticks(np.arange(len(feature_labels) + 1) - 0.5, minor=True)
+    ax.grid(which="minor", color="white", linestyle="-", linewidth=0.5)
+    ax.tick_params(which="minor", bottom=False, left=False)
+
+    # Add vertical lines to separate prediction types (every 3 columns)
+    for i in range(3, n_configs, 3):
+        ax.axvline(x=i - 0.5, color="black", linewidth=1.5)
+
+
 def plot_mask_metrics_comparison(
     df_global: pd.DataFrame,
     output_dir: Path,

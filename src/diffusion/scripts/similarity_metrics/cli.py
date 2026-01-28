@@ -378,12 +378,16 @@ def cmd_plot(args: argparse.Namespace) -> int:
     # Config-only mode: generate everything from config
     if args.config and not args.global_csv and not args.zbin_csv:
         print("Using config-only mode: generating all plots from config paths")
+        if args.add_mask_metrics:
+            print("Including mask metrics in combined 2x3 figure")
         try:
             from .plotting.icip2026_figure import generate_plots_from_config
 
             generate_plots_from_config(
                 config_path=args.config,
                 output_subdir=args.output_subdir,
+                add_mask_metrics=args.add_mask_metrics,
+                mask_metrics_dir=args.mask_metrics_dir,
             )
             return 0
         except Exception as e:
@@ -772,6 +776,16 @@ Examples:
         "--baseline-kid",
         type=float,
         help="Baseline KID value (real vs real) to show on plots. Auto-loaded from config output_dir if not specified.",
+    )
+    p_plot.add_argument(
+        "--add-mask-metrics",
+        action="store_true",
+        help="Include mask morphology metrics (MMD-MF, per-feature Wasserstein) in a combined 2x3 figure layout.",
+    )
+    p_plot.add_argument(
+        "--mask-metrics-dir",
+        type=str,
+        help="Directory containing mask metrics CSVs. If not specified, defaults to {output_dir}/../mask_metrics/.",
     )
     p_plot.set_defaults(func=cmd_plot)
 

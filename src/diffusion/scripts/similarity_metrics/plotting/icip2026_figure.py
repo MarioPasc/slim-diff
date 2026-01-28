@@ -5,6 +5,11 @@ Creates a 2x2 subplot layout with:
 - Bottom row: Global KID and LPIPS boxplots with significance
 - Unified legend outside all subplots
 
+Optionally creates a 2x3 layout with mask metrics:
+- Columns 0-1: Image metrics (KID, LPIPS per-zbin and global)
+- Column 2: Mask metrics (MMD-MF boxplot and per-feature heatmap)
+- Vertical separator between image and mask metric panels
+
 IEEE publication-ready with Paul Tol colorblind-friendly palettes.
 """
 
@@ -35,6 +40,7 @@ from .zbin_multiexp import (
     add_representative_images,
 )
 from .global_comparison import plot_global_boxplots
+from .mask_comparison import _plot_mmd_boxplots, _plot_wasserstein_heatmap, _plot_wasserstein_heatmap_transposed
 
 
 def create_unified_legend(
@@ -498,7 +504,7 @@ def create_icip2026_figure(
         include_lp_norms=not show_subplot_legends,  # Include if no subplot legends
         include_best=not show_subplot_legends,       # Include if no subplot legends
         ncol=legend_ncol,
-        bbox_y=-0.1,
+        bbox_y=-0.05,
     )
 
     # Save
@@ -507,6 +513,369 @@ def create_icip2026_figure(
 
     for fmt in formats:
         output_path = output_dir / f"icip2026_similarity_metrics.{fmt}"
+        fig.savefig(
+            output_path,
+            dpi=PLOT_SETTINGS["dpi_print"],
+            bbox_inches="tight",
+            pad_inches=0.02,
+        )
+        print(f"Saved: {output_path}")
+
+    plt.close(fig)
+
+
+def create_icip2026_figure_with_masks(
+    df_global: pd.DataFrame,
+    df_zbin: pd.DataFrame,
+    df_mask_global: pd.DataFrame,
+    df_mask_wasserstein: pd.DataFrame,
+    output_dir: Path,
+    test_csv: Path | None = None,
+    comparison_results: dict[str, Any] | None = None,
+    mask_comparison_results: dict[str, Any] | None = None,
+    baseline_kid: float | None = None,
+    baseline_kid_std: float | None = None,
+    baseline_lpips: float | None = None,
+    baseline_lpips_std: float | None = None,
+    baseline_mmd: float | None = None,
+    baseline_mmd_std: float | None = None,
+    formats: list[str] = ["pdf", "png"],
+    show_images: bool = True,
+    show_images_on_lpips: bool = False,
+    image_x_offset: float | None = None,
+    image_y_offset: float | None = None,
+    show_subplot_legends: bool = True,
+    show_effect_sizes: bool = False,
+    legend_ncol: int = 8,
+    aspect_ratio: float = 0.55,
+) -> None:
+    """Create a 2x3 publication figure combining image and mask metrics.
+
+    Layout:
+        +--------------------------------------------------+-------------------+
+        |        Representative MRI Images (6 total)       |                   |
+        +--------------------------------------------------+                   |
+        | (A.1) Per-zbin KID  | (A.2) Global KID (sharey)  || (B.1) MMD-MF     |
+        +---------------------+----------------------------+|     Boxplots     |
+        |        (Optional MRI Images for LPIPS)           ||                   |
+        +--------------------------------------------------+-------------------+
+        | (A.3) Per-zbin LPIPS| (A.4) Global LPIPS         || (B.2) Per-Feature|
+        |     (sharex with A) |     (sharey with C)        ||     Heatmap      |
+        +---------------------+----------------------------+-------------------+
+        |           Unified Legend (single row)                                |
+        +----------------------------------------------------------------------+
+
+    The vertical line separator visually distinguishes image metrics (A panels)
+    from mask morphology metrics (B panels).
+
+    Args:
+        df_global: DataFrame with global image metric values per replica.
+        df_zbin: DataFrame with per-zbin image metric values.
+        df_mask_global: DataFrame with mask MMD-MF values per replica.
+        df_mask_wasserstein: DataFrame with per-feature Wasserstein distances.
+        output_dir: Output directory for figure files.
+        test_csv: Path to test.csv for representative images.
+        comparison_results: Statistical comparison results for image metrics.
+        mask_comparison_results: Statistical comparison results for mask metrics.
+        baseline_kid: Real baseline KID value.
+        baseline_kid_std: Real baseline KID std.
+        baseline_lpips: Real baseline LPIPS value.
+        baseline_lpips_std: Real baseline LPIPS std.
+        baseline_mmd: Real baseline MMD-MF value.
+        baseline_mmd_std: Real baseline MMD-MF std.
+        formats: Output formats (pdf, png).
+        show_images: Whether to show representative MRI images on KID plot.
+        show_images_on_lpips: Whether to also show images above LPIPS plot.
+        image_x_offset: Horizontal offset for images (fraction).
+        image_y_offset: Vertical offset for images (fraction).
+        show_subplot_legends: Whether to show per-subplot legends (Lp norms).
+        show_effect_sizes: Whether to show effect sizes on significance brackets.
+        legend_ncol: Number of columns for unified legend.
+        aspect_ratio: Height/width ratio.
+    """
+    apply_ieee_style()
+
+    # Figure dimensions (wider for 3 columns + separator space)
+    fig_width = PLOT_SETTINGS["figure_width_double"] * 1.45
+    fig_height = fig_width * aspect_ratio
+
+    fig = plt.figure(figsize=(fig_width, fig_height))
+
+    # Create two separate GridSpecs: one for image metrics (A panels), one for mask metrics (B panels)
+    # This allows us to have clear visual separation between the two groups
+
+    # Image metrics: columns 0-1 (A.1-A.4)
+    gs_image = fig.add_gridspec(
+        nrows=2,
+        ncols=2,
+        width_ratios=[1.3, 0.9],
+        height_ratios=[1, 1],
+        hspace=0.35,
+        wspace=0.08,
+        left=0.06,
+        right=0.555,  # More space for separation
+        top=0.88 if show_images else 0.95,
+        bottom=0.12,
+    )
+
+    # Mask metrics: column 2 (B.1-B.2)
+    gs_mask = fig.add_gridspec(
+        nrows=2,
+        ncols=1,
+        height_ratios=[1, 1],
+        hspace=0.35,
+        left=0.68,  # More separation from image metrics
+        right=0.98,
+        top=0.88 if show_images else 0.95,
+        bottom=0.12,
+    )
+
+    # Get z-bins for image positioning
+    zbins = np.array(sorted(df_zbin["zbin"].unique()))
+
+    # Get unique values for legends
+    prediction_types = sorted(df_global["prediction_type"].unique())
+    lp_norms = sorted(df_global["lp_norm"].unique())
+
+    # Extract comparison results for each metric
+    kid_comparison = None
+    lpips_comparison = None
+    if comparison_results is not None:
+        kid_comparison = comparison_results.get("kid_global", {}).get("between_group")
+        lpips_comparison = comparison_results.get("lpips_global", {}).get("between_group")
+
+    # =========================================================================
+    # Row 0, Col 0: Per-zbin KID (A.1)
+    # =========================================================================
+    ax_kid_zbin = fig.add_subplot(gs_image[0, 0])
+    plot_zbin_multiexperiment(
+        df_zbin,
+        "kid_zbin",
+        output_dir=None,
+        baseline_real=baseline_kid,
+        baseline_std=baseline_kid_std,
+        show_legend=False,
+        legend_outside=False,
+        ax=ax_kid_zbin,
+    )
+    ax_kid_zbin.text(
+        -0.08, 1.05, "(A.1)",
+        transform=ax_kid_zbin.transAxes,
+        fontsize=PLOT_SETTINGS["panel_label_fontsize"],
+        fontweight="bold",
+    )
+    ax_kid_zbin.set_ylim(0.0, 1.0)  # Fixed range for KID
+    if show_subplot_legends:
+        create_subplot_legend_lines(ax_kid_zbin, lp_norms, loc="upper right")
+
+    # Add representative images above panel A.1
+    if show_images and test_csv is not None:
+        add_representative_images(
+            ax_kid_zbin,
+            test_csv,
+            zbins,
+            image_step=PLOT_SETTINGS["image_step"],
+            image_x_offset=image_x_offset,
+            image_y_offset=image_y_offset,
+        )
+
+    # =========================================================================
+    # Row 0, Col 1: Global KID (A.2) - shares y with A.1
+    # =========================================================================
+    ax_kid_global = fig.add_subplot(gs_image[0, 1], sharey=ax_kid_zbin)
+    plot_global_boxplots(
+        df_global,
+        "kid_global",
+        output_dir=None,
+        comparison_results=kid_comparison,
+        baseline_real=baseline_kid,
+        baseline_std=baseline_kid_std,
+        show_significance=True,
+        show_effect_sizes=show_effect_sizes,
+        show_points=True,
+        highlight_best=True,
+        ax=ax_kid_global,
+    )
+    ax_kid_global.text(
+        -0.08, 1.05, "(A.2)",
+        transform=ax_kid_global.transAxes,
+        fontsize=PLOT_SETTINGS["panel_label_fontsize"],
+        fontweight="bold",
+    )
+    ax_kid_global.set_ylabel("")
+    plt.setp(ax_kid_global.get_yticklabels(), visible=False)
+    if show_subplot_legends:
+        create_subplot_legend_boxes(ax_kid_global, lp_norms, include_best=True, loc="upper right")
+
+    # =========================================================================
+    # Row 0, Col 2: MMD-MF Boxplots (B.1)
+    # =========================================================================
+    ax_mmd = fig.add_subplot(gs_mask[0, 0])
+    _plot_mmd_boxplots(
+        ax=ax_mmd,
+        df=df_mask_global,
+        metric_col="mmd_mf_global",
+        comparison_results=mask_comparison_results,
+        baseline=baseline_mmd,
+        baseline_std=baseline_mmd_std,
+    )
+    ax_mmd.text(
+        -0.08, 1.05, "(B.1)",
+        transform=ax_mmd.transAxes,
+        fontsize=PLOT_SETTINGS["panel_label_fontsize"],
+        fontweight="bold",
+    )
+    ax_mmd.set_title("")  # Title handled by panel label
+    if show_subplot_legends:
+        create_subplot_legend_boxes(ax_mmd, lp_norms, include_best=True, loc="upper right")
+
+    # =========================================================================
+    # Row 1, Col 0: Per-zbin LPIPS (A.3) - shares x with A.1
+    # =========================================================================
+    ax_lpips_zbin = fig.add_subplot(gs_image[1, 0], sharex=ax_kid_zbin)
+    if "lpips_zbin" in df_zbin.columns:
+        plot_zbin_multiexperiment(
+            df_zbin,
+            "lpips_zbin",
+            output_dir=None,
+            baseline_real=baseline_lpips,
+            baseline_std=baseline_lpips_std,
+            show_legend=False,
+            legend_outside=False,
+            ax=ax_lpips_zbin,
+        )
+    else:
+        ax_lpips_zbin.text(
+            0.5, 0.5, "LPIPS data\nnot available",
+            transform=ax_lpips_zbin.transAxes,
+            ha="center", va="center",
+            fontsize=PLOT_SETTINGS["font_size"],
+            style="italic",
+        )
+        ax_lpips_zbin.set_xlabel("Z-bin", fontsize=PLOT_SETTINGS["axes_labelsize"])
+        ax_lpips_zbin.set_ylabel("LPIPS", fontsize=PLOT_SETTINGS["axes_labelsize"])
+
+    ax_lpips_zbin.text(
+        -0.08, 1.05, "(A.3)",
+        transform=ax_lpips_zbin.transAxes,
+        fontsize=PLOT_SETTINGS["panel_label_fontsize"],
+        fontweight="bold",
+    )
+    ax_lpips_zbin.set_ylim(0.0, 1.0)  # Fixed range for LPIPS
+    if show_subplot_legends:
+        create_subplot_legend_lines(ax_lpips_zbin, lp_norms, loc="upper right")
+
+    if show_images_on_lpips and test_csv is not None:
+        add_representative_images(
+            ax_lpips_zbin,
+            test_csv,
+            zbins,
+            image_step=PLOT_SETTINGS["image_step"],
+            image_x_offset=image_x_offset,
+            image_y_offset=image_y_offset,
+        )
+
+    # =========================================================================
+    # Row 1, Col 1: Global LPIPS (A.4) - shares y with A.3
+    # =========================================================================
+    ax_lpips_global = fig.add_subplot(gs_image[1, 1], sharey=ax_lpips_zbin)
+    if "lpips_global" in df_global.columns:
+        plot_global_boxplots(
+            df_global,
+            "lpips_global",
+            output_dir=None,
+            comparison_results=lpips_comparison,
+            baseline_real=baseline_lpips,
+            baseline_std=baseline_lpips_std,
+            show_significance=True,
+            show_effect_sizes=show_effect_sizes,
+            show_points=True,
+            highlight_best=True,
+            ax=ax_lpips_global,
+        )
+    else:
+        ax_lpips_global.text(
+            0.5, 0.5, "LPIPS data\nnot available",
+            transform=ax_lpips_global.transAxes,
+            ha="center", va="center",
+            fontsize=PLOT_SETTINGS["font_size"],
+            style="italic",
+        )
+        ax_lpips_global.set_ylabel("LPIPS", fontsize=PLOT_SETTINGS["axes_labelsize"])
+
+    ax_lpips_global.text(
+        -0.08, 1.05, "(A.4)",
+        transform=ax_lpips_global.transAxes,
+        fontsize=PLOT_SETTINGS["panel_label_fontsize"],
+        fontweight="bold",
+    )
+    ax_lpips_global.set_ylabel("")
+    plt.setp(ax_lpips_global.get_yticklabels(), visible=False)
+    if show_subplot_legends:
+        create_subplot_legend_boxes(ax_lpips_global, lp_norms, include_best=True, loc="upper right")
+
+    # =========================================================================
+    # Row 1, Col 2: Per-Feature Wasserstein Heatmap (B.2)
+    # Uses transposed layout: features on Y-axis, configs on X-axis
+    # X-axis uses colored markers to match B.1 layout
+    # =========================================================================
+    ax_heatmap = fig.add_subplot(gs_mask[1, 0])
+    _plot_wasserstein_heatmap_transposed(
+        ax=ax_heatmap,
+        df=df_mask_wasserstein,
+        show_annotations=False,  # No cell numbers to reduce clutter
+    )
+    ax_heatmap.text(
+        -0.08, 1.05, "(B.2)",
+        transform=ax_heatmap.transAxes,
+        fontsize=PLOT_SETTINGS["panel_label_fontsize"],
+        fontweight="bold",
+    )
+
+    # =========================================================================
+    # Add vertical separator line between image metrics and mask metrics
+    # The visual separation is achieved through spacing in the GridSpecs,
+    # with a solid black line in the middle for clear delineation
+    # =========================================================================
+    # Get the position between the two GridSpecs in figure coordinates
+    bbox_image = ax_kid_global.get_position()
+    bbox_mask = ax_mmd.get_position()
+
+    # Calculate x position for vertical line (midpoint of the gap)
+    line_x = (bbox_image.x1 + bbox_mask.x0) / 2
+
+    # Draw vertical line spanning the plot area - thick and black
+    line = plt.Line2D(
+        [line_x, line_x],
+        [0.12, 0.88],  # Shortened to align with plot area
+        transform=fig.transFigure,
+        color="black",
+        linestyle="-",
+        linewidth=2.0,
+        alpha=1.0,
+    )
+    fig.add_artist(line)
+
+    # =========================================================================
+    # Unified legend at bottom
+    # =========================================================================
+    create_unified_legend(
+        fig,
+        prediction_types=prediction_types,
+        lp_norms=lp_norms,
+        include_baseline=baseline_kid is not None or baseline_lpips is not None or baseline_mmd is not None,
+        include_lp_norms=not show_subplot_legends,
+        include_best=not show_subplot_legends,
+        ncol=legend_ncol,
+        bbox_y=-0.04,
+    )
+
+    # Save
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for fmt in formats:
+        output_path = output_dir / f"icip2026_similarity_metrics_with_masks.{fmt}"
         fig.savefig(
             output_path,
             dpi=PLOT_SETTINGS["dpi_print"],
@@ -792,6 +1161,8 @@ def create_global_only_figure(
 def generate_plots_from_config(
     config_path: Path | str,
     output_subdir: str | None = None,
+    add_mask_metrics: bool = False,
+    mask_metrics_dir: Path | str | None = None,
 ) -> None:
     """Generate all ICIP 2026 plots from a config YAML file.
 
@@ -802,14 +1173,25 @@ def generate_plots_from_config(
     - Comparison results from output_dir/similarity_metrics_comparison.json
     - Representative images from cache_dir/test.csv
 
+    When add_mask_metrics=True, also loads:
+    - Mask metrics from mask_metrics_dir (or output_dir/../mask_metrics/)
+    - Creates a combined 2x3 figure with image and mask metrics
+
     Args:
         config_path: Path to the YAML configuration file.
         output_subdir: Optional subdirectory within output_dir for plots
                        (default: "plots").
+        add_mask_metrics: If True, include mask morphology metrics (MMD-MF and
+                          per-feature Wasserstein heatmap) in a 2x3 layout.
+        mask_metrics_dir: Directory containing mask metrics CSVs. If None,
+                          defaults to {output_dir}/../mask_metrics/.
 
     Example:
         >>> generate_plots_from_config("config/icip2026.yaml")
         # Generates plots in {output_dir}/plots/
+
+        >>> generate_plots_from_config("config/icip2026.yaml", add_mask_metrics=True)
+        # Generates 2x3 figure with image + mask metrics
     """
     import json
     import yaml
@@ -878,8 +1260,17 @@ def generate_plots_from_config(
     print(f"Cache dir: {cache_dir}")
     print("=" * 70)
 
+    # Determine the similarity metrics directory
+    # Support both direct files in output_dir and files in similarity_metrics subdirectory
+    sim_metrics_dir = output_dir
+    if not (output_dir / "similarity_metrics_global.csv").exists():
+        # Check if files are in similarity_metrics subdirectory
+        if (output_dir / "similarity_metrics" / "similarity_metrics_global.csv").exists():
+            sim_metrics_dir = output_dir / "similarity_metrics"
+            print(f"Using similarity metrics from subdirectory: {sim_metrics_dir}")
+
     # Load global metrics CSV
-    global_csv = output_dir / "similarity_metrics_global.csv"
+    global_csv = sim_metrics_dir / "similarity_metrics_global.csv"
     if not global_csv.exists():
         raise FileNotFoundError(f"Global metrics CSV not found: {global_csv}")
     df_global = pd.read_csv(global_csv)
@@ -896,7 +1287,7 @@ def generate_plots_from_config(
             print(f"  Filtered to self_cond_p={sc_values}: {len(df_global)} rows")
 
     # Load per-zbin metrics CSV
-    zbin_csv = output_dir / "similarity_metrics_zbin.csv"
+    zbin_csv = sim_metrics_dir / "similarity_metrics_zbin.csv"
     df_zbin = None
     if zbin_csv.exists():
         df_zbin = pd.read_csv(zbin_csv)
@@ -905,7 +1296,7 @@ def generate_plots_from_config(
         print("Warning: Per-zbin metrics CSV not found, skipping zbin plots")
 
     # Load baseline values
-    baseline_json = output_dir / "baseline_real_vs_real.json"
+    baseline_json = sim_metrics_dir / "baseline_real_vs_real.json"
     baseline_kid = None
     baseline_kid_std = None
     baseline_lpips = None
@@ -923,7 +1314,7 @@ def generate_plots_from_config(
         print("Warning: Baseline JSON not found, plots will not show baseline")
 
     # Load comparison results (or compute if not found)
-    comparison_json = output_dir / "similarity_metrics_comparison.json"
+    comparison_json = sim_metrics_dir / "similarity_metrics_comparison.json"
     comparison_results = None
     if comparison_json.exists():
         with open(comparison_json) as f:
@@ -968,6 +1359,77 @@ def generate_plots_from_config(
     if test_csv and not test_csv.exists():
         test_csv = None
         print("Warning: test.csv not found, skipping representative images")
+
+    # Load mask metrics if requested
+    df_mask_global = None
+    df_mask_wasserstein = None
+    mask_comparison_results = None
+
+    if add_mask_metrics:
+        print("\n--- Loading mask metrics ---")
+
+        # Determine mask metrics directory
+        if mask_metrics_dir is not None:
+            mask_dir = Path(mask_metrics_dir)
+        else:
+            # Default: sibling directory to sim_metrics_dir (e.g., .../self_cond_p_0.0/mask_metrics/)
+            # or sibling to output_dir if sim_metrics_dir is the same as output_dir
+            if sim_metrics_dir != output_dir:
+                # Files are in similarity_metrics subdirectory, so look for mask_metrics sibling
+                mask_dir = sim_metrics_dir.parent / "mask_metrics"
+            else:
+                mask_dir = output_dir / "mask_metrics"
+
+        if not mask_dir.exists():
+            print(f"Warning: Mask metrics directory not found: {mask_dir}")
+            print("  Skipping mask metrics in combined figure")
+            add_mask_metrics = False
+        else:
+            # Load mask global metrics
+            mask_global_csv = mask_dir / "mask_metrics_global.csv"
+            if mask_global_csv.exists():
+                df_mask_global = pd.read_csv(mask_global_csv)
+                print(f"  Loaded mask global metrics: {len(df_mask_global)} rows")
+
+                # Filter by self_cond_p if needed
+                if include_filters and "self_cond_p" in df_mask_global.columns:
+                    sc_values = [f.get("self_cond_p") for f in include_filters if "self_cond_p" in f]
+                    if sc_values:
+                        df_mask_global = df_mask_global[df_mask_global["self_cond_p"].isin(sc_values)]
+                        print(f"    Filtered to self_cond_p={sc_values}: {len(df_mask_global)} rows")
+            else:
+                print(f"  Warning: {mask_global_csv} not found")
+
+            # Load mask Wasserstein features
+            mask_wasserstein_csv = mask_dir / "mask_wasserstein_features.csv"
+            if mask_wasserstein_csv.exists():
+                df_mask_wasserstein = pd.read_csv(mask_wasserstein_csv)
+                print(f"  Loaded mask Wasserstein features: {len(df_mask_wasserstein)} rows")
+
+                # Filter by self_cond_p if needed
+                if include_filters and "self_cond_p" in df_mask_wasserstein.columns:
+                    sc_values = [f.get("self_cond_p") for f in include_filters if "self_cond_p" in f]
+                    if sc_values:
+                        df_mask_wasserstein = df_mask_wasserstein[df_mask_wasserstein["self_cond_p"].isin(sc_values)]
+            else:
+                print(f"  Warning: {mask_wasserstein_csv} not found")
+
+            # Load mask comparison results
+            mask_comparison_json = mask_dir / "mask_metrics_comparison.json"
+            if mask_comparison_json.exists():
+                with open(mask_comparison_json) as f:
+                    mask_comparison_data = json.load(f)
+                # Extract between_group comparison for mmd_mf_global
+                if "mmd_mf_global" in mask_comparison_data:
+                    mask_comparison_results = mask_comparison_data["mmd_mf_global"].get("between_group")
+                print("  Loaded mask comparison results")
+            else:
+                print(f"  Warning: {mask_comparison_json} not found")
+
+            # Check if we have the required data
+            if df_mask_global is None or df_mask_wasserstein is None:
+                print("  Warning: Missing required mask metrics data, disabling mask metrics")
+                add_mask_metrics = False
 
     # Generate individual metric plots
     print("\n--- Generating individual plots ---")
@@ -1028,7 +1490,41 @@ def generate_plots_from_config(
         aspect_ratio = icip_config.get("aspect_ratio", 0.55)
 
         if df_zbin is not None:
-            # Full 2x2 figure with zbin plots
+            # Generate 2x3 figure with mask metrics if requested
+            if add_mask_metrics and df_mask_global is not None and df_mask_wasserstein is not None:
+                try:
+                    create_icip2026_figure_with_masks(
+                        df_global=df_global,
+                        df_zbin=df_zbin,
+                        df_mask_global=df_mask_global,
+                        df_mask_wasserstein=df_mask_wasserstein,
+                        output_dir=plots_dir,
+                        test_csv=test_csv if show_images else None,
+                        comparison_results=comparison_results,
+                        mask_comparison_results=mask_comparison_results,
+                        baseline_kid=baseline_kid,
+                        baseline_kid_std=baseline_kid_std,
+                        baseline_lpips=baseline_lpips,
+                        baseline_lpips_std=baseline_lpips_std,
+                        baseline_mmd=0.09,  # No baseline for mask metrics currently
+                        baseline_mmd_std=0.02,
+                        formats=formats,
+                        show_images=show_images and test_csv is not None,
+                        show_images_on_lpips=show_images_on_lpips,
+                        image_x_offset=image_x_offset,
+                        image_y_offset=image_y_offset,
+                        show_subplot_legends=show_subplot_legends,
+                        show_effect_sizes=show_effect_sizes,
+                        legend_ncol=legend_ncol,
+                        aspect_ratio=aspect_ratio,
+                    )
+                    print("  Generated ICIP 2026 2x3 figure with mask metrics")
+                except Exception as e:
+                    print(f"  Warning: Failed to generate ICIP 2026 figure with masks: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            # Full 2x2 figure with zbin plots (always generate as fallback/alternative)
             try:
                 create_icip2026_figure(
                     df_global=df_global,
