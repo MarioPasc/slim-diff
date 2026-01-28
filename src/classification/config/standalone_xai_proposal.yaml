@@ -1,0 +1,280 @@
+# Standalone Classification Config for xai_proposal_full
+# ========================================================
+# Config for running classification + diagnostics on a single standalone experiment.
+#
+# SETUP REQUIRED (one-time):
+#   mkdir -p /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/try/self_cond_p0.8
+#   ln -s ../xai_proposal_full /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/try/self_cond_p0.8/x0_lp_1.5
+#
+# USAGE:
+#   # Extract patches
+#   jsddpm-classification-task extract --config src/classification/config/standalone_xai_proposal.yaml --experiment x0_lp_1.5
+#
+#   # Run classification
+#   jsddpm-classification-task run --config src/classification/config/standalone_xai_proposal.yaml --experiment x0_lp_1.5 --input-mode joint
+#
+#   # Run diagnostics
+#   jsddpm-diagnostics run-all --config src/classification/config/standalone_xai_proposal.yaml --experiment x0_lp_1.5 --gpu 0
+#
+#   # Generate reports
+#   jsddpm-diagnostics full-report --config src/classification/config/standalone_xai_proposal.yaml --experiment x0_lp_1.5
+#   jsddpm-diagnostics compact-report --config src/classification/config/standalone_xai_proposal.yaml --experiment x0_lp_1.5
+
+experiment:
+  name: "xai_proposal_full_standalone"
+  seed: 42
+  device: "cuda"
+
+# ---------------------------------------------------------------------------
+# Ablation Configuration (minimal for standalone)
+# ---------------------------------------------------------------------------
+ablation:
+  axes:
+    self_cond_p:
+      values: [0.8]
+      display_format: "{:.1f}"
+      folder_format: "self_cond_p{value}"
+    prediction_type:
+      values: ["x0"]
+      display_format: "{}"
+      folder_format: "{value}"
+    lp_norm:
+      values: [1.5]
+      display_format: "{:.1f}"
+      folder_format: "lp_{value}"
+
+  hierarchy: ["self_cond_p", "prediction_type_lp_norm"]
+  default_self_cond_p: 0.8
+  include: []
+
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
+data:
+  # Real data (slice cache)
+  real:
+    cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
+    csv_files: ["train.csv", "val.csv", "test.csv"]
+    slices_subdir: "slices"
+
+  # Synthetic data - points to directory containing the symlink structure
+  synthetic:
+    results_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/try"
+    replicas_subdir: "replicas"
+    replica_ids: [0, 1, 2, 3, 4]
+    # Explicit experiments list for extract-full command
+    experiments:
+      - name: "x0_lp_1.5"
+        replicas_subdir: "replicas"
+        replica_ids: [0, 1, 2, 3, 4]
+
+  # Patch extraction settings
+  patch_extraction:
+    method: "dynamic"
+    padding: 8
+    min_patch_size: 32
+    max_patch_size: 96
+    fixed_size: 64
+
+  # Held-out test set
+  test_split:
+    fraction: 0.20
+    stratify_by: "z_bin"
+    seed: 42
+
+  # K-fold cross-validation
+  kfold:
+    n_folds: 3
+    stratify_by: "z_bin"
+    seed: 42
+
+  # Input modes to evaluate
+  input_modes: ["joint"]
+
+  # Diagnostics paths (used by jsddpm-diagnostics)
+  patches_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/try/xai_proposal_full/classification/full_images"
+  checkpoints_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/try/xai_proposal_full/classification/checkpoints"
+  classification_results_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/try/xai_proposal_full/classification/results"
+  replicas_base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/try"
+  real_cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
+  full_image_replica_ids: [0, 1, 2, 3, 4]
+
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+model:
+  config_path: "models/simple_cnn.yaml"
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+training:
+  batch_size: 8
+  max_epochs: 50
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-5
+  optimizer: "adam"
+
+  scheduler:
+    type: "reduce_on_plateau"
+    factor: 0.5
+    patience: 5
+    min_lr: 1.0e-6
+
+  early_stopping:
+    monitor: "val/auc"
+    mode: "max"
+    patience: 3
+    min_delta: 0.001
+
+  precision: "32-true"
+  num_workers: 4
+  pin_memory: true
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+evaluation:
+  bootstrap:
+    n_iterations: 2000
+    confidence_level: 0.95
+    seed: 42
+
+  permutation_test:
+    n_permutations: 10000
+    alpha: 0.05
+    seed: 42
+
+  per_zbin:
+    enabled: true
+    min_samples: 10
+
+  control:
+    enabled: false
+    n_repeats: 5
+
+# ---------------------------------------------------------------------------
+# Diagnostics Configuration
+# ---------------------------------------------------------------------------
+dithering:
+  seed: 42
+  clip_range: [-1.0, 1.0]
+  reclassification:
+    n_folds: 2
+    max_epochs: 50
+    batch_size: 16
+    learning_rate: 1.0e-4
+    weight_decay: 1.0e-5
+    early_stopping_patience: 10
+    input_modes: ["joint"]
+  metrics:
+    bootstrap_n: 2000
+    confidence_level: 0.95
+
+gradcam:
+  target_class: 1
+  input_modes: ["joint"]
+  batch_size: 16
+  aggregation:
+    per_zbin: true
+    per_class: true
+    radial_profile_bins: 20
+    n_sample_visualizations: 16
+
+feature_probes:
+  spectral:
+    channels: [0, 1]
+    n_frequency_bands: 5
+  texture:
+    glcm_distances: [1, 2, 4]
+    glcm_angles: [0.0, 0.7854, 1.5708, 2.3562]
+    glcm_levels: 64
+    lbp_radii: [1, 2, 3]
+    lbp_points: [8, 16, 24]
+    gradient_n_bins: 100
+  frequency_bands:
+    n_bands: 5
+    channels: [0, 1]
+
+statistical:
+  alpha: 0.05
+  correction: "fdr_bh"
+  channels: [0, 1]
+  per_zbin: true
+  distributions:
+    n_bins: 200
+    tissue_segmentation: true
+    lesion_threshold: 0.3
+    brain_threshold: -0.8
+    background_threshold: -0.95
+  boundary:
+    n_radii: 15
+    max_distance: 10
+  wavelet:
+    wavelet: "db4"
+    levels: 4
+
+full_image:
+  background:
+    threshold: -0.95
+    noise_threshold: 0.01
+  spatial_correlation:
+    max_lag: 20
+  global_frequency:
+    channels: [0]
+
+# Note: 'output' section is used by both classification and diagnostics
+# Diagnostics reads: output.base_dir, output.plot_format, output.plot_dpi, output.save_data
+output:
+  # Classification paths
+  base_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/try/xai_proposal_full/classification"
+  patches_subdir: "patches"
+  full_images_subdir: "full_images"
+  results_subdir: "results"
+  checkpoints_subdir: "checkpoints"
+  figures_subdir: "figures"
+  tables_subdir: "tables"
+  # Diagnostics output settings
+  plot_format: ["png", "pdf"]
+  plot_dpi: 300
+  save_data: true
+
+xai:
+  channel_decomposition:
+    ablation_baseline: -1.0
+    per_layer: true
+  spectral_attribution:
+    source: "gradcam"
+    n_bands: 5
+  feature_space:
+    pca_components: 10
+    tsne_perplexity: 30
+    tsne_seed: 42
+    top_features: 5
+  integrated_gradients:
+    n_steps: 50
+    baseline: "zeros"
+    max_samples: 100
+  confusion_stratified:
+    enabled: true
+    use_full_images: true
+    use_ensemble: true
+    n_representative_samples: 8
+    comparisons:
+      - ["FP", "TN"]
+      - ["FN", "TP"]
+    visualization:
+      panel_dpi: 300
+      panel_format: ["pdf", "png"]
+      include_individual_samples: true
+      n_samples_per_subplot: 4
+      radial_profile_bins: 20
+
+reporting:
+  compact_format: "yaml"
+  quality_thresholds:
+    A: 0.05
+    B: 0.15
+    C: 0.30
+    D: 0.50
+  recommendation_engine: true

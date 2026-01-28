@@ -58,7 +58,7 @@ jsddpm-evaluate = "src.diffusion.model_comparison.runner:main"
 jsddpm-classification-task = "src.classification.__main__:main"
 jsddpm-diagnostics = "src.classification.diagnostics.cli:main"
 jsddpm-segmentation-kfold = "src.segmentation.cli.kfold_segmentation:main"
-jsddpm-similarity-metrics = "src.diffusion.scripts.similarity_metrics.cli:main"
+jsddpm-similarity-metrics = "src.diffusion.scripts.similarity_metrics.cli:main" 
 
 [tool.setuptools.packages.find]
 where = ["."]
