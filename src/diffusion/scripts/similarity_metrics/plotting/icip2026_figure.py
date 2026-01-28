@@ -788,7 +788,7 @@ def generate_plots_from_config(
     else:
         print("Warning: Baseline JSON not found, plots will not show baseline")
 
-    # Load comparison results
+    # Load comparison results (or compute if not found)
     comparison_json = output_dir / "similarity_metrics_comparison.json"
     comparison_results = None
     if comparison_json.exists():
@@ -796,7 +796,38 @@ def generate_plots_from_config(
             comparison_results = json.load(f)
         print("Loaded statistical comparison results")
     else:
-        print("Warning: Comparison JSON not found, no significance brackets")
+        # Auto-compute comparison results from global metrics
+        print("Comparison JSON not found, computing statistical analysis...")
+        try:
+            from ..statistics.comparison import run_all_comparisons
+
+            # Determine available metrics
+            available_metrics = [m for m in ["kid_global", "fid_global", "lpips_global"]
+                                if m in df_global.columns]
+
+            if available_metrics:
+                raw_results = run_all_comparisons(df_global, metrics=available_metrics)
+
+                # Convert to JSON-serializable format
+                comparison_results = {}
+                for metric, data in raw_results.items():
+                    comparison_results[metric] = {
+                        "within_group": data["within_group"].to_dict(orient="records")
+                            if hasattr(data["within_group"], "to_dict") else data["within_group"],
+                        "between_group": {
+                            k: (float(v) if hasattr(v, '__float__') and not isinstance(v, (bool, str)) else v)
+                            for k, v in data["between_group"].items()
+                        },
+                    }
+
+                # Save for future use
+                with open(comparison_json, "w") as f:
+                    json.dump(comparison_results, f, indent=2, default=str)
+                print(f"  Computed and saved comparison results to {comparison_json}")
+            else:
+                print("  Warning: No valid metrics found for comparison")
+        except Exception as e:
+            print(f"  Warning: Failed to compute comparison: {e}")
 
     # Determine test.csv path for representative images
     test_csv = cache_dir / "test.csv" if cache_dir.exists() else None
