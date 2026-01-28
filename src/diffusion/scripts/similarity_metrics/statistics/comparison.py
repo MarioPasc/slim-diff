@@ -122,10 +122,12 @@ def within_group_comparison(
         group_df = metrics_df[metrics_df[group_col] == group]
 
         # Pivot to get treatments as columns, blocks as rows
-        pivot = group_df.pivot(
+        # Use pivot_table with mean aggregation to handle duplicate entries
+        pivot = group_df.pivot_table(
             index=block_col,
             columns=treatment_col,
             values=value_col,
+            aggfunc="mean",
         )
 
         treatments = pivot.columns.tolist()
