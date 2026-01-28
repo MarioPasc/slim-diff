@@ -88,7 +88,7 @@ class AblationSpace:
                     name="self_cond_p",
                     values=[0.0, 0.5, 0.8],
                     display_format="{:.1f}",
-                    folder_format="self_cond_p{value}",
+                    folder_format="self_cond_p_{value}",
                 ),
                 "prediction_type": AblationAxis(
                     name="prediction_type",

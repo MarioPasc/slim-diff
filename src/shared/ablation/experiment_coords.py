@@ -30,7 +30,7 @@ class ExperimentCoordinate:
         >>> coord.to_display_name()
         'sc_0.5__x0_lp_1.5'
         >>> coord.to_folder_path()
-        PosixPath('self_cond_p0.5/x0_lp_1.5')
+        PosixPath('self_cond_p_0.5/x0_lp_1.5')
     """
 
     prediction_type: str
@@ -79,12 +79,12 @@ class ExperimentCoordinate:
     def to_folder_path(self) -> Path:
         """Convert to hierarchical folder path.
 
-        Format: self_cond_p{self_cond_p}/{prediction_type}_lp_{lp_norm}
+        Format: self_cond_p_{self_cond_p}/{prediction_type}_lp_{lp_norm}
 
         Returns:
             Relative Path object for the experiment folder.
         """
-        sc_folder = f"self_cond_p{self.self_cond_p:.1f}"
+        sc_folder = f"self_cond_p_{self.self_cond_p:.1f}"
         exp_folder = f"{self.prediction_type}_lp_{self.lp_norm:.1f}"
         return Path(sc_folder) / exp_folder
 
@@ -192,7 +192,7 @@ class ExperimentCoordinate:
 
         raise ValueError(
             f"Cannot parse folder path: {path}. "
-            f"Expected hierarchical: self_cond_p{{X}}/{{pred}}_lp_{{Y}} "
+            f"Expected hierarchical: self_cond_p_{{X}}/{{pred}}_lp_{{Y}} "
             f"or legacy: {{pred}}_lp_{{Y}}"
         )
 

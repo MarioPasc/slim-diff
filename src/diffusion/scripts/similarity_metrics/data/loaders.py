@@ -29,10 +29,10 @@ class ICIPExperimentLoader:
 
     Hierarchical (new):
         runs_dir/
-        ├── self_cond_p0.0/
+        ├── self_cond_p_0.0/
         │   └── x0_lp_1.5/
         │       └── replicas/
-        ├── self_cond_p0.5/
+        ├── self_cond_p_0.5/
         │   └── x0_lp_1.5/
         │       └── replicas/
         └── ...

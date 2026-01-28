@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class ExperimentDiscoverer:
     """Discover experiments from filesystem based on folder structure.
 
-    Supports both hierarchical (self_cond_p{X}/{pred}_lp_{Y}) and
+    Supports both hierarchical (self_cond_p_{X}/{pred}_lp_{Y}) and
     legacy flat ({pred}_lp_{Y}) folder structures.
 
     Attributes:
@@ -111,7 +111,7 @@ class ExperimentDiscoverer:
     def _discover_hierarchical(self) -> set[ExperimentCoordinate]:
         """Discover experiments in hierarchical folder structure.
 
-        Structure: base_dir/self_cond_p{X}/{pred}_lp_{Y}/
+        Structure: base_dir/self_cond_p_{X}/{pred}_lp_{Y}/
 
         Returns:
             Set of discovered coordinates.
@@ -210,7 +210,7 @@ class ExperimentDiscoverer:
     def get_experiment_path(self, coord: ExperimentCoordinate) -> Path:
         """Get the filesystem path for an experiment coordinate.
 
-        Returns the hierarchical path (base_dir/self_cond_p{X}/{pred}_lp_{Y}).
+        Returns the hierarchical path (base_dir/self_cond_p_{X}/{pred}_lp_{Y}).
 
         Args:
             coord: Experiment coordinate.
