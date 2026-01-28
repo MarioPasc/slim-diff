@@ -1,12 +1,14 @@
-"""End-to-end orchestration for ICIP 2026 similarity metrics pipeline.
+"""End-to-end orchestration for ICIP 2026 image-to-image similarity metrics.
 
-Executes the full pipeline:
+Executes the image metrics pipeline:
 1. Load real data
 2. Compute metrics per experiment (KID, FID, LPIPS)
 3. Compute baseline (real vs real)
 4. Compute per-zbin metrics
 5. Statistical analysis
 6. Generate plots
+
+Note: For mask metrics (MMD-MF), use the separate mask-metrics command.
 """
 
 from __future__ import annotations
@@ -44,9 +46,9 @@ def run_full_pipeline(
     n_lpips_pairs: int = 1000,
     test_csv: Path | None = None,
     create_publication_figure: bool = True,
-    compute_mask_metrics: bool = True,
+    compute_mask_metrics: bool = False,
 ) -> dict[str, Any]:
-    """Execute full ICIP 2026 similarity metrics pipeline.
+    """Execute ICIP 2026 image-to-image similarity metrics pipeline (KID, FID, LPIPS).
 
     Args:
         runs_dir: Path to ICIP runs directory containing experiment folders.
@@ -217,8 +219,8 @@ def run_full_pipeline(
                     coord, replica_id, channel="mask"
                 )
 
-                # Compute MMD-MF
-                mmd_result = mmd_mf_computer.compute(
+                # Compute MMD-MF (returns tuple: result, real_features, synth_features)
+                mmd_result, _, _ = mmd_mf_computer.compute(
                     real_masks, synth_masks, show_progress=False
                 )
                 print(f"MMD-MF={mmd_result.value:.5f}", end=" ", flush=True)

@@ -3,7 +3,8 @@
 Entry point: jsddpm-similarity-metrics
 
 Commands:
-    compute-all: Full pipeline for ICIP 2026 experiments
+    image-metrics: Image-to-image metrics (KID, FID, LPIPS)
+    mask-metrics: Mask morphology metrics (MMD-MF)
     baseline: Compute real train-test baseline
     compare: Statistical comparison from existing CSV
     plot: Generate plots from existing CSV
@@ -75,8 +76,8 @@ def merge_config_with_args(config: dict, args: argparse.Namespace) -> dict:
     return merged
 
 
-def cmd_compute_all(args: argparse.Namespace) -> int:
-    """Run full metric computation pipeline.
+def cmd_image_metrics(args: argparse.Namespace) -> int:
+    """Run image-to-image metrics pipeline (KID, FID, LPIPS).
 
     Args:
         args: Parsed arguments.
@@ -480,8 +481,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Full pipeline with config file
-    jsddpm-similarity-metrics compute-all --config config/icip2026.yaml
+    # Image-to-image metrics (KID, FID, LPIPS)
+    jsddpm-similarity-metrics image-metrics --config config/icip2026.yaml
 
     # Mask metrics only (MMD-MF) - fast, no GPU needed
     jsddpm-similarity-metrics mask-metrics --config config/pred_type_lp_norm.yaml
@@ -504,10 +505,10 @@ Examples:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # ===== compute-all =====
+    # ===== image-metrics =====
     p_all = subparsers.add_parser(
-        "compute-all",
-        help="Run full similarity metrics pipeline",
+        "image-metrics",
+        help="Compute image-to-image similarity metrics (KID, FID, LPIPS)",
     )
     p_all.add_argument(
         "--config", "-c",
@@ -558,7 +559,7 @@ Examples:
         action="store_true",
         help="Skip per-zbin metric computation (faster)",
     )
-    p_all.set_defaults(func=cmd_compute_all)
+    p_all.set_defaults(func=cmd_image_metrics)
 
     # ===== baseline =====
     p_base = subparsers.add_parser(
