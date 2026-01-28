@@ -17,7 +17,7 @@
 ablation:
   axes:
     self_cond_p:
-      values: [0.0, 0.5, 0.8]
+      values: [0.0]  # Fixed at 0.0 for this analysis
       display_format: "{:.1f}"
       folder_format: "self_cond_p_{value}"
     prediction_type:
@@ -30,12 +30,12 @@ ablation:
       folder_format: "lp_{value}"
 
   hierarchy: ["self_cond_p", "prediction_type_lp_norm"]
-  default_self_cond_p: 0.5
+  default_self_cond_p: 0.0
 
   # Filter experiments to process (empty = all discovered experiments)
-  # For mask analysis, focus on self_cond_p=0.5 only (9 configurations)
+  # Fixed self_cond_p=0.0, sweeping prediction_type × lp_norm (9 configurations)
   include:
-    - self_cond_p: 0.5
+    - self_cond_p: 0.0
 
 # =============================================================================
 # Cross-Experiment Comparison Configuration
@@ -48,13 +48,7 @@ comparison:
     - name: "by_lp_norm"
       varying_axis: "lp_norm"
       fixed_axes: {}
-    - name: "by_self_cond_p"
-      varying_axis: "self_cond_p"
-      fixed_axes: {}
-    - name: "x0_self_cond_sweep"
-      varying_axis: "self_cond_p"
-      fixed_axes:
-        prediction_type: "x0"
+    # self_cond_p analyses removed (fixed at 0.0)
 
 # =============================================================================
 # Path Configuration

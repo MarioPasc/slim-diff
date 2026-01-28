@@ -35,7 +35,7 @@ ablation:
   # Filter experiments to process (empty = all discovered experiments)
   # For mask analysis, focus on self_cond_p=0.5 only (9 configurations)
   include:
-    - self_cond_p: 0.5
+    - self_cond_p: 0.0
 
 # =============================================================================
 # Cross-Experiment Comparison Configuration
