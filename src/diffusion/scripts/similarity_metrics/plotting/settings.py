@@ -90,6 +90,9 @@ LP_NORM_STYLES = {
     2.5: ":",     # Dotted
 }
 
+# Alias for clarity in line plots
+LP_NORM_LINESTYLES = LP_NORM_STYLES
+
 LP_NORM_MARKERS = {
     1.5: "o",     # Circle
     2.0: "s",     # Square

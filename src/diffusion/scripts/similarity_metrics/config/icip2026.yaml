@@ -125,6 +125,24 @@ metrics:
     # Pairs per z-bin (fewer available samples per bin)
     n_pairs_per_zbin: 100
 
+  feature_nn:
+    enabled: true
+    # Batch size for InceptionV3 feature extraction
+    batch_size: 32
+    # Chunk size for distance matrix computation (memory management)
+    # Larger = faster but more memory; smaller = slower but less memory
+    chunk_size: 1000
+    # Compute per-zbin NN distances
+    per_zbin: true
+    # Minimum samples per z-bin for computation
+    min_samples_per_zbin: 10
+    # Metrics to compute:
+    # - synth_to_real: Distance from synthetic to nearest real (novelty/memorization)
+    # - real_to_synth: Distance from real to nearest synthetic (coverage)
+    metrics:
+      - synth_to_real
+      - real_to_synth
+
 # =============================================================================
 # Compute Configuration
 # =============================================================================

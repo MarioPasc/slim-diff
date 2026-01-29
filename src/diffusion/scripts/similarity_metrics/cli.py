@@ -360,6 +360,265 @@ def cmd_mask_metrics(args: argparse.Namespace) -> int:
     return run_mask_metrics_main(mask_args)
 
 
+def cmd_feature_nn(args: argparse.Namespace) -> int:
+    """Compute nearest neighbor distances in feature space.
+
+    Args:
+        args: Parsed arguments.
+
+    Returns:
+        Exit code.
+    """
+    import torch
+    import pandas as pd
+    from tqdm import tqdm
+
+    from .metrics.feature_nn import FeatureNNComputer, compute_per_zbin_nn
+    from .data.loaders import ICIPExperimentLoader
+    from .plotting.nn_comparison import (
+        plot_nn_boxplots,
+        plot_nn_zbin_lines,
+        create_nn_summary_figure,
+    )
+
+    # Load config
+    config = load_config(args.config)
+    paths = config.get("paths", {})
+
+    # Determine paths
+    runs_dir = args.runs_dir or paths.get("runs_dir")
+    cache_dir = args.cache_dir or paths.get("cache_dir")
+    output_dir = args.output_dir or paths.get("output_dir")
+
+    if not runs_dir:
+        print("Error: --runs-dir is required (or set in config)")
+        return 1
+    if not cache_dir:
+        print("Error: --cache-dir is required (or set in config)")
+        return 1
+    if not output_dir:
+        print("Error: --output-dir is required (or set in config)")
+        return 1
+
+    # Create output directory
+    from pathlib import Path
+    output_dir = Path(output_dir)
+    nn_output_dir = output_dir / "feature_nn"
+    nn_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get NN config from config file
+    nn_config = config.get("metrics", {}).get("feature_nn", {})
+    device = args.device or nn_config.get("device", "cuda:0")
+    batch_size = args.batch_size or nn_config.get("batch_size", 32)
+    chunk_size = args.chunk_size or nn_config.get("chunk_size", 1000)
+
+    print("=" * 70)
+    print("FEATURE-SPACE NEAREST NEIGHBOR DISTANCE COMPUTATION")
+    print("=" * 70)
+    print(f"Runs directory: {runs_dir}")
+    print(f"Cache directory: {cache_dir}")
+    print(f"Output directory: {nn_output_dir}")
+    print(f"Device: {device}")
+    print(f"Batch size: {batch_size}")
+    print(f"Chunk size: {chunk_size}")
+    print("=" * 70)
+
+    # Initialize experiment loader
+    loader = ICIPExperimentLoader(runs_dir, cache_dir)
+    print(f"\nDiscovered {len(loader.experiments)} experiments")
+
+    # Load real data
+    print("\nLoading real test data...")
+    real_images, real_zbins = loader.load_real_data(splits=["test"])
+    print(f"Loaded {len(real_images)} real test images")
+
+    # Initialize NN computer
+    computer = FeatureNNComputer(
+        device=device,
+        batch_size=batch_size,
+        chunk_size=chunk_size,
+    )
+
+    # Extract real features once (reused for all experiments)
+    print("\nExtracting features from real images...")
+    real_features = computer.feature_extractor.extract_features(
+        real_images, show_progress=True
+    )
+    print(f"Real features shape: {real_features.shape}")
+
+    # Compute NN distances per experiment
+    global_results = []
+    zbin_results = []
+
+    for coord in tqdm(list(loader.iter_experiments()), desc="Experiments"):
+        exp_name = coord.to_display_name()
+
+        # Filter by self_cond_p if specified
+        if args.self_cond_p is not None and coord.self_cond_p != args.self_cond_p:
+            continue
+
+        if args.verbose:
+            print(f"\n--- {exp_name} ---")
+
+        replica_paths = loader.get_replica_paths(coord)
+
+        for replica_path in replica_paths:
+            replica_id = int(replica_path.stem.split("_")[-1])
+
+            if args.verbose:
+                print(f"  Replica {replica_id}...", end=" ", flush=True)
+
+            # Load replica
+            synth_images, synth_zbins = loader.load_replica(coord, replica_id)
+
+            # Extract synthetic features
+            synth_features = computer.feature_extractor.extract_features(
+                synth_images, show_progress=False
+            )
+
+            # Compute NN distances from pre-extracted features
+            result = computer.compute_from_features(
+                real_features=real_features,
+                synth_features=synth_features,
+                show_progress=False,
+            )
+
+            global_results.append({
+                "experiment": exp_name,
+                "prediction_type": coord.prediction_type,
+                "lp_norm": coord.lp_norm,
+                "self_cond_p": coord.self_cond_p,
+                "replica_id": replica_id,
+                "n_real": result.n_real,
+                "n_synth": result.n_synth,
+                "synth_to_real_mean": result.synth_to_real_mean,
+                "synth_to_real_std": result.synth_to_real_std,
+                "synth_to_real_median": result.synth_to_real_median,
+                "real_to_synth_mean": result.real_to_synth_mean,
+                "real_to_synth_std": result.real_to_synth_std,
+                "real_to_synth_median": result.real_to_synth_median,
+            })
+
+            if args.verbose:
+                print(f"S->R: {result.synth_to_real_mean:.3f}, R->S: {result.real_to_synth_mean:.3f}")
+
+            # Clear GPU memory
+            torch.cuda.empty_cache()
+
+    # Save global results
+    df_global = pd.DataFrame(global_results)
+    global_csv = nn_output_dir / "feature_nn_global.csv"
+    df_global.to_csv(global_csv, index=False)
+    print(f"\nSaved global NN metrics: {global_csv}")
+
+    # Compute per-zbin if requested
+    df_zbin = None
+    if args.compute_per_zbin:
+        print("\n--- Computing per-zbin NN distances ---")
+
+        for coord in tqdm(list(loader.iter_experiments()), desc="Per-zbin NN"):
+            if args.self_cond_p is not None and coord.self_cond_p != args.self_cond_p:
+                continue
+
+            exp_name = coord.to_display_name()
+
+            # Merge all replicas for this experiment
+            synth_images, synth_zbins, _ = loader.load_all_replicas(coord)
+
+            zbin_result = compute_per_zbin_nn(
+                real_images=real_images,
+                real_zbins=real_zbins,
+                synth_images=synth_images,
+                synth_zbins=synth_zbins,
+                device=device,
+                batch_size=batch_size,
+                min_samples=10,
+                show_progress=False,
+            )
+
+            for row in zbin_result:
+                row.update({
+                    "experiment": exp_name,
+                    "prediction_type": coord.prediction_type,
+                    "lp_norm": coord.lp_norm,
+                    "self_cond_p": coord.self_cond_p,
+                })
+                zbin_results.append(row)
+
+            torch.cuda.empty_cache()
+
+        if zbin_results:
+            df_zbin = pd.DataFrame(zbin_results)
+            zbin_csv = nn_output_dir / "feature_nn_zbin.csv"
+            df_zbin.to_csv(zbin_csv, index=False)
+            print(f"Saved per-zbin NN metrics: {zbin_csv}")
+
+    # Generate plots if requested
+    if args.generate_plots:
+        print("\n--- Generating plots ---")
+        plots_dir = nn_output_dir / "plots"
+        plots_dir.mkdir(exist_ok=True)
+
+        # Get formats from config
+        plot_config = config.get("plotting", {})
+        formats = plot_config.get("formats", ["pdf", "png"])
+
+        try:
+            # Individual boxplots
+            plot_nn_boxplots(
+                df_global,
+                metric_col="synth_to_real_mean",
+                output_dir=plots_dir,
+                formats=formats,
+            )
+            plot_nn_boxplots(
+                df_global,
+                metric_col="real_to_synth_mean",
+                output_dir=plots_dir,
+                formats=formats,
+            )
+
+            # Per-zbin line plots
+            if df_zbin is not None:
+                plot_nn_zbin_lines(
+                    df_zbin,
+                    metric_col="synth_to_real_mean",
+                    output_dir=plots_dir,
+                    formats=formats,
+                )
+
+            # Summary figure
+            create_nn_summary_figure(
+                df_global,
+                df_zbin=df_zbin,
+                output_dir=plots_dir,
+                formats=formats,
+            )
+
+            print(f"Plots saved to: {plots_dir}")
+        except Exception as e:
+            print(f"Warning: Failed to generate plots: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # Print summary
+    print("\n" + "=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    summary = df_global.groupby(["prediction_type", "lp_norm"]).agg({
+        "synth_to_real_mean": ["mean", "std"],
+        "real_to_synth_mean": ["mean", "std"],
+    }).round(4)
+    print(summary)
+
+    print("\n" + "=" * 70)
+    print("COMPUTATION COMPLETE")
+    print("=" * 70)
+    print(f"Output directory: {nn_output_dir}")
+
+    return 0
+
+
 def cmd_plot(args: argparse.Namespace) -> int:
     """Generate plots from existing CSV files or config.
 
@@ -707,6 +966,94 @@ Answers the questions:
         help="Enable verbose (DEBUG) logging",
     )
     p_mask.set_defaults(func=cmd_mask_metrics)
+
+    # ===== feature-nn =====
+    p_nn = subparsers.add_parser(
+        "feature-nn",
+        help="Compute nearest neighbor distances in InceptionV3 feature space",
+        description="""
+Compute nearest neighbor distances between synthetic and real samples in
+InceptionV3 feature space. This helps detect:
+- Mode collapse (many synthetic samples cluster around same real samples)
+- Memorization (very small NN distances suggest copying)
+- Coverage gaps (real samples with no nearby synthetic samples)
+
+Metrics computed per prediction type and Lp norm:
+- synth_to_real: Distance from each synthetic sample to nearest real sample
+- real_to_synth: Distance from each real sample to nearest synthetic sample (coverage)
+
+Examples:
+    # Using config file
+    jsddpm-similarity-metrics feature-nn --config config/icip2026.yaml
+
+    # With explicit paths
+    jsddpm-similarity-metrics feature-nn \\
+        --runs-dir /path/to/runs \\
+        --cache-dir /path/to/cache \\
+        --output-dir /path/to/output
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_nn.add_argument(
+        "--config", "-c",
+        type=str,
+        help="Path to YAML config file",
+    )
+    p_nn.add_argument(
+        "--runs-dir",
+        type=str,
+        help="Path to runs directory (overrides config)",
+    )
+    p_nn.add_argument(
+        "--cache-dir",
+        type=str,
+        help="Path to cache directory (overrides config)",
+    )
+    p_nn.add_argument(
+        "--output-dir",
+        type=str,
+        help="Output directory for results (overrides config)",
+    )
+    p_nn.add_argument(
+        "--self-cond-p",
+        type=float,
+        default=None,
+        help="Filter to specific self-conditioning probability (default: use all)",
+    )
+    p_nn.add_argument(
+        "--device",
+        type=str,
+        default="cuda:0",
+        help="Device for computation (default: cuda:0)",
+    )
+    p_nn.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size for feature extraction (default: 32)",
+    )
+    p_nn.add_argument(
+        "--chunk-size",
+        type=int,
+        default=1000,
+        help="Chunk size for distance computation (default: 1000)",
+    )
+    p_nn.add_argument(
+        "--compute-per-zbin",
+        action="store_true",
+        help="Also compute per-zbin NN distances",
+    )
+    p_nn.add_argument(
+        "--generate-plots",
+        action="store_true",
+        help="Generate visualization plots after computation",
+    )
+    p_nn.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose output",
+    )
+    p_nn.set_defaults(func=cmd_feature_nn)
 
     # ===== plot =====
     p_plot = subparsers.add_parser(

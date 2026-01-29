@@ -14,7 +14,9 @@ from .settings import (
     PREDICTION_TYPE_LABELS,
     LP_NORM_LABELS,
     LP_NORM_STYLES,
+    LP_NORM_LINESTYLES,
     LP_NORM_HATCHES,
+    LP_NORM_MARKERS,
     apply_ieee_style,
     format_metric_label,
     get_significance_stars,
@@ -38,6 +40,13 @@ from .icip2026_figure import (
     create_subplot_legend_lines,
     create_subplot_legend_boxes,
     generate_plots_from_config,
+    generate_latex_metrics_table,
+)
+from .nn_comparison import (
+    plot_nn_boxplots,
+    plot_nn_zbin_lines,
+    plot_nn_histogram,
+    create_nn_summary_figure,
 )
 
 __all__ = [
@@ -47,7 +56,9 @@ __all__ = [
     "PREDICTION_TYPE_LABELS",
     "LP_NORM_LABELS",
     "LP_NORM_STYLES",
+    "LP_NORM_LINESTYLES",
     "LP_NORM_HATCHES",
+    "LP_NORM_MARKERS",
     "apply_ieee_style",
     "format_metric_label",
     "get_significance_stars",
@@ -68,4 +79,10 @@ __all__ = [
     "create_subplot_legend_lines",
     "create_subplot_legend_boxes",
     "generate_plots_from_config",
+    "generate_latex_metrics_table",
+    # NN distance plots
+    "plot_nn_boxplots",
+    "plot_nn_zbin_lines",
+    "plot_nn_histogram",
+    "create_nn_summary_figure",
 ]

@@ -267,41 +267,40 @@ def _plot_mmd_boxplots(
         linewidth=PLOT_SETTINGS["boxplot_linewidth"] * 1.2,
     )
 
-    # Overlay individual points with jitter
+    # Overlay single large marker at median for each boxplot
     for pos, values, color, lp_norm in zip(
         positions, data_to_plot, colors, lp_norms_for_boxes
     ):
-        jitter = np.random.uniform(-box_width * 0.3, box_width * 0.3, len(values))
+        median_val = np.median(values)
         marker = LP_NORM_MARKERS.get(lp_norm, "o")
         ax.scatter(
-            pos + jitter,
-            values,
+            pos,
+            median_val,
             c=color,
             marker=marker,
-            s=PLOT_SETTINGS["marker_size"] ** 2,
-            alpha=0.8,
-            edgecolors="white",
-            linewidths=0.3,
+            s=PLOT_SETTINGS["marker_size"] ** 2 * 4,  # 4x larger marker
+            alpha=0.9,
+            edgecolors="black",
+            linewidths=1.0,
             zorder=3,
         )
 
-    # Highlight best with star
+    # Highlight best with circle around the marker
     if best_box_idx is not None:
         best_pos = positions[best_box_idx]
         best_data = data_to_plot[best_box_idx]
-        q3 = np.percentile(best_data, 75)
-        y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
-        star_y = q3 + y_range * 0.12
+        median_val = np.median(best_data)
 
+        # Draw a hollow circle marker centered on the median marker
+        # Using scatter with 'o' marker ensures perfect circle regardless of axis scaling
         ax.scatter(
             best_pos,
-            star_y,
-            marker="*",
-            s=80,
-            color="gold",
-            edgecolors="black",
-            linewidths=0.4,
-            zorder=4,
+            median_val,
+            s=PLOT_SETTINGS["marker_size"] ** 2 * 16,  # Larger than the data marker
+            facecolors="none",
+            edgecolors="gold",
+            linewidths=1.5,
+            zorder=5,
         )
 
     # Add significance brackets if provided
@@ -791,17 +790,18 @@ def _create_boxplot_legend(
         handles.append(line)
         labels.append("Real baseline")
 
-    # Best marker
-    star = plt.Line2D(
+    # Best marker (circle)
+    circle = plt.Line2D(
         [0],
         [0],
-        marker="*",
-        color="gold",
+        marker="o",
+        color="none",
         markersize=10,
-        markeredgecolor="black",
+        markeredgecolor="gold",
+        markeredgewidth=1.5,
         linestyle="None",
     )
-    handles.append(star)
+    handles.append(circle)
     labels.append("Best config")
 
     ax.legend(

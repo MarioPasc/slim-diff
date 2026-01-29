@@ -109,18 +109,18 @@ def create_unified_legend(
             handles.append(line)
             labels.append(lp_label)
 
-    # Best marker
+    # Best marker (circle)
     if include_best:
-        star = Line2D(
+        circle = Line2D(
             [0], [0],
-            marker="*",
-            color="gold",
-            markersize=8,
-            markeredgecolor="black",
-            markeredgewidth=0.4,
+            marker="o",
+            color="none",
+            markersize=10,
+            markeredgecolor="gold",
+            markeredgewidth=1.5,
             linestyle="None",
         )
-        handles.append(star)
+        handles.append(circle)
         labels.append("Best")
 
     # Determine layout
@@ -217,18 +217,18 @@ def create_subplot_legend_boxes(
         handles.append(patch)
         labels.append(lp_label)
 
-    # Best marker
+    # Best marker (circle)
     if include_best:
-        star = Line2D(
+        circle = Line2D(
             [0], [0],
-            marker="*",
-            color="gold",
-            markersize=8,
-            markeredgecolor="black",
-            markeredgewidth=0.5,
+            marker="o",
+            color="none",
+            markersize=10,
+            markeredgecolor="gold",
+            markeredgewidth=1.5,
             linestyle="None",
         )
-        handles.append(star)
+        handles.append(circle)
         labels.append("Best")
 
     ax.legend(
@@ -1158,6 +1158,170 @@ def create_global_only_figure(
     plt.close(fig)
 
 
+def generate_latex_metrics_table(
+    df_global: pd.DataFrame,
+    df_mask_global: pd.DataFrame | None = None,
+    output_dir: Path | None = None,
+    metrics: list[str] | None = None,
+    caption: str = "Global similarity metrics by prediction type and $L_p$ norm.",
+    label: str = "tab:similarity_metrics",
+    highlight_best: bool = True,
+) -> str:
+    """Generate a LaTeX table with global metrics (KID, LPIPS, MMD-MF).
+
+    Creates a publication-ready LaTeX table with:
+    - Rows: Prediction type × Lp norm configurations
+    - Columns: Selected metrics (mean ± std)
+    - Optional: Best value per column highlighted in bold
+
+    Args:
+        df_global: DataFrame with image metrics (kid_global, lpips_global).
+        df_mask_global: DataFrame with mask metrics (mmd_mf_global). Optional.
+        output_dir: Output directory to save .tex file. If None, only returns string.
+        metrics: List of metrics to include. Default: ["kid_global", "lpips_global", "mmd_mf_global"].
+        caption: LaTeX table caption.
+        label: LaTeX table label for referencing.
+        highlight_best: Whether to bold the best (lowest) value per metric.
+
+    Returns:
+        LaTeX table as a string.
+    """
+    if metrics is None:
+        metrics = ["kid_global", "lpips_global", "mmd_mf_global"]
+
+    # Merge image and mask metrics if both provided
+    if df_mask_global is not None:
+        # Merge on common columns
+        merge_cols = ["prediction_type", "lp_norm", "replica_id"]
+        if "self_cond_p" in df_global.columns and "self_cond_p" in df_mask_global.columns:
+            merge_cols.append("self_cond_p")
+
+        df_combined = pd.merge(
+            df_global,
+            df_mask_global[merge_cols + ["mmd_mf_global"]],
+            on=merge_cols,
+            how="outer",
+        )
+    else:
+        df_combined = df_global.copy()
+
+    # Filter to available metrics
+    available_metrics = [m for m in metrics if m in df_combined.columns]
+    if not available_metrics:
+        raise ValueError(f"No valid metrics found. Available columns: {df_combined.columns.tolist()}")
+
+    # Aggregate by prediction_type and lp_norm
+    agg_funcs = {m: ["mean", "std", "count"] for m in available_metrics}
+    stats = df_combined.groupby(["prediction_type", "lp_norm"]).agg(agg_funcs)
+
+    # Define ordering
+    pred_order = ["epsilon", "velocity", "x0"]
+    lp_order = [1.5, 2.0, 2.5]
+
+    # Find best (lowest) values per metric
+    best_values = {}
+    if highlight_best:
+        for metric in available_metrics:
+            best_values[metric] = stats[(metric, "mean")].min()
+
+    # Metric display names
+    metric_names = {
+        "kid_global": "KID",
+        "lpips_global": "LPIPS",
+        "mmd_mf_global": "MMD-MF",
+        "fid_global": "FID",
+    }
+
+    # Prediction type display names
+    pred_names = {
+        "epsilon": r"$\epsilon$",
+        "velocity": r"$\mathbf{v}$",
+        "x0": r"$\mathbf{x}_0$",
+    }
+
+    # Build LaTeX table
+    lines = []
+
+    # Table header
+    n_metrics = len(available_metrics)
+    col_spec = "ll" + "c" * n_metrics
+    lines.append(r"\begin{table}[htbp]")
+    lines.append(r"  \centering")
+    lines.append(r"  \caption{" + caption + "}")
+    lines.append(r"  \label{" + label + "}")
+    lines.append(r"  \begin{tabular}{" + col_spec + "}")
+    lines.append(r"    \toprule")
+
+    # Column headers
+    header_cols = ["Pred. Type", "$L_p$"] + [metric_names.get(m, m) for m in available_metrics]
+    lines.append("    " + " & ".join(header_cols) + r" \\")
+    lines.append(r"    \midrule")
+
+    # Data rows
+    for pred_type in pred_order:
+        for i, lp_norm in enumerate(lp_order):
+            try:
+                row_data = stats.loc[(pred_type, lp_norm)]
+            except KeyError:
+                continue
+
+            # Prediction type name (only on first row of group)
+            if i == 0:
+                pred_display = pred_names.get(pred_type, pred_type)
+            else:
+                pred_display = ""
+
+            # Lp norm
+            lp_display = f"{lp_norm:.1f}"
+
+            # Metric values
+            metric_cells = []
+            for metric in available_metrics:
+                mean_val = row_data[(metric, "mean")]
+                std_val = row_data[(metric, "std")]
+
+                # Format based on metric scale
+                if metric == "kid_global":
+                    cell = f"{mean_val:.3f} $\\pm$ {std_val:.3f}"
+                elif metric == "lpips_global":
+                    cell = f"{mean_val:.3f} $\\pm$ {std_val:.3f}"
+                elif metric == "mmd_mf_global":
+                    cell = f"{mean_val:.2f} $\\pm$ {std_val:.2f}"
+                else:
+                    cell = f"{mean_val:.3f} $\\pm$ {std_val:.3f}"
+
+                # Highlight best
+                if highlight_best and abs(mean_val - best_values[metric]) < 1e-9:
+                    cell = r"\textbf{" + cell + "}"
+
+                metric_cells.append(cell)
+
+            row = f"    {pred_display} & {lp_display} & " + " & ".join(metric_cells) + r" \\"
+            lines.append(row)
+
+        # Add midrule between prediction types (except after the last one)
+        if pred_type != pred_order[-1]:
+            lines.append(r"    \midrule")
+
+    # Table footer
+    lines.append(r"    \bottomrule")
+    lines.append(r"  \end{tabular}")
+    lines.append(r"\end{table}")
+
+    latex_str = "\n".join(lines)
+
+    # Save to file if output_dir provided
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "metrics_table.tex"
+        with open(output_path, "w") as f:
+            f.write(latex_str)
+        print(f"Saved LaTeX table: {output_path}")
+
+    return latex_str
+
+
 def generate_plots_from_config(
     config_path: Path | str,
     output_subdir: str | None = None,
@@ -1596,6 +1760,28 @@ def generate_plots_from_config(
             print("  Generated summary table")
     except Exception as e:
         print(f"  Warning: Failed to generate summary table: {e}")
+
+    # Generate LaTeX metrics table
+    print("\n--- Generating LaTeX metrics table ---")
+    try:
+        latex_metrics = ["kid_global", "lpips_global"]
+        if add_mask_metrics and df_mask_global is not None:
+            latex_metrics.append("mmd_mf_global")
+
+        latex_str = generate_latex_metrics_table(
+            df_global=df_global,
+            df_mask_global=df_mask_global if add_mask_metrics else None,
+            output_dir=plots_dir,
+            metrics=latex_metrics,
+            caption="Global similarity metrics by prediction type and $L_p$ norm. Best values per metric are highlighted in bold.",
+            label="tab:similarity_metrics",
+            highlight_best=True,
+        )
+        print("  Generated LaTeX table: metrics_table.tex")
+    except Exception as e:
+        print(f"  Warning: Failed to generate LaTeX table: {e}")
+        import traceback
+        traceback.print_exc()
 
     print("\n" + "=" * 70)
     print(f"PLOTS SAVED TO: {plots_dir}")
