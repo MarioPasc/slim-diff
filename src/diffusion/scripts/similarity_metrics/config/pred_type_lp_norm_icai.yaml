@@ -1,6 +1,30 @@
 # ICIP 2026 Similarity Metrics Configuration
 #
 # Default configuration for computing KID, FID, and LPIPS metrics
+# across the 9 ablation study experiments.
+#
+# Usage:
+#   jsddpm-similarity-metrics compute-all --config config/icip2026.yaml
+#
+# CLI arguments override these settings.
+
+# =============================================================================
+# Path Configuration
+# =============================================================================
+paths:
+  # Directory containing experiment folders (e.g., x0_lp_1.5/, epsilon_lp_2.0/)
+  # Each experiment should have a 'replicas/' subdirectory with replica_XXX.npz files
+  runs_dir: /media/hddb/mario/data/epilepsy/synth/
+
+  # Directory containing cached slices with train.csv, val.csv, test.csv
+  cache_dir: /media/hddb/mario/data/epilepsy/real/slice_cache
+
+  # Output directory for results (CSVs, plots, reports)
+  output_dir: /media/hddb/mario/results/epilepsy/icip2026/similarity_metrics
+
+# ICIP 2026 Similarity Metrics Configuration
+#
+# Default configuration for computing KID, FID, and LPIPS metrics
 # across the multi-axis ablation study experiments.
 #
 # Usage:
@@ -17,9 +41,9 @@
 ablation:
   axes:
     self_cond_p:
-      values: [0.0]  # Fixed at 0.0 for this analysis
+      values: [0.0, 0.5, 0.8]
       display_format: "{:.1f}"
-      folder_format: "self_cond_p_{value}"
+      folder_format: "self_cond_p{value}"
     prediction_type:
       values: ["epsilon", "velocity", "x0"]
       display_format: "{}"
@@ -30,12 +54,10 @@ ablation:
       folder_format: "lp_{value}"
 
   hierarchy: ["self_cond_p", "prediction_type_lp_norm"]
-  default_self_cond_p: 0.0
+  default_self_cond_p: 0.5
 
   # Filter experiments to process (empty = all discovered experiments)
-  # Fixed self_cond_p=0.0, sweeping prediction_type × lp_norm (9 configurations)
-  include:
-    - self_cond_p: 0.0
+  include: []
 
 # =============================================================================
 # Cross-Experiment Comparison Configuration
@@ -48,21 +70,13 @@ comparison:
     - name: "by_lp_norm"
       varying_axis: "lp_norm"
       fixed_axes: {}
-    # self_cond_p analyses removed (fixed at 0.0)
-
-# =============================================================================
-# Path Configuration
-# =============================================================================
-paths:
-  # Directory containing experiment folders in hierarchical structure
-  # Structure: {runs_dir}/self_cond_p{X}/{pred_type}_lp_{Y}/replicas/
-  runs_dir: /media/hddb/mario/data/epilepsy/synth/
-
-  # Directory containing cached slices with train.csv, val.csv, test.csv
-  cache_dir: /media/hddb/mario/data/epilepsy/real/slice_cache
-
-  # Output directory for results (CSVs, plots, reports)
-  output_dir: /media/hddb/mario/results/epilepsy/icip2026/similarity_metrics
+    - name: "by_self_cond_p"
+      varying_axis: "self_cond_p"
+      fixed_axes: {}
+    - name: "x0_self_cond_sweep"
+      varying_axis: "self_cond_p"
+      fixed_axes:
+        prediction_type: "x0"
 
 # =============================================================================
 # Experiment Configuration (legacy - preserved for backward compatibility)
@@ -121,30 +135,23 @@ metrics:
     # Pairs per z-bin (fewer available samples per bin)
     n_pairs_per_zbin: 100
 
-  # Mask morphology distance (MMD-MF) - evaluates generated mask quality
-  # Computes MMD on morphological features (area, circularity, solidity, etc.)
-  mask_morphology:
+  feature_nn:
     enabled: true
-    # Minimum lesion size to include (pixels)
-    min_lesion_size_px: 5
-    # Features to extract (null = all 9 features)
-    # Options: area, perimeter, circularity, solidity, extent, eccentricity,
-    #          major_axis_length, minor_axis_length, equivalent_diameter
-    features: null
-    # MMD subset size (number of lesions per subset)
-    subset_size: 500
-    # Number of subsets for variance estimation
-    num_subsets: 100
-    # Polynomial kernel degree
-    degree: 3
-    # Z-score normalize features before MMD
-    normalize_features: true
-    # Compute per-feature Wasserstein distances for diagnostic breakdown
-    compute_wasserstein: true
-    # Per-zbin computation (uses smaller subsets)
-    per_zbin: false
-    per_zbin_subset_size: 200
-    per_zbin_num_subsets: 50
+    # Batch size for InceptionV3 feature extraction
+    batch_size: 32
+    # Chunk size for distance matrix computation (memory management)
+    # Larger = faster but more memory; smaller = slower but less memory
+    chunk_size: 1000
+    # Compute per-zbin NN distances
+    per_zbin: true
+    # Minimum samples per z-bin for computation
+    min_samples_per_zbin: 10
+    # Metrics to compute:
+    # - synth_to_real: Distance from synthetic to nearest real (novelty/memorization)
+    # - real_to_synth: Distance from real to nearest synthetic (coverage)
+    metrics:
+      - synth_to_real
+      - real_to_synth
 
 # =============================================================================
 # Compute Configuration
