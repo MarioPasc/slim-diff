@@ -31,6 +31,7 @@ class MetricResult:
 def preprocess_for_inception(
     images: np.ndarray,
     target_size: int = 299,
+    output_uint8: bool = True,
 ) -> torch.Tensor:
     """Prepare single-channel images for InceptionV3.
 
@@ -38,13 +39,16 @@ def preprocess_for_inception(
         1. Denormalize [-1, 1] -> [0, 1]
         2. Replicate channel: (N, H, W) -> (N, 3, H, W)
         3. Resize to 299x299 using bilinear interpolation
+        4. Convert to uint8 [0, 255] (required by torchmetrics)
 
     Args:
         images: (N, H, W) float32 array in [-1, 1].
         target_size: Target spatial size (default: 299 for InceptionV3).
+        output_uint8: If True, output uint8 [0, 255] for torchmetrics compatibility.
 
     Returns:
-        Tensor: (N, 3, 299, 299) float32 tensor in [0, 1].
+        Tensor: (N, 3, 299, 299) tensor. uint8 in [0, 255] if output_uint8=True,
+                otherwise float32 in [0, 1].
     """
     # Denormalize [-1, 1] -> [0, 1]
     images = (images + 1.0) / 2.0
@@ -65,6 +69,10 @@ def preprocess_for_inception(
             mode="bilinear",
             align_corners=False,
         )
+
+    # Convert to uint8 [0, 255] for torchmetrics compatibility
+    if output_uint8:
+        images = (images * 255).to(torch.uint8)
 
     return images
 
