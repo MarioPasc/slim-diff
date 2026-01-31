@@ -256,16 +256,22 @@ def between_group_comparison(
     if not np.isnan(p_value) and p_value < alpha:
         if HAS_POSTHOCS:
             try:
-                # Prepare data for posthoc test
+                # Prepare data for posthoc test as DataFrame
                 all_values = []
                 all_groups = []
                 for g, values in group_values.items():
-                    all_values.extend(values)
+                    all_values.extend(values.tolist() if hasattr(values, 'tolist') else list(values))
                     all_groups.extend([g] * len(values))
 
+                # Create DataFrame for posthoc_dunn (required format for scikit-posthocs >= 0.8)
+                posthoc_data = pd.DataFrame({
+                    'value': all_values,
+                    'group': all_groups,
+                })
                 posthoc_df = sp.posthoc_dunn(
-                    all_values,
-                    all_groups,
+                    posthoc_data,
+                    val_col='value',
+                    group_col='group',
                     p_adjust="fdr_bh",
                 )
 

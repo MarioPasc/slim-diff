@@ -336,6 +336,7 @@ def _add_significance_brackets(
     comparison_results: dict[str, Any],
     groups: list[str],
     group_spacing: float,
+    show_all_comparisons: bool = True,
 ) -> None:
     """Add significance brackets between prediction types.
 
@@ -344,15 +345,18 @@ def _add_significance_brackets(
         comparison_results: Dict from between_group_comparison().
         groups: List of prediction types.
         group_spacing: Spacing between group centers.
+        show_all_comparisons: Whether to show all comparisons including non-significant
+            ones (labeled "n.s."). If False, only significant comparisons are shown.
     """
     posthoc_pvalues = comparison_results.get("posthoc_pvalues", {})
     posthoc_significant = comparison_results.get("posthoc_significant", {})
     effect_sizes = comparison_results.get("effect_sizes", {})
 
-    # Collect significant comparisons
-    significant_comps = []
+    # Collect comparisons to display
+    comparisons_to_show = []
     for comp_key, p_val in posthoc_pvalues.items():
-        if not posthoc_significant.get(comp_key, False):
+        # Skip non-significant comparisons if show_all_comparisons is False
+        if not show_all_comparisons and not posthoc_significant.get(comp_key, False):
             continue
 
         parts = comp_key.split("_vs_")
@@ -370,10 +374,10 @@ def _add_significance_brackets(
             idx1, idx2 = idx2, idx1
 
         span = idx2 - idx1
-        significant_comps.append((span, idx1, idx2, comp_key, p_val))
+        comparisons_to_show.append((span, idx1, idx2, comp_key, p_val))
 
     # Sort by span
-    significant_comps.sort(key=lambda x: (x[0], x[1]))
+    comparisons_to_show.sort(key=lambda x: (x[0], x[1]))
 
     # Get y-axis limits
     y_min, y_max = ax.get_ylim()
@@ -383,7 +387,7 @@ def _add_significance_brackets(
     bracket_increment = y_range * 0.35
     bracket_height = y_range * 0.02
 
-    for span, idx1, idx2, comp_key, p_val in significant_comps:
+    for span, idx1, idx2, comp_key, p_val in comparisons_to_show:
         x1 = idx1 * group_spacing
         x2 = idx2 * group_spacing
 
@@ -419,7 +423,7 @@ def _add_significance_brackets(
         bracket_y += bracket_increment
 
     # Adjust y-limits
-    if significant_comps:
+    if comparisons_to_show:
         ax.set_ylim(y_min, bracket_y + y_range * 0.02)
 
 

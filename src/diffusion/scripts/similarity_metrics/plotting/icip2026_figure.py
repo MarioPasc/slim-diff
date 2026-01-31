@@ -870,6 +870,13 @@ def create_icip2026_figure_with_masks(
         bbox_y=-0.04,
     )
 
+    # =========================================================================
+    # Limit y-ticks to 1.0 for KID and LPIPS (brackets may extend beyond)
+    # =========================================================================
+    yticks_normalized = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    ax_kid_zbin.set_yticks(yticks_normalized)
+    ax_lpips_zbin.set_yticks(yticks_normalized)
+
     # Save
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1456,6 +1463,13 @@ def generate_plots_from_config(
     if zbin_csv.exists():
         df_zbin = pd.read_csv(zbin_csv)
         print(f"Loaded per-zbin metrics: {len(df_zbin)} rows")
+
+        # Apply same self_cond_p filter to zbin data
+        if include_filters and "self_cond_p" in df_zbin.columns:
+            sc_values = [f.get("self_cond_p") for f in include_filters if "self_cond_p" in f]
+            if sc_values:
+                df_zbin = df_zbin[df_zbin["self_cond_p"].isin(sc_values)]
+                print(f"  Filtered zbin to self_cond_p={sc_values}: {len(df_zbin)} rows")
     else:
         print("Warning: Per-zbin metrics CSV not found, skipping zbin plots")
 

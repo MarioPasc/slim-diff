@@ -1,0 +1,101 @@
+# ICIP 2026 Similarity Metrics Configuration - self_cond_p=0.0
+#
+# Configuration for self_cond_p=0.0 experiments specifically.
+
+# =============================================================================
+# Ablation Configuration - Filter to self_cond_p=0.0 only
+# =============================================================================
+ablation:
+  include:
+    - self_cond_p: 0.0
+
+# =============================================================================
+# Path Configuration
+# =============================================================================
+paths:
+  # Directory containing experiment folders
+  runs_dir: /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/self_cond_ablation
+
+  # Directory containing cached slices with train.csv, val.csv, test.csv
+  cache_dir: /media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache
+
+  # Output directory for results - pointing to self_cond_p_0.0
+  output_dir: /media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/similarity_metrics/self_cond_p_0.0
+
+# =============================================================================
+# Plotting Configuration
+# =============================================================================
+plotting:
+  # Output formats for figures
+  formats:
+    - pdf
+    - png
+
+  # DPI for raster formats
+  dpi: 300
+
+  # IEEE publication style
+  style: ieee
+
+  # Paul Tol colorblind-safe color scheme
+  colors:
+    epsilon: "#EE7733"
+    velocity: "#009988"
+    x0: "#0077BB"
+
+  # Line styles for Lp norms
+  linestyles:
+    1.5: "-"
+    2.0: "--"
+    2.5: ":"
+
+  # Markers for Lp norms
+  markers:
+    1.5: "o"
+    2.0: "s"
+    2.5: "^"
+
+  # Hatch patterns for boxplots
+  hatches:
+    1.5: null
+    2.0: "//"
+    2.5: "\\\\"
+
+  # Show error bands on per-zbin plots
+  show_error_bands: true
+
+  # Show significance brackets on global plots
+  show_significance: true
+
+  # Show effect sizes (Cliff's delta) on significance brackets
+  show_effect_sizes: true
+
+  # Show individual data points on boxplots
+  show_points: true
+
+  # Highlight best configuration with star
+  highlight_best: true
+
+  # Boxplot settings
+  boxplot:
+    width_factor: 0.25
+    whis: [5, 95]
+
+  # Representative MRI images above per-zbin plots
+  images:
+    enabled: true
+    step: 5
+    zoom: 0.18
+    x_offset: 0.075
+    y_offset: -0.35
+
+  # ICIP 2026 publication figure
+  icip2026_figure:
+    enabled: true
+    metrics:
+      - kid
+      - lpips
+    show_subplot_legends: false
+    show_images_on_lpips: true
+    legend_ncol: 8
+    aspect_ratio: 0.55
