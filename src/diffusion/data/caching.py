@@ -520,7 +520,7 @@ def main() -> None:
         cfg.experiment.seed = args.seed
 
     # Setup
-    setup_logger("jsddpm", level=logging.INFO)
+    setup_logger("slimdiff", level=logging.INFO)
     seed_everything(cfg.experiment.seed)
 
     # Build cache

@@ -1,6 +1,6 @@
 """CLI for similarity metrics computation.
 
-Entry point: jsddpm-similarity-metrics
+Entry point: slimdiff-metrics
 
 Commands:
     image-metrics: Image-to-image metrics (KID, FID, LPIPS)
@@ -739,30 +739,30 @@ def cmd_plot(args: argparse.Namespace) -> int:
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        prog="jsddpm-similarity-metrics",
-        description="Compute and analyze similarity metrics (KID, FID, LPIPS, MMD-MF) for JSDDPM experiments",
+        prog="slimdiff-metrics",
+        description="Compute and analyze similarity metrics (KID, FID, LPIPS, MMD-MF) for SLIM-Diff experiments",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
     # Image-to-image metrics (KID, FID, LPIPS)
-    jsddpm-similarity-metrics image-metrics --config config/icip2026.yaml
+    slimdiff-metrics image-metrics --config config/icip2026.yaml
 
     # Mask metrics only (MMD-MF) - fast, no GPU needed
-    jsddpm-similarity-metrics mask-metrics --config config/pred_type_lp_norm.yaml
+    slimdiff-metrics mask-metrics --config config/pred_type_lp_norm.yaml
 
     # Mask metrics with CLI args
-    jsddpm-similarity-metrics mask-metrics \\
+    slimdiff-metrics mask-metrics \\
         --runs-dir /path/to/runs \\
         --cache-dir /path/to/cache \\
         --self-cond-p 0.5
 
     # Compute baseline only
-    jsddpm-similarity-metrics baseline \\
+    slimdiff-metrics baseline \\
         --cache-dir /path/to/slice_cache \\
         --output-dir /path/to/output
 
     # Generate all plots from config (recommended)
-    jsddpm-similarity-metrics plot --config config/icip2026.yaml
+    slimdiff-metrics plot --config config/icip2026.yaml
         """,
     )
 
@@ -984,10 +984,10 @@ Metrics computed per prediction type and Lp norm:
 
 Examples:
     # Using config file
-    jsddpm-similarity-metrics feature-nn --config config/icip2026.yaml
+    slimdiff-metrics feature-nn --config config/icip2026.yaml
 
     # With explicit paths
-    jsddpm-similarity-metrics feature-nn \\
+    slimdiff-metrics feature-nn \\
         --runs-dir /path/to/runs \\
         --cache-dir /path/to/cache \\
         --output-dir /path/to/output
@@ -1068,13 +1068,13 @@ Two modes of operation:
 
 Examples:
     # Config-only mode (recommended)
-    jsddpm-similarity-metrics plot --config config/icip2026.yaml
+    slimdiff-metrics plot --config config/icip2026.yaml
 
     # With custom output subdirectory
-    jsddpm-similarity-metrics plot --config config/icip2026.yaml --output-subdir icip_figures
+    slimdiff-metrics plot --config config/icip2026.yaml --output-subdir icip_figures
 
     # CSV mode (legacy)
-    jsddpm-similarity-metrics plot --global-csv metrics.csv --output-dir plots/
+    slimdiff-metrics plot --global-csv metrics.csv --output-dir plots/
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

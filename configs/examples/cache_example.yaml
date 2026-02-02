@@ -1,0 +1,121 @@
+# SLIM-Diff Slice Cache Configuration Example
+# ============================================
+#
+# This configuration builds a 2D slice cache from 3D MRI volumes for efficient
+# training. The cache stores preprocessed axial slices with metadata.
+#
+# Usage:
+#   slimdiff-cache --config configs/examples/cache_example.yaml
+#
+# Output:
+#   - slices/ directory with .npz files (image, mask, metadata)
+#   - train.csv, val.csv, test.csv index files
+#   - cache_stats.yaml with statistics
+#   - zbin_priors_brain_roi.npz (if postprocessing enabled)
+
+# =============================================================================
+# Experiment Metadata
+# =============================================================================
+experiment:
+  name: "slimdiff_cache_example"
+  output_dir: "./outputs/cache_example"
+  seed: 42
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  # Path where the slice cache will be created
+  # IMPORTANT: Update this path to your desired cache location
+  cache_dir: "/path/to/your/slice_cache"
+
+  # Source data paths (update these to your data locations)
+  # The caching system expects:
+  #   - epilepsy_dir: Directory with epileptic patient volumes
+  #   - control_dir: Directory with healthy control volumes (optional)
+  epilepsy_dir: "/path/to/epilepsy/data"
+  control_dir: "/path/to/control/data"
+
+  # Data loader settings
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+
+  # Transform settings for preprocessing
+  transforms:
+    # Target voxel spacing after resampling (in mm)
+    target_spacing: [1.25, 1.25, 1.25]
+
+    # Region of interest size (volumes are cropped/padded to this size)
+    roi_size: [160, 160, 160]
+
+    # Intensity normalization
+    intensity_norm:
+      type: "percentile"  # Options: "percentile", "minmax"
+      lower: 0.5          # Lower percentile for clipping
+      upper: 99.5         # Upper percentile for clipping
+      b_min: -1.0         # Output range minimum
+      b_max: 1.0          # Output range maximum
+      clip: true          # Clip values outside [b_min, b_max]
+
+  # Slice sampling configuration
+  slice_sampling:
+    # Valid z indices after resampling [min_z, max_z] (inclusive)
+    # Adjust based on your data to exclude slices without brain content
+    z_range: [34, 115]
+
+    # Filter slices with insufficient brain content
+    filter_empty_brain: true
+    brain_threshold: -0.9    # Threshold for brain pixels in [-1, 1] space
+    brain_min_fraction: 0.05 # Minimum fraction of brain pixels required
+
+  # Lesion oversampling (for balanced training)
+  lesion_oversampling:
+    enabled: true
+    mode: "balance"  # "balance" for 50/50, "weight" for manual weighting
+    weight: 3.0      # Only used when mode="weight"
+
+# =============================================================================
+# Conditioning Configuration
+# =============================================================================
+conditioning:
+  # Number of bins for z-position quantization
+  # Higher values = finer spatial control, but more conditions to learn
+  z_bins: 30
+
+  # Use sinusoidal position encoding for z-position
+  use_sinusoidal: true
+  max_z: 159  # Maximum z-index for encoding
+
+  # Classifier-free guidance settings (for training)
+  cfg:
+    enabled: false
+    null_token: 60      # 2 * z_bins
+    dropout_prob: 0.1
+
+# =============================================================================
+# Postprocessing Configuration
+# =============================================================================
+# Z-bin priors are computed during cache building and used for:
+#   1. Anatomical conditioning during generation
+#   2. Post-processing to mask out-of-brain regions
+postprocessing:
+  zbin_priors:
+    enabled: true
+    priors_filename: "zbin_priors_brain_roi.npz"
+
+    # Brain mask extraction parameters
+    prob_threshold: 0.20      # Probability threshold for brain mask
+    dilate_radius_px: 1       # Dilation radius for morphological cleanup
+    gaussian_sigma_px: 0.7    # Gaussian smoothing sigma
+    min_component_px: 500     # Minimum connected component size
+
+    # Special handling for top/bottom slices
+    n_first_bins: 5
+    max_components_for_first_bins: 3
+    relaxed_threshold_factor: 0.1
+
+    fallback: "prior"         # Fallback strategy if extraction fails
+    apply_to: ["validation", "visualization", "generation"]
+    background_value: -1.0    # Value for out-of-brain pixels
+    use_prior_directly: true  # Use prior mask directly vs Otsu

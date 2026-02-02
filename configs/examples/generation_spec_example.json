@@ -1,0 +1,43 @@
+{
+    "_comment": "SLIM-Diff Generation Specification Example (Compact Format)",
+    "_description": "This file specifies what samples to generate from a trained model",
+    "_usage": "slimdiff-generate-spec --spec configs/examples/generation_spec_example.json",
+
+    "checkpoint_path": "/path/to/your/model.ckpt",
+    "config_path": "src/diffusion/config/jsddpm.yaml",
+    "output_dir": "./outputs/generated_samples",
+    "seed": 42,
+    "device": "cuda",
+    "format": "compact",
+
+    "defaults": {
+        "_comment": "Default sample counts applied to all z-bins",
+        "control": 10,
+        "lesion": 10,
+        "zbins": "all"
+    },
+
+    "overrides": [
+        {
+            "_comment": "Generate fewer samples at extreme z-bins (less brain content)",
+            "zbin": 0,
+            "control": 5,
+            "lesion": 2
+        },
+        {
+            "zbin": 1,
+            "control": 5,
+            "lesion": 2
+        },
+        {
+            "zbin": 28,
+            "control": 5,
+            "lesion": 2
+        },
+        {
+            "zbin": 29,
+            "control": 5,
+            "lesion": 2
+        }
+    ]
+}

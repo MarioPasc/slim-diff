@@ -491,7 +491,7 @@ def main() -> None:
         cfg.experiment.output_dir = args.output_dir
 
     # Setup logging
-    setup_logger("jsddpm", level=logging.INFO)
+    setup_logger("slimdiff", level=logging.INFO)
 
     # Train
     train(cfg)

@@ -1,0 +1,126 @@
+# SLIM-Diff Similarity Metrics Configuration Example
+# ==================================================
+#
+# This configuration specifies how to compute similarity metrics between
+# generated and real samples. Supports image metrics (KID, FID, LPIPS)
+# and mask metrics (MMD on morphological features).
+#
+# Usage:
+#   # Image metrics (KID, FID, LPIPS)
+#   slimdiff-metrics image-metrics --config configs/examples/metrics_example.yaml
+#
+#   # Mask metrics (MMD-MF)
+#   slimdiff-metrics mask-metrics --config configs/examples/metrics_example.yaml
+#
+#   # Generate plots
+#   slimdiff-metrics plot --config configs/examples/metrics_example.yaml
+
+# =============================================================================
+# Path Configuration
+# =============================================================================
+paths:
+  # Directory containing experiment runs with generated samples
+  # Structure expected:
+  #   runs_dir/
+  #     experiment_1/
+  #       replica_001/
+  #         generated_samples.csv
+  #         samples/
+  #       replica_002/
+  #       ...
+  #     experiment_2/
+  #     ...
+  runs_dir: "/path/to/your/experiment/runs"
+
+  # Path to slice cache (for loading real samples)
+  cache_dir: "/path/to/your/slice_cache"
+
+  # Output directory for metrics results
+  output_dir: "/path/to/metrics/output"
+
+# =============================================================================
+# Compute Configuration
+# =============================================================================
+compute:
+  # Device for GPU-accelerated metrics (KID, FID, LPIPS, feature extraction)
+  device: "cuda:0"
+
+  # Batch size for feature extraction
+  batch_size: 32
+
+# =============================================================================
+# Metrics Configuration
+# =============================================================================
+metrics:
+  # Kernel Inception Distance (KID)
+  # Lower is better. Measures similarity in InceptionV3 feature space.
+  kid:
+    enabled: true
+    subset_size: 500     # Size of random subsets for MMD estimation
+    num_subsets: 100     # Number of subsets for variance estimation
+
+  # Frechet Inception Distance (FID)
+  # Lower is better. Measures Gaussian similarity in feature space.
+  fid:
+    enabled: true
+
+  # Learned Perceptual Image Patch Similarity (LPIPS)
+  # Lower is better. Measures perceptual similarity.
+  lpips:
+    enabled: true
+    n_pairs: 1000        # Number of random pairs for LPIPS computation
+
+  # Mask morphology metrics (MMD on morphological features)
+  # Evaluates quality of generated lesion masks.
+  mask_morphology:
+    enabled: true
+    min_lesion_size_px: 5    # Minimum lesion size to include
+    subset_size: 500         # MMD subset size
+    num_subsets: 100         # Number of MMD subsets
+
+  # Feature-space nearest neighbor distances
+  # Detects mode collapse and memorization.
+  feature_nn:
+    enabled: false           # Disable by default (computationally expensive)
+    device: "cuda:0"
+    batch_size: 32
+    chunk_size: 1000         # Chunk size for distance computation
+
+# =============================================================================
+# Plotting Configuration
+# =============================================================================
+plotting:
+  # Output formats for figures
+  formats: ["pdf", "png"]
+
+  # DPI for raster formats
+  dpi: 300
+
+  # Figure style
+  style: "seaborn-v0_8-whitegrid"
+
+  # Color palette for different experiment conditions
+  # Uses seaborn color names or hex codes
+  palette: "Set2"
+
+  # Whether to show significance brackets from statistical tests
+  show_significance: true
+
+  # Baseline KID value (real train vs real test)
+  # If not set, will be computed automatically
+  baseline_kid: null
+
+# =============================================================================
+# Statistical Analysis Configuration
+# =============================================================================
+statistics:
+  # Significance level for hypothesis tests
+  alpha: 0.05
+
+  # Multiple comparison correction method
+  correction: "bonferroni"  # Options: "bonferroni", "holm", "fdr_bh"
+
+  # Bootstrap settings for confidence intervals
+  bootstrap:
+    n_iterations: 1000
+    confidence_level: 0.95

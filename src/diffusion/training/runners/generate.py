@@ -377,7 +377,7 @@ def main() -> None:
         classes = [int(x) for x in args.classes.split(",")]
 
     # Setup logging
-    setup_logger("jsddpm", level=logging.INFO)
+    setup_logger("slimdiff", level=logging.INFO)
 
     # Generate
     generate(
