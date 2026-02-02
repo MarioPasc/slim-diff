@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Mario Pascual González", email = "mpascual@uma.es"}
+    {name = "Mario Pascual-González", email = "mpascual@uma.es"},
+    {name = "Ariadna Jiménez-Partinen", email = "ariadna@uma.es"},
+    {name = "Rafael Marcos Luque-Baena", email = "rmluque@uma.es"},
+    {name = "Ezequiel López-Rubio", email = "elr@uma.es"}
 ]
 keywords = [
     "diffusion models",
