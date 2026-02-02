@@ -199,6 +199,10 @@ PLOT_SETTINGS = {
     "legend_columnspacing": 1.0,
     "legend_handletextpad": 0.5,
 
+    # Esto evita que se generen fuentes Type 3 (bitmaps) que IEEE odia.
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+
     # Image display (representative MRI images)
     "image_zoom": 0.12,
     "image_cmap": "gray",
@@ -255,6 +259,9 @@ def apply_ieee_style() -> None:
         "ytick.direction": PLOT_SETTINGS["tick_direction"],
         "xtick.major.width": PLOT_SETTINGS["tick_major_width"],
         "ytick.major.width": PLOT_SETTINGS["tick_major_width"],
+        # Font embedding (IEEE compliant - avoid Type 3 bitmaps)
+        "pdf.fonttype": PLOT_SETTINGS["pdf.fonttype"],
+        "ps.fonttype": PLOT_SETTINGS["ps.fonttype"],
     })
 
 
@@ -309,6 +316,9 @@ def _apply_fallback_ieee_style() -> None:
         "savefig.dpi": PLOT_SETTINGS["dpi_print"],
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.02,
+        # Font embedding (IEEE compliant - avoid Type 3 bitmaps)
+        "pdf.fonttype": PLOT_SETTINGS["pdf.fonttype"],
+        "ps.fonttype": PLOT_SETTINGS["ps.fonttype"],
     })
 
 
