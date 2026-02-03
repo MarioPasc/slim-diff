@@ -1,5 +1,8 @@
 # SLIM-Diff: Shared Latent Image-Mask Diffusion
 
+> [!WARNING]
+> Models weights are to be released in Zenodo, along with a snapshot of the code, upon acceptance
+
 <p align="center">
   <a href="https://arxiv.org/abs/XXXX.XXXXX"><img src="https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg" alt="arXiv"></a>
   <a href="https://doi.org/10.5281/zenodo.XXXXXXX"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg" alt="DOI"></a>
