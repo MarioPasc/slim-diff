@@ -20,7 +20,7 @@ echo "Job started at: $(date)"
 EXPERIMENT_NAME="self_cond_p_0.0_epsilon_lp_1.5"
 CONDA_ENV_NAME="jsddpm"
 
-REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/js-ddpm-epilepsy"
+REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/slim-diff"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
 RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/self_cond_ablation/${EXPERIMENT_NAME}"
 CONFIG_FILE="${REPO_SRC}/slurm/icip2026/self_cond_ablation/self_cond_p_0.0/epsilon_lp_1.5/self_cond_p_0.0_epsilon_lp_1.5.yaml"
