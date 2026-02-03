@@ -63,7 +63,7 @@ conditioning:
 model:
   type: "DiffusionModelUNet"
   spatial_dims: 2
-  in_channels: 4
+  in_channels: 2
   out_channels: 2
   anatomical_conditioning: false
   anatomical_conditioning_method: "concat"
