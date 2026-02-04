@@ -6,7 +6,7 @@
 <p align="center">
   <a href="https://arxiv.org/abs/2602.03372"><img src="https://img.shields.io/badge/arXiv-2602.03372-b31b1b.svg" alt="arXiv"></a>
   <a href="https://doi.org/10.5281/zenodo.18466774"><img src="https://zenodo.org/badge/1122341571.svg" alt="DOI"></a>
-  <a href="https://pypi.org/project/slim-diff/"><img src="https://img.shields.io/pypi/v/slim-diff.svg" alt="PyPI"></a>
+  <a href="https://pypi.org/project/slim-diff/"><img src="https://img.shields.io/pypi/v/slim-diff" alt="PyPI"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
 </p>
