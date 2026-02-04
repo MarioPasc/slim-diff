@@ -91,7 +91,7 @@ model:
   # Path to anatomical encoder configuration file (optional)
   # If specified, loads encoder settings from this YAML file
   # If not specified, uses inline config below for backward compatibility
-  anatomical_encoder_config: "src/diffusion/config/anatomical_encoder.yaml"
+  anatomical_encoder_config: "src/diffusion/config/anatomical_encoder/anatomical_encoder.yaml"
 
   # Inline anatomical encoder configuration (legacy, for backward compatibility)
   # Only used when anatomical_encoder_config is not set

@@ -357,6 +357,7 @@ def load_model_from_checkpoint(
         str(checkpoint_path),
         cfg=cfg,
         map_location=device,
+        weights_only=False,
     )
     lit_module.eval()
     lit_module.to(device)
@@ -704,6 +705,190 @@ def print_dry_run(spec: GenerationSpec) -> None:
     print("=" * 60 + "\n")
 
 
+def visualize_generated_samples(
+    output_dir: Path,
+    max_samples_per_class: int = 8,
+    max_zbins: int = 6,
+    figsize: tuple[int, int] | None = None,
+    save_path: Path | None = None,
+) -> None:
+    """Create a collage visualization of generated samples.
+
+    Creates a grid showing image/mask pairs organized by z-bin and class.
+    Layout: rows = z-bins (with image+mask sub-rows), columns = [control | lesion]
+
+    Args:
+        output_dir: Path to generation output directory.
+        max_samples_per_class: Maximum samples to show per class per z-bin.
+        max_zbins: Maximum number of z-bins to display.
+        figsize: Optional figure size. Auto-calculated if None.
+        save_path: Path to save PNG. Defaults to output_dir/samples_collage.png.
+    """
+    import matplotlib.pyplot as plt
+
+    samples_dir = output_dir / "samples"
+    if not samples_dir.exists():
+        logger.error(f"Samples directory not found: {samples_dir}")
+        return
+
+    # Load all sample files and organize by z-bin and class
+    sample_files = sorted(samples_dir.glob("*.npz"))
+    if not sample_files:
+        logger.error(f"No sample files found in {samples_dir}")
+        return
+
+    # Organize samples: {z_bin: {"control": [...], "lesion": [...]}}
+    samples_by_zbin: dict[int, dict[str, list[Path]]] = {}
+    for f in sample_files:
+        data = np.load(f)
+        z_bin = int(data["z_bin"])
+        class_name = str(data["class_name"])
+
+        if z_bin not in samples_by_zbin:
+            samples_by_zbin[z_bin] = {"control": [], "lesion": []}
+        samples_by_zbin[z_bin][class_name].append(f)
+
+    # Select z-bins to display (evenly spaced if too many)
+    zbins = sorted(samples_by_zbin.keys())
+    if len(zbins) > max_zbins:
+        indices = np.linspace(0, len(zbins) - 1, max_zbins, dtype=int)
+        zbins = [zbins[i] for i in indices]
+
+    # Determine actual number of samples per class (use max found, capped)
+    n_control = min(max_samples_per_class, max(
+        len(samples_by_zbin[z]["control"]) for z in zbins
+    ))
+    n_lesion = min(max_samples_per_class, max(
+        len(samples_by_zbin[z]["lesion"]) for z in zbins
+    ))
+
+    n_zbins = len(zbins)
+    # Columns: control images + control masks + separator + lesion images + lesion masks
+    n_cols = n_control * 2 + n_lesion * 2  # image+mask for each sample
+
+    # Calculate figure size
+    if figsize is None:
+        figsize = (max(n_cols * 1.2, 8), n_zbins * 2.5 + 1)
+
+    fig, axes = plt.subplots(
+        n_zbins, n_cols,
+        figsize=figsize,
+        squeeze=False,
+    )
+
+    # Remove all axes initially
+    for ax_row in axes:
+        for ax in ax_row:
+            ax.axis("off")
+
+    for row_idx, z_bin in enumerate(zbins):
+        zbin_data = samples_by_zbin[z_bin]
+        col_offset = 0
+
+        # Plot control samples (image + mask pairs)
+        control_files = zbin_data["control"][:n_control]
+        for sample_path in control_files:
+            data = np.load(sample_path)
+            image = data["image"]
+            mask = data["mask"]
+
+            # Normalize image for display
+            img_norm = (image - image.min()) / (image.max() - image.min() + 1e-8)
+
+            # Image
+            ax_img = axes[row_idx, col_offset]
+            ax_img.imshow(img_norm, cmap="gray", vmin=0, vmax=1)
+            ax_img.axis("off")
+            if row_idx == 0:
+                ax_img.set_title("Img", fontsize=8, color="blue")
+
+            # Mask
+            ax_mask = axes[row_idx, col_offset + 1]
+            ax_mask.imshow(mask, cmap="gray", vmin=-1, vmax=1)
+            ax_mask.axis("off")
+            if row_idx == 0:
+                ax_mask.set_title("Mask", fontsize=8, color="blue")
+
+            col_offset += 2
+
+        # Fill remaining control columns if needed
+        col_offset = n_control * 2
+
+        # Plot lesion samples (image + mask pairs)
+        lesion_files = zbin_data["lesion"][:n_lesion]
+        for sample_path in lesion_files:
+            data = np.load(sample_path)
+            image = data["image"]
+            mask = data["mask"]
+
+            # Normalize image for display
+            img_norm = (image - image.min()) / (image.max() - image.min() + 1e-8)
+
+            # Image
+            ax_img = axes[row_idx, col_offset]
+            ax_img.imshow(img_norm, cmap="gray", vmin=0, vmax=1)
+            ax_img.axis("off")
+            if row_idx == 0:
+                ax_img.set_title("Img", fontsize=8, color="red")
+
+            # Mask with lesion overlay
+            ax_mask = axes[row_idx, col_offset + 1]
+            # Create RGB to highlight lesions in red
+            mask_rgb = np.stack([img_norm, img_norm, img_norm], axis=-1)
+            lesion_region = mask > 0
+            if lesion_region.any():
+                mask_rgb[lesion_region, 0] = 1.0  # Red channel
+                mask_rgb[lesion_region, 1] *= 0.3
+                mask_rgb[lesion_region, 2] *= 0.3
+            ax_mask.imshow(mask_rgb)
+            ax_mask.axis("off")
+            if row_idx == 0:
+                ax_mask.set_title("Mask", fontsize=8, color="red")
+
+            col_offset += 2
+
+        # Add z-bin label on the left side
+        axes[row_idx, 0].annotate(
+            f"z={z_bin}",
+            xy=(-0.3, 0.5),
+            xycoords="axes fraction",
+            fontsize=9,
+            fontweight="bold",
+            ha="right",
+            va="center",
+        )
+
+    # Add section labels
+    fig.text(
+        0.25, 0.98, "Control",
+        ha="center", fontsize=12, fontweight="bold", color="blue",
+    )
+    fig.text(
+        0.75, 0.98, "Lesion",
+        ha="center", fontsize=12, fontweight="bold", color="red",
+    )
+
+    # Add title
+    fig.suptitle(
+        f"Generated Samples: {output_dir.name}",
+        fontsize=14,
+        fontweight="bold",
+        y=1.02,
+    )
+
+    plt.tight_layout()
+
+    # Save figure
+    if save_path is None:
+        save_path = output_dir / "samples_collage.png"
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
+    logger.info(f"Saved samples collage to {save_path}")
+
+    plt.close(fig)
+
+
 def main() -> None:
     """CLI entrypoint for JSON-based generation."""
     parser = argparse.ArgumentParser(
@@ -713,6 +898,12 @@ def main() -> None:
 Examples:
     # Standard generation
     slimdiff-generate-spec --spec generation_spec.json
+
+    # Generate and create visualization collage
+    slimdiff-generate-spec --spec spec.json --visualize
+
+    # Visualize existing samples (without regenerating)
+    slimdiff-generate-spec --spec spec.json --visualize-only
 
     # Validate specification without generating
     slimdiff-generate-spec --spec spec.json --validate-only
@@ -779,6 +970,28 @@ The "zbins" field supports: "all", ranges like "0-29", or lists like "0,5,10,15"
         action="store_true",
         help="Enable verbose output",
     )
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="Create collage visualization after generation",
+    )
+    parser.add_argument(
+        "--visualize-only",
+        action="store_true",
+        help="Only create visualization from existing samples (skip generation)",
+    )
+    parser.add_argument(
+        "--max-samples-per-class",
+        type=int,
+        default=8,
+        help="Max samples per class (control/lesion) in visualization (default: 8)",
+    )
+    parser.add_argument(
+        "--max-zbins",
+        type=int,
+        default=6,
+        help="Max z-bins to show in visualization (default: 6)",
+    )
 
     args = parser.parse_args()
 
@@ -844,6 +1057,20 @@ The "zbins" field supports: "all", ranges like "0-29", or lists like "0,5,10,15"
         print_dry_run(spec)
         return
 
+    # Handle visualize-only mode
+    if args.visualize_only:
+        if not spec.output_dir.exists():
+            logger.error(f"Output directory not found: {spec.output_dir}")
+            logger.error("Cannot visualize - no samples exist. Run generation first.")
+            return
+        logger.info(f"Creating visualization from existing samples in {spec.output_dir}")
+        visualize_generated_samples(
+            output_dir=spec.output_dir,
+            max_samples_per_class=args.max_samples_per_class,
+            max_zbins=args.max_zbins,
+        )
+        return
+
     # Set seed
     seed_everything(spec.seed)
 
@@ -891,6 +1118,15 @@ The "zbins" field supports: "all", ranges like "0-29", or lists like "0,5,10,15"
 
     logger.info(f"Generation complete! Saved {len(metadata)} samples to {spec.output_dir}")
     logger.info(f"Time elapsed: {elapsed_time:.1f}s ({len(metadata)/elapsed_time:.2f} samples/sec)")
+
+    # Create visualization if requested
+    if args.visualize:
+        logger.info("Creating samples visualization collage...")
+        visualize_generated_samples(
+            output_dir=spec.output_dir,
+            max_samples_per_class=args.max_samples_per_class,
+            max_zbins=args.max_zbins,
+        )
 
 
 if __name__ == "__main__":

@@ -496,7 +496,12 @@ class DiffusionSampler:
                 raise ValueError(f"x_T shape {x_T.shape} != expected {shape}")
             x_t = x_T.to(device=self.device, dtype=torch.float32)
         else:
-            x_t = torch.randn(shape, device=self.device, generator=generator)
+            # Generate on CPU with generator for reproducibility, then move to device
+            # (generator device must match randn device)
+            if generator is not None:
+                x_t = torch.randn(shape, generator=generator).to(self.device)
+            else:
+                x_t = torch.randn(shape, device=self.device)
         self.scheduler.set_timesteps(self.num_inference_steps)
 
         # Initialize self-conditioning signal (zeros for first step, then previous x0 estimate)

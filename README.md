@@ -4,7 +4,7 @@
 > Models weights are to be released in Zenodo, along with a snapshot of the code, upon acceptance
 
 <p align="center">
-  <a href="https://arxiv.org/abs/XXXX.XXXXX"><img src="https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg" alt="arXiv"></a>
+  <a href="https://arxiv.org/abs/2602.03372"><img src="https://img.shields.io/badge/arXiv-2602.03372-b31b1b.svg" alt="arXiv"></a>
   <a href="https://doi.org/10.5281/zenodo.18466774"><img src="https://zenodo.org/badge/1122341571.svg" alt="DOI"></a>
   <a href="https://pypi.org/project/slim-diff/"><img src="https://img.shields.io/pypi/v/slim-diff.svg" alt="PyPI"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
@@ -82,63 +82,21 @@ pip install -e ".[dev]"
 
 We provide pretrained weights for all model configurations evaluated in our paper. Models are hosted on Zenodo with a permanent DOI for reproducibility.
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
-
 ### Recommended Model
 
-| Model | Prediction | Lₚ | Self-Cond | Description | Download |
-|-------|------------|-----|-----------|-------------|----------|
-| **slimdiff_x0_lp2.25_sc0.5.ckpt** | x₀ | 2.25 | 0.5 | Best overall (paper default) | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_x0_lp2.25_sc0.5.ckpt) |
+| Model | Prediction | Lₚ | Description | Download |
+|-------|------------|-----|-------------|----------|
+| **slimdiff_x0_lp1.5.ckpt** | $x_0$ | 1.5  | Best overall (paper default) | [Download](https://doi.org/10.5281/zenodo.18466774) |
 
-### All Models
 
-<details>
-<summary>Click to expand full model list</summary>
-
-#### x₀-prediction (Recommended for mask quality)
-
-| Model | Lₚ | Self-Cond | Download |
-|-------|-----|-----------|----------|
-| slimdiff_x0_lp1.5_sc0.0.ckpt | 1.5 | 0.0 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_x0_lp1.5_sc0.0.ckpt) |
-| slimdiff_x0_lp2.0_sc0.0.ckpt | 2.0 | 0.0 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_x0_lp2.0_sc0.0.ckpt) |
-| slimdiff_x0_lp2.5_sc0.0.ckpt | 2.5 | 0.0 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_x0_lp2.5_sc0.0.ckpt) |
-| slimdiff_x0_lp1.5_sc0.5.ckpt | 1.5 | 0.5 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_x0_lp1.5_sc0.5.ckpt) |
-| slimdiff_x0_lp2.0_sc0.5.ckpt | 2.0 | 0.5 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_x0_lp2.0_sc0.5.ckpt) |
-| slimdiff_x0_lp2.5_sc0.5.ckpt | 2.5 | 0.5 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_x0_lp2.5_sc0.5.ckpt) |
-
-#### v-prediction
-
-| Model | Lₚ | Self-Cond | Download |
-|-------|-----|-----------|----------|
-| slimdiff_velocity_lp1.5_sc0.0.ckpt | 1.5 | 0.0 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_velocity_lp1.5_sc0.0.ckpt) |
-| slimdiff_velocity_lp2.0_sc0.0.ckpt | 2.0 | 0.0 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_velocity_lp2.0_sc0.0.ckpt) |
-| slimdiff_velocity_lp2.5_sc0.0.ckpt | 2.5 | 0.0 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_velocity_lp2.5_sc0.0.ckpt) |
-| slimdiff_velocity_lp1.5_sc0.5.ckpt | 1.5 | 0.5 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_velocity_lp1.5_sc0.5.ckpt) |
-| slimdiff_velocity_lp2.0_sc0.5.ckpt | 2.0 | 0.5 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_velocity_lp2.0_sc0.5.ckpt) |
-| slimdiff_velocity_lp2.5_sc0.5.ckpt | 2.5 | 0.5 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_velocity_lp2.5_sc0.5.ckpt) |
-
-#### ε-prediction
-
-| Model | Lₚ | Self-Cond | Download |
-|-------|-----|-----------|----------|
-| slimdiff_epsilon_lp1.5_sc0.0.ckpt | 1.5 | 0.0 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_epsilon_lp1.5_sc0.0.ckpt) |
-| slimdiff_epsilon_lp2.0_sc0.0.ckpt | 2.0 | 0.0 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_epsilon_lp2.0_sc0.0.ckpt) |
-| slimdiff_epsilon_lp2.5_sc0.0.ckpt | 2.5 | 0.0 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_epsilon_lp2.5_sc0.0.ckpt) |
-| slimdiff_epsilon_lp1.5_sc0.5.ckpt | 1.5 | 0.5 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_epsilon_lp1.5_sc0.5.ckpt) |
-| slimdiff_epsilon_lp2.0_sc0.5.ckpt | 2.0 | 0.5 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_epsilon_lp2.0_sc0.5.ckpt) |
-| slimdiff_epsilon_lp2.5_sc0.5.ckpt | 2.5 | 0.5 | [Download](https://zenodo.org/record/XXXXXXX/files/slimdiff_epsilon_lp2.5_sc0.5.ckpt) |
-
-</details>
 
 ### Quick Start with Pretrained Model
 
 ```bash
-# Download the recommended model
-wget https://zenodo.org/record/XXXXXXX/files/slimdiff_x0_lp2.25_sc0.5.ckpt
-
-# Generate samples
+# 1. Download the recommended model
+# 2. Generate samples
 slimdiff-generate \
-    --ckpt slimdiff_x0_lp2.25_sc0.5.ckpt \
+    --ckpt slimdiff_x0_lp1.5.pt \
     --config configs/examples/training_example.yaml \
     --out_dir outputs/generated_samples/
 ```
@@ -310,11 +268,14 @@ If you use SLIM-Diff in your research, please cite our paper:
 
 <!-- arXiv preprint (update when published) -->
 ```bibtex
-@article{pascual2025slimdiff,
-    title={{SLIM-Diff}: A Compact Joint Diffusion Model for Low-Data Epilepsy Lesion Synthesis},
-    author={Pascual-Gonz{\'a}lez, Mario and Jim{\'e}nez-Partinen, Ariadna and Luque-Baena, Rafael M. and Nagib-Raya, F{\'a}tima and L{\'o}pez-Rubio, Ezequiel},
-    journal={arXiv preprint arXiv:XXXX.XXXXX},
-    year={2025}
+@misc{pascualgonzález2026slimdiffsharedlatentimagemask,
+      title={SLIM-Diff: Shared Latent Image-Mask Diffusion with Lp loss for Data-Scarce Epilepsy FLAIR MRI}, 
+      author={Mario Pascual-González and Ariadna Jiménez-Partinen and R. M. Luque-Baena and Fátima Nagib-Raya and Ezequiel López-Rubio},
+      year={2026},
+      eprint={2602.03372},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2602.03372}, 
 }
 ```
 
@@ -322,12 +283,14 @@ If you use SLIM-Diff in your research, please cite our paper:
 Accepted at ICIP 2026 - Uncomment and use this citation after acceptance:
 
 ```bibtex
-@inproceedings{pascual2026slimdiff,
-    title={{SLIM-Diff}: A Compact Joint Diffusion Model for Low-Data Epilepsy Lesion Synthesis},
-    author={Pascual-Gonz{\'a}lez, Mario and Jim{\'e}nez-Partinen, Ariadna and Luque-Baena, Rafael M. and Nagib-Raya, F{\'a}tima and L{\'o}pez-Rubio, Ezequiel},
-    booktitle={IEEE International Conference on Image Processing (ICIP)},
-    year={2026},
-    organization={IEEE}
+@misc{pascualgonzález2026slimdiffsharedlatentimagemask,
+      title={SLIM-Diff: Shared Latent Image-Mask Diffusion with Lp loss for Data-Scarce Epilepsy FLAIR MRI}, 
+      author={Mario Pascual-González and Ariadna Jiménez-Partinen and R. M. Luque-Baena and Fátima Nagib-Raya and Ezequiel López-Rubio},
+      year={2026},
+      eprint={2602.03372},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2602.03372}, 
 }
 ```
 -->

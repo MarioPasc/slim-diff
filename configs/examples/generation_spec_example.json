@@ -3,8 +3,8 @@
     "_description": "This file specifies what samples to generate from a trained model",
     "_usage": "slimdiff-generate-spec --spec configs/examples/generation_spec_example.json",
 
-    "checkpoint_path": "/path/to/your/model.ckpt",
-    "config_path": "src/diffusion/config/jsddpm.yaml",
+    "checkpoint_path": "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/self_cond_ablation/self_cond_p_0.0/model_weights/slimdiff_x0_lp1.5/slimdiff_x0_lp1.5.ckpt",
+    "config_path": "/media/mpascual/Sandisk2TB/research/jsddpm/results/epilepsy/icip2026/runs/self_cond_ablation/self_cond_p_0.0/model_weights/slimdiff_x0_lp1.5/config.yaml",
     "output_dir": "./outputs/generated_samples",
     "seed": 42,
     "device": "cuda",
@@ -12,32 +12,10 @@
 
     "defaults": {
         "_comment": "Default sample counts applied to all z-bins",
-        "control": 10,
-        "lesion": 10,
+        "control": 1,
+        "lesion": 1,
         "zbins": "all"
     },
 
-    "overrides": [
-        {
-            "_comment": "Generate fewer samples at extreme z-bins (less brain content)",
-            "zbin": 0,
-            "control": 5,
-            "lesion": 2
-        },
-        {
-            "zbin": 1,
-            "control": 5,
-            "lesion": 2
-        },
-        {
-            "zbin": 28,
-            "control": 5,
-            "lesion": 2
-        },
-        {
-            "zbin": 29,
-            "control": 5,
-            "lesion": 2
-        }
-    ]
+    "overrides": []
 }
