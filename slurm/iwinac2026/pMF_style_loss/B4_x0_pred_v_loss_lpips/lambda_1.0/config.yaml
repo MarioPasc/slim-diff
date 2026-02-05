@@ -1,0 +1,292 @@
+# pMF-Style Loss Ablation: B3a - x0 Prediction + v-Space L2 Loss + LPIPS (lambda=0.1)
+# IWINAC 2026 Experiment
+#
+# Network predicts: x0 (sample)
+# Loss computed in: velocity-space (L2) + LPIPS
+# Perceptual loss: Yes (lambda=0.1)
+#
+# Key insight: pMF with perceptual quality enhancement via LPIPS
+
+# =============================================================================
+# Experiment Metadata
+# =============================================================================
+experiment:
+  name: "iwinac_pmf_B3a_v_loss_lpips_0.1"
+  output_dir: "./outputs/iwinac_pmf_B3a_v_loss_lpips_0.1"
+  seed: 33
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  cache_dir: "/media/mpascual/Sandisk2TB/research/jsddpm/data/epilepsy/slice_cache"
+  batch_size: 16
+  num_workers: 0
+  pin_memory: true
+
+  transforms:
+    target_spacing: [1.25, 1.25, 1.25]
+    roi_size: [160, 160, 160]
+    intensity_norm:
+      type: "percentile"
+      lower: 0.5
+      upper: 99.5
+      b_min: -1.0
+      b_max: 1.0
+      clip: true
+
+  slice_sampling:
+    z_range: [34, 115]
+    filter_empty_brain: true
+    brain_threshold: -0.9
+    brain_min_fraction: 0.05
+
+  lesion_oversampling:
+    enabled: true
+    mode: "balance"
+    weight: 3.0
+
+# =============================================================================
+# Conditioning Configuration
+# =============================================================================
+conditioning:
+  z_bins: 30
+  use_sinusoidal: true
+  max_z: 159
+  cfg:
+    enabled: false
+    null_token: 60
+    dropout_prob: 0.1
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+model:
+  type: "DiffusionModelUNet"
+  spatial_dims: 2
+  in_channels: 2
+  out_channels: 2
+  anatomical_conditioning: false
+  anatomical_conditioning_method: "concat"
+  cross_attention_dim: 256
+  anatomical_encoder:
+    hidden_dims: [32, 64, 128]
+    downsample_factor: 8
+    positional_encoding: "sinusoidal"
+    norm_num_groups: 8
+  channels: [64, 128, 256, 256]
+  attention_levels: [false, false, true, true]
+  num_res_blocks: 2
+  num_head_channels: 32
+  norm_name: "GROUP"
+  norm_num_groups: 32
+  use_class_embedding: true
+  dropout: 0.0
+  resblock_updown: false
+  with_conditioning: false
+
+# =============================================================================
+# Diffusion Scheduler Configuration
+# =============================================================================
+scheduler:
+  type: "DDPM"
+  num_train_timesteps: 1000
+  schedule: "cosine"
+  beta_start: 0.0015
+  beta_end: 0.0195
+  sig_range: 6.0
+  prediction_type: "sample"
+  clip_sample: true
+  clip_sample_range: 1.0
+
+# =============================================================================
+# Sampler Configuration
+# =============================================================================
+sampler:
+  type: "DDIM"
+  num_inference_steps: 300
+  eta: 0.2
+  guidance_scale: 1.0
+
+# =============================================================================
+# Training Configuration
+# =============================================================================
+training:
+  batch_size: 16
+  num_workers: 0
+  pin_memory: true
+  accelerator: "gpu"
+  devices: 1
+  strategy: "auto"
+
+  self_conditioning:
+    enabled: false
+    probability: 0.0
+
+  optimizer:
+    type: "AdamW"
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: null
+    eta_min: 1.0e-6
+
+  max_epochs: 500
+  max_steps: null
+  precision: "16-mixed"
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: "norm"
+  accumulate_grad_batches: 1
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+
+  early_stopping:
+    enabled: true
+    monitor: "val/loss"
+    patience: 25
+    mode: "min"
+
+  ema:
+    enabled: true
+    decay: 0.999
+    update_every: 1
+    update_start_step: 0
+    store_on_cpu: true
+    use_buffers: true
+    use_for_validation: true
+    export_to_checkpoint: true
+
+# =============================================================================
+# Loss Configuration - pMF x0 Loss + LPIPS (lambda=0.1)
+# =============================================================================
+loss:
+  mode: "pmf_v_loss_lpips"
+
+  lp_norm:
+    p: 1.5
+
+  uncertainty_weighting:
+    enabled: false
+    initial_log_vars: [0.0, 0.0]
+    learnable: true
+    clamp_range: [-5.0, 5.0]
+
+  group_uncertainty_weighting:
+    enabled: true
+    initial_log_vars: [0.0, 0.0, 0.0]  # [lp_img, lp_mask, lpips]
+    learnable: true
+    clamp_range: [-5.0, 5.0]
+    intra_group_weights: [1.0, 1.0, 1.0]
+
+  ffl:
+    enabled: false
+    loss_weight: 1.0
+    alpha: 1.35
+    patch_factor: 2
+    ave_spectrum: false
+    log_matrix: true
+    batch_matrix: false
+
+  perceptual:
+    enabled: true
+    vgg_weights_path: null  # Set to weights/lpips/vgg16_features.pth for offline HPC
+    lpips_weights_path: null
+    loss_weight: 1.0  # LAMBDA = 1.0
+    t_threshold: 0.5
+    apply_to_mask: false
+    use_learned_weights: true
+
+  lesion_weighted_image:
+    enabled: true
+    lesion_weight: 1.0
+    background_weight: 1.0
+
+  lesion_weighted_mask:
+    enabled: true
+    lesion_weight: 1.0
+    background_weight: 1.0
+
+# =============================================================================
+# Postprocessing Configuration
+# =============================================================================
+postprocessing:
+  zbin_priors:
+    enabled: false
+    priors_filename: "zbin_priors_brain_roi.npz"
+    prob_threshold: 0.20
+    dilate_radius_px: 1
+    gaussian_sigma_px: 0.7
+    min_component_px: 500
+    n_first_bins: 5
+    max_components_for_first_bins: 3
+    relaxed_threshold_factor: 0.1
+    fallback: "prior"
+    apply_to: ["validation", "visualization", "generation"]
+    background_value: -1.0
+    use_prior_directly: true
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  log_every_n_steps: 50
+  logger:
+    type: "wandb"
+    wandb:
+      project: "jsddpm-epilepsy"
+      entity: "mario-pg02-icai-org"
+      name: "iwinac_pmf_B3a_v_loss_lpips_0.1"
+      tags: ["epilepsy", "diffusion", "jsddpm", "iwinac2026", "pmf_ablation", "x0_pred", "x0_loss", "lpips", "lambda_0.1", "B3"]
+      notes: "IWINAC2026 pMF ablation B3a: x0 prediction + v-space L2 loss + LPIPS (lambda=0.1)"
+      offline: true
+  checkpointing:
+    save_top_k: 1
+    monitor: "val/loss"
+    mode: "min"
+    save_last: false
+    every_n_epochs: 1
+    filename: "jsddpm-{epoch:04d}-{val_loss:.4f}"
+  callbacks:
+    gradient_norm:
+      enabled: true
+      log_every_n_steps: 100
+    snr:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+    prediction_quality:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+      timestep_bins: 10
+
+# =============================================================================
+# Visualization Configuration
+# =============================================================================
+visualization:
+  enabled: true
+  every_n_epochs: 1
+  z_bins_to_show: null
+  n_samples_per_condition: 1
+  overlay:
+    enabled: true
+    alpha: 0.5
+    color: [255, 0, 0]
+    threshold: 0.3
+  save_png: true
+  save_npz: false
+
+# =============================================================================
+# Generation Configuration
+# =============================================================================
+generation:
+  n_per_condition: 100
+  z_bins: null
+  classes: [0, 1]
+  output_format: "npz"
+  save_individual: true
+  create_index_csv: true

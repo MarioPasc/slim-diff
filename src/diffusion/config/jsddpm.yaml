@@ -294,6 +294,19 @@ loss:
     lesion_weight: 2.0  # 2.0x weight for lesion pixels in mask channel (higher since mask is critical)
     background_weight: 1.0
 
+  # Perceptual loss (LPIPS) configuration - used with pMF loss modes
+  # pMF modes: pmf_x0_loss_lpips, pmf_v_loss_lpips
+  # Reference: Zhang et al., "The Unreasonable Effectiveness of Deep Features as a Perceptual Metric", CVPR 2018
+  perceptual:
+    enabled: false  # Enable LPIPS perceptual loss (only for pmf_*_lpips modes)
+    vgg_weights_path: null  # Path to VGG16 weights for offline HPC (null = download)
+    lpips_weights_path: null  # Path to LPIPS linear weights (null = use default init)
+    loss_weight: 0.1  # Scaling factor for LPIPS loss (lambda)
+    t_threshold: 0.5  # Only apply LPIPS when t/T <= threshold (low noise regime)
+                      # 0.5 means LPIPS only active in second half of denoising
+    apply_to_mask: false  # Apply LPIPS to mask channel too (usually false for medical)
+    use_learned_weights: true  # Use learned channel weights (LPIPS v0.1 style)
+
 # =============================================================================
 # Postprocessing Configuration
 # =============================================================================

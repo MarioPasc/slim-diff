@@ -20,6 +20,7 @@ from src.diffusion.losses.uncertainty import (
     UncertaintyWeightedLoss,
 )
 from src.diffusion.losses.focal_frequency_loss import FocalFrequencyLoss
+from src.diffusion.losses.perceptual_loss import LPIPSLoss, create_lpips_loss
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ def lesion_weighted_lp_norm(
 class DiffusionLoss(nn.Module):
     """Complete diffusion loss module.
 
-    Supports two operational modes controlled by loss.mode:
+    Supports multiple operational modes controlled by loss.mode:
 
     1. "mse_channels" (default, original behavior):
        - MSE_image and MSE_mask with per-channel uncertainty weighting
@@ -158,6 +159,35 @@ class DiffusionLoss(nn.Module):
          - Group 0: MSE_image + MSE_mask (spatial losses)
          - Group 1: FFL (frequency loss)
        - Requires x0 and x0_pred to be passed to forward()
+
+    3. "mse_lp_norm":
+       - Lp norm loss instead of MSE with per-channel uncertainty weighting
+       - 2 learnable log_vars (one per channel)
+
+    4. "mse_lp_norm_ffl_groups":
+       - Lp norm with FFL and group-level uncertainty weighting
+
+    pMF-style modes (network predicts x0, loss computed in specified space):
+
+    5. "pmf_x0_loss":
+       - Network predicts x0 (sample)
+       - Loss computed directly on x0 using Lp norm (p=1.5)
+       - No perceptual loss
+
+    6. "pmf_v_loss":
+       - Network predicts x0 (sample)
+       - Loss computed in velocity space (derived from x0_pred)
+       - No perceptual loss
+
+    7. "pmf_x0_loss_lpips":
+       - Network predicts x0 (sample)
+       - Loss computed directly on x0 using Lp norm (p=1.5)
+       - Plus LPIPS perceptual loss on image channel
+
+    8. "pmf_v_loss_lpips":
+       - Network predicts x0 (sample)
+       - Loss computed in velocity space
+       - Plus LPIPS perceptual loss on image channel
     """
 
     def __init__(
@@ -184,6 +214,14 @@ class DiffusionLoss(nn.Module):
             self._init_mse_lp_norm_mode(loss_cfg)
         elif self.mode == "mse_lp_norm_ffl_groups":
             self._init_mse_lp_norm_ffl_groups_mode(loss_cfg)
+        elif self.mode == "pmf_x0_loss":
+            self._init_pmf_x0_loss_mode(loss_cfg)
+        elif self.mode == "pmf_v_loss":
+            self._init_pmf_v_loss_mode(loss_cfg)
+        elif self.mode == "pmf_x0_loss_lpips":
+            self._init_pmf_x0_loss_lpips_mode(loss_cfg)
+        elif self.mode == "pmf_v_loss_lpips":
+            self._init_pmf_v_loss_lpips_mode(loss_cfg)
         else:
             raise ValueError(f"Unknown loss mode: {self.mode}")
 
@@ -304,6 +342,135 @@ class DiffusionLoss(nn.Module):
             f"group_uncertainty learnable={group_cfg.get('learnable', True)}"
         )
 
+    def _init_pmf_x0_loss_mode(self, loss_cfg: DictConfig) -> None:
+        """Initialize for pmf_x0_loss mode (x0 prediction, x0-space Lp loss)."""
+        lp_cfg = loss_cfg.get("lp_norm", {})
+        self.lp_p = lp_cfg.get("p", 1.5)  # Default p=1.5 for pMF
+
+        # Group uncertainty weighting for image and mask channels
+        group_cfg = loss_cfg.get("group_uncertainty_weighting", {})
+        if group_cfg.get("enabled", True):
+            self.loss = GroupUncertaintyWeightedLoss(
+                n_groups=2,
+                group_membership=[0, 1],  # [lp_img, lp_mask] - separate groups
+                initial_log_vars=list(group_cfg.get("initial_log_vars", [0.0, 0.0])),
+                learnable=group_cfg.get("learnable", True),
+                clamp_range=group_cfg.get("clamp_range", (-5.0, 5.0)),
+                intra_group_weights=list(group_cfg.get("intra_group_weights", [1.0, 1.0])),
+            )
+        else:
+            self.loss = SimpleWeightedLoss(weights=[1.0, 1.0])
+
+        self.ffl = None
+        self.lpips = None
+
+        logger.info(
+            f"  pmf_x0_loss mode: p={self.lp_p}, "
+            f"group_uncertainty={group_cfg.get('enabled', True)}"
+        )
+
+    def _init_pmf_v_loss_mode(self, loss_cfg: DictConfig) -> None:
+        """Initialize for pmf_v_loss mode (x0 prediction, v-space L2 loss)."""
+        # v-loss uses L2 (MSE), but we store p for consistency
+        self.lp_p = 2.0
+
+        # Group uncertainty weighting for image and mask channels
+        group_cfg = loss_cfg.get("group_uncertainty_weighting", {})
+        if group_cfg.get("enabled", True):
+            self.loss = GroupUncertaintyWeightedLoss(
+                n_groups=2,
+                group_membership=[0, 1],  # [v_img, v_mask] - separate groups
+                initial_log_vars=list(group_cfg.get("initial_log_vars", [0.0, 0.0])),
+                learnable=group_cfg.get("learnable", True),
+                clamp_range=group_cfg.get("clamp_range", (-5.0, 5.0)),
+                intra_group_weights=list(group_cfg.get("intra_group_weights", [1.0, 1.0])),
+            )
+        else:
+            self.loss = SimpleWeightedLoss(weights=[1.0, 1.0])
+
+        self.ffl = None
+        self.lpips = None
+
+        logger.info(
+            f"  pmf_v_loss mode: L2 v-loss, "
+            f"group_uncertainty={group_cfg.get('enabled', True)}"
+        )
+
+    def _init_pmf_x0_loss_lpips_mode(self, loss_cfg: DictConfig) -> None:
+        """Initialize for pmf_x0_loss_lpips mode (x0 loss + LPIPS)."""
+        lp_cfg = loss_cfg.get("lp_norm", {})
+        self.lp_p = lp_cfg.get("p", 1.5)
+
+        # Group uncertainty weighting: [lp_img, lp_mask, lpips]
+        group_cfg = loss_cfg.get("group_uncertainty_weighting", {})
+        if group_cfg.get("enabled", True):
+            self.loss = GroupUncertaintyWeightedLoss(
+                n_groups=3,
+                group_membership=[0, 1, 2],  # [lp_img, lp_mask, lpips]
+                initial_log_vars=list(group_cfg.get("initial_log_vars", [0.0, 0.0, 0.0])),
+                learnable=group_cfg.get("learnable", True),
+                clamp_range=group_cfg.get("clamp_range", (-5.0, 5.0)),
+                intra_group_weights=list(group_cfg.get("intra_group_weights", [1.0, 1.0, 1.0])),
+            )
+        else:
+            self.loss = SimpleWeightedLoss(weights=[1.0, 1.0, 1.0])
+
+        self.ffl = None
+
+        # Create LPIPS loss from config
+        perceptual_cfg = loss_cfg.get("perceptual", {})
+        self.lpips = LPIPSLoss(
+            weights_path=perceptual_cfg.get("vgg_weights_path"),
+            loss_weight=perceptual_cfg.get("loss_weight", 0.1),
+            t_threshold=perceptual_cfg.get("t_threshold", 0.5),
+            apply_to_mask=perceptual_cfg.get("apply_to_mask", False),
+            use_learned_weights=perceptual_cfg.get("use_learned_weights", True),
+            lpips_weights_path=perceptual_cfg.get("lpips_weights_path"),
+        )
+
+        logger.info(
+            f"  pmf_x0_loss_lpips mode: p={self.lp_p}, "
+            f"lpips_weight={perceptual_cfg.get('loss_weight', 0.1)}, "
+            f"t_threshold={perceptual_cfg.get('t_threshold', 0.5)}"
+        )
+
+    def _init_pmf_v_loss_lpips_mode(self, loss_cfg: DictConfig) -> None:
+        """Initialize for pmf_v_loss_lpips mode (v-loss + LPIPS)."""
+        self.lp_p = 2.0  # v-loss uses L2
+
+        # Group uncertainty weighting: [v_img, v_mask, lpips]
+        group_cfg = loss_cfg.get("group_uncertainty_weighting", {})
+        if group_cfg.get("enabled", True):
+            self.loss = GroupUncertaintyWeightedLoss(
+                n_groups=3,
+                group_membership=[0, 1, 2],  # [v_img, v_mask, lpips]
+                initial_log_vars=list(group_cfg.get("initial_log_vars", [0.0, 0.0, 0.0])),
+                learnable=group_cfg.get("learnable", True),
+                clamp_range=group_cfg.get("clamp_range", (-5.0, 5.0)),
+                intra_group_weights=list(group_cfg.get("intra_group_weights", [1.0, 1.0, 1.0])),
+            )
+        else:
+            self.loss = SimpleWeightedLoss(weights=[1.0, 1.0, 1.0])
+
+        self.ffl = None
+
+        # Create LPIPS loss from config
+        perceptual_cfg = loss_cfg.get("perceptual", {})
+        self.lpips = LPIPSLoss(
+            weights_path=perceptual_cfg.get("vgg_weights_path"),
+            loss_weight=perceptual_cfg.get("loss_weight", 0.1),
+            t_threshold=perceptual_cfg.get("t_threshold", 0.5),
+            apply_to_mask=perceptual_cfg.get("apply_to_mask", False),
+            use_learned_weights=perceptual_cfg.get("use_learned_weights", True),
+            lpips_weights_path=perceptual_cfg.get("lpips_weights_path"),
+        )
+
+        logger.info(
+            f"  pmf_v_loss_lpips mode: L2 v-loss, "
+            f"lpips_weight={perceptual_cfg.get('loss_weight', 0.1)}, "
+            f"t_threshold={perceptual_cfg.get('t_threshold', 0.5)}"
+        )
+
     def forward(
         self,
         eps_pred: torch.Tensor,
@@ -311,15 +478,23 @@ class DiffusionLoss(nn.Module):
         x0_mask: torch.Tensor | None = None,
         x0: torch.Tensor | None = None,
         x0_pred: torch.Tensor | None = None,
+        x_t: torch.Tensor | None = None,
+        timesteps: torch.Tensor | None = None,
+        alphas_cumprod: torch.Tensor | None = None,
+        num_train_timesteps: int | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """Compute diffusion loss.
 
         Args:
-            eps_pred: Predicted noise, shape (B, 2, H, W).
-            eps_target: Target noise, shape (B, 2, H, W).
+            eps_pred: Predicted noise/x0/v depending on mode, shape (B, 2, H, W).
+            eps_target: Target noise/x0/v depending on mode, shape (B, 2, H, W).
             x0_mask: Original mask for lesion weighting, shape (B, 1, H, W).
-            x0: Original samples (required for mse_ffl_groups mode).
-            x0_pred: Predicted x0 (required for mse_ffl_groups mode).
+            x0: Original samples (required for FFL and pMF modes).
+            x0_pred: Predicted x0 (required for FFL and pMF LPIPS modes).
+            x_t: Noisy samples (required for pMF v-loss modes).
+            timesteps: Current timesteps (required for pMF modes).
+            alphas_cumprod: Scheduler alpha bars (required for pMF v-loss modes).
+            num_train_timesteps: Total timesteps T (required for pMF LPIPS modes).
 
         Returns:
             Tuple of (total_loss, details_dict).
@@ -335,6 +510,20 @@ class DiffusionLoss(nn.Module):
         elif self.mode == "mse_lp_norm_ffl_groups":
             return self._forward_mse_lp_norm_ffl_groups(
                 eps_pred, eps_target, x0_mask, x0, x0_pred
+            )
+        elif self.mode == "pmf_x0_loss":
+            return self._forward_pmf_x0_loss(x0_pred, x0, x0_mask)
+        elif self.mode == "pmf_v_loss":
+            return self._forward_pmf_v_loss(
+                x0_pred, x0, x0_mask, x_t, timesteps, alphas_cumprod
+            )
+        elif self.mode == "pmf_x0_loss_lpips":
+            return self._forward_pmf_x0_loss_lpips(
+                x0_pred, x0, x0_mask, timesteps, num_train_timesteps
+            )
+        elif self.mode == "pmf_v_loss_lpips":
+            return self._forward_pmf_v_loss_lpips(
+                x0_pred, x0, x0_mask, x_t, timesteps, alphas_cumprod, num_train_timesteps
             )
         else:
             raise ValueError(f"Unknown loss mode: {self.mode}")
@@ -548,6 +737,383 @@ class DiffusionLoss(nn.Module):
         details["loss_ffl"] = loss_ffl.detach()
         details["lp_p"] = self.lp_p
         details.update(ffl_details)
+
+        return total_loss, details
+
+    def _x0_pred_to_velocity(
+        self,
+        x0_pred: torch.Tensor,
+        x_t: torch.Tensor,
+        timesteps: torch.Tensor,
+        alphas_cumprod: torch.Tensor,
+    ) -> torch.Tensor:
+        """Convert x0 prediction to velocity space for v-loss.
+
+        In DDPM variance-preserving schedule:
+            x_t = sqrt(alpha_bar_t) * x0 + sqrt(1 - alpha_bar_t) * epsilon
+            v = sqrt(alpha_bar_t) * epsilon - sqrt(1 - alpha_bar_t) * x0
+
+        Given x0_pred, we first derive the implied epsilon:
+            eps_implied = (x_t - sqrt(alpha_bar_t) * x0_pred) / sqrt(1 - alpha_bar_t)
+
+        Then compute the velocity:
+            v_pred = sqrt(alpha_bar_t) * eps_implied - sqrt(1 - alpha_bar_t) * x0_pred
+
+        Args:
+            x0_pred: Predicted x0, shape (B, C, H, W).
+            x_t: Noisy samples, shape (B, C, H, W).
+            timesteps: Current timesteps, shape (B,).
+            alphas_cumprod: Alpha cumulative products, shape (T,).
+
+        Returns:
+            Predicted velocity, shape (B, C, H, W).
+        """
+        alpha_bar_t = alphas_cumprod[timesteps]
+
+        # Reshape for broadcasting: (B,) -> (B, 1, 1, 1)
+        while alpha_bar_t.dim() < x_t.dim():
+            alpha_bar_t = alpha_bar_t.unsqueeze(-1)
+
+        sqrt_alpha_bar = torch.sqrt(alpha_bar_t)
+        sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar_t)
+
+        # Derive implied epsilon from x0_pred
+        eps_implied = (x_t - sqrt_alpha_bar * x0_pred) / sqrt_one_minus_alpha_bar
+
+        # Compute velocity
+        v_pred = sqrt_alpha_bar * eps_implied - sqrt_one_minus_alpha_bar * x0_pred
+
+        return v_pred
+
+    def _compute_v_target(
+        self,
+        x0: torch.Tensor,
+        x_t: torch.Tensor,
+        timesteps: torch.Tensor,
+        alphas_cumprod: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute the velocity target from x0 and x_t.
+
+        v_target = sqrt(alpha_bar_t) * eps - sqrt(1 - alpha_bar_t) * x0
+
+        where eps = (x_t - sqrt(alpha_bar_t) * x0) / sqrt(1 - alpha_bar_t)
+
+        Args:
+            x0: Original samples, shape (B, C, H, W).
+            x_t: Noisy samples, shape (B, C, H, W).
+            timesteps: Current timesteps, shape (B,).
+            alphas_cumprod: Alpha cumulative products, shape (T,).
+
+        Returns:
+            Velocity target, shape (B, C, H, W).
+        """
+        alpha_bar_t = alphas_cumprod[timesteps]
+
+        while alpha_bar_t.dim() < x_t.dim():
+            alpha_bar_t = alpha_bar_t.unsqueeze(-1)
+
+        sqrt_alpha_bar = torch.sqrt(alpha_bar_t)
+        sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar_t)
+
+        # Derive epsilon from x0 and x_t
+        eps = (x_t - sqrt_alpha_bar * x0) / sqrt_one_minus_alpha_bar
+
+        # Compute velocity target
+        v_target = sqrt_alpha_bar * eps - sqrt_one_minus_alpha_bar * x0
+
+        return v_target
+
+    def _forward_pmf_x0_loss(
+        self,
+        x0_pred: torch.Tensor,
+        x0: torch.Tensor,
+        x0_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Forward for pmf_x0_loss mode (x0-space Lp loss).
+
+        Args:
+            x0_pred: Predicted x0, shape (B, 2, H, W).
+            x0: Target x0, shape (B, 2, H, W).
+            x0_mask: Original mask for lesion weighting, shape (B, 1, H, W).
+
+        Returns:
+            Tuple of (total_loss, details_dict).
+        """
+        if x0_pred is None or x0 is None:
+            raise ValueError("pmf_x0_loss mode requires x0_pred and x0")
+
+        # Split channels
+        x0_pred_img = x0_pred[:, 0:1]
+        x0_pred_msk = x0_pred[:, 1:2]
+        x0_img = x0[:, 0:1]
+        x0_msk = x0[:, 1:2]
+
+        # Image channel loss (optionally lesion-weighted)
+        if self.use_lesion_weighting_image and x0_mask is not None:
+            loss_img = lesion_weighted_lp_norm(
+                x0_pred_img,
+                x0_img,
+                x0_mask,
+                self.lp_p,
+                self.lesion_weight_image,
+                self.background_weight_image,
+            )
+        else:
+            loss_img = lp_norm_loss(x0_pred_img, x0_img, self.lp_p)
+
+        # Mask channel loss (optionally lesion-weighted)
+        if self.use_lesion_weighting_mask and x0_mask is not None:
+            loss_msk = lesion_weighted_lp_norm(
+                x0_pred_msk,
+                x0_msk,
+                x0_mask,
+                self.lp_p,
+                self.lesion_weight_mask,
+                self.background_weight_mask,
+            )
+        else:
+            loss_msk = lp_norm_loss(x0_pred_msk, x0_msk, self.lp_p)
+
+        # Combine losses
+        total_loss, details = self.loss([loss_img, loss_msk])
+
+        # Add named losses to details
+        details["loss_image"] = loss_img.detach()
+        details["loss_mask"] = loss_msk.detach()
+        details["lp_p"] = self.lp_p
+        details["loss_mode"] = "pmf_x0_loss"
+
+        return total_loss, details
+
+    def _forward_pmf_v_loss(
+        self,
+        x0_pred: torch.Tensor,
+        x0: torch.Tensor,
+        x0_mask: torch.Tensor | None,
+        x_t: torch.Tensor,
+        timesteps: torch.Tensor,
+        alphas_cumprod: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Forward for pmf_v_loss mode (velocity-space L2 loss).
+
+        Args:
+            x0_pred: Predicted x0, shape (B, 2, H, W).
+            x0: Target x0, shape (B, 2, H, W).
+            x0_mask: Original mask for lesion weighting, shape (B, 1, H, W).
+            x_t: Noisy samples, shape (B, 2, H, W).
+            timesteps: Current timesteps, shape (B,).
+            alphas_cumprod: Alpha cumulative products, shape (T,).
+
+        Returns:
+            Tuple of (total_loss, details_dict).
+        """
+        if x0_pred is None or x0 is None:
+            raise ValueError("pmf_v_loss mode requires x0_pred and x0")
+        if x_t is None or timesteps is None or alphas_cumprod is None:
+            raise ValueError("pmf_v_loss mode requires x_t, timesteps, and alphas_cumprod")
+
+        # Convert x0_pred to velocity
+        v_pred = self._x0_pred_to_velocity(x0_pred, x_t, timesteps, alphas_cumprod)
+
+        # Compute velocity target
+        v_target = self._compute_v_target(x0, x_t, timesteps, alphas_cumprod)
+
+        # Split channels
+        v_pred_img = v_pred[:, 0:1]
+        v_pred_msk = v_pred[:, 1:2]
+        v_target_img = v_target[:, 0:1]
+        v_target_msk = v_target[:, 1:2]
+
+        # Image channel loss (L2, optionally lesion-weighted)
+        if self.use_lesion_weighting_image and x0_mask is not None:
+            loss_img = lesion_weighted_mse(
+                v_pred_img,
+                v_target_img,
+                x0_mask,
+                self.lesion_weight_image,
+                self.background_weight_image,
+            )
+        else:
+            loss_img = F.mse_loss(v_pred_img, v_target_img)
+
+        # Mask channel loss (L2, optionally lesion-weighted)
+        if self.use_lesion_weighting_mask and x0_mask is not None:
+            loss_msk = lesion_weighted_mse(
+                v_pred_msk,
+                v_target_msk,
+                x0_mask,
+                self.lesion_weight_mask,
+                self.background_weight_mask,
+            )
+        else:
+            loss_msk = F.mse_loss(v_pred_msk, v_target_msk)
+
+        # Combine losses
+        total_loss, details = self.loss([loss_img, loss_msk])
+
+        # Add named losses to details
+        details["loss_image"] = loss_img.detach()
+        details["loss_mask"] = loss_msk.detach()
+        details["loss_v_image"] = loss_img.detach()
+        details["loss_v_mask"] = loss_msk.detach()
+        details["loss_mode"] = "pmf_v_loss"
+
+        return total_loss, details
+
+    def _forward_pmf_x0_loss_lpips(
+        self,
+        x0_pred: torch.Tensor,
+        x0: torch.Tensor,
+        x0_mask: torch.Tensor | None,
+        timesteps: torch.Tensor,
+        num_train_timesteps: int,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Forward for pmf_x0_loss_lpips mode (x0 Lp loss + LPIPS).
+
+        Args:
+            x0_pred: Predicted x0, shape (B, 2, H, W).
+            x0: Target x0, shape (B, 2, H, W).
+            x0_mask: Original mask for lesion weighting, shape (B, 1, H, W).
+            timesteps: Current timesteps, shape (B,).
+            num_train_timesteps: Total timesteps T.
+
+        Returns:
+            Tuple of (total_loss, details_dict).
+        """
+        if x0_pred is None or x0 is None:
+            raise ValueError("pmf_x0_loss_lpips mode requires x0_pred and x0")
+        if timesteps is None or num_train_timesteps is None:
+            raise ValueError("pmf_x0_loss_lpips mode requires timesteps and num_train_timesteps")
+
+        # Split channels
+        x0_pred_img = x0_pred[:, 0:1]
+        x0_pred_msk = x0_pred[:, 1:2]
+        x0_img = x0[:, 0:1]
+        x0_msk = x0[:, 1:2]
+
+        # Image channel loss (optionally lesion-weighted)
+        if self.use_lesion_weighting_image and x0_mask is not None:
+            loss_img = lesion_weighted_lp_norm(
+                x0_pred_img,
+                x0_img,
+                x0_mask,
+                self.lp_p,
+                self.lesion_weight_image,
+                self.background_weight_image,
+            )
+        else:
+            loss_img = lp_norm_loss(x0_pred_img, x0_img, self.lp_p)
+
+        # Mask channel loss (optionally lesion-weighted)
+        if self.use_lesion_weighting_mask and x0_mask is not None:
+            loss_msk = lesion_weighted_lp_norm(
+                x0_pred_msk,
+                x0_msk,
+                x0_mask,
+                self.lp_p,
+                self.lesion_weight_mask,
+                self.background_weight_mask,
+            )
+        else:
+            loss_msk = lp_norm_loss(x0_pred_msk, x0_msk, self.lp_p)
+
+        # LPIPS loss on image channel
+        loss_lpips, lpips_details = self.lpips(x0_pred, x0, timesteps, num_train_timesteps)
+
+        # Combine losses: [lp_img, lp_mask, lpips]
+        total_loss, details = self.loss([loss_img, loss_msk, loss_lpips])
+
+        # Add named losses to details
+        details["loss_image"] = loss_img.detach()
+        details["loss_mask"] = loss_msk.detach()
+        details["loss_lpips"] = loss_lpips.detach()
+        details["lp_p"] = self.lp_p
+        details["loss_mode"] = "pmf_x0_loss_lpips"
+        details.update(lpips_details)
+
+        return total_loss, details
+
+    def _forward_pmf_v_loss_lpips(
+        self,
+        x0_pred: torch.Tensor,
+        x0: torch.Tensor,
+        x0_mask: torch.Tensor | None,
+        x_t: torch.Tensor,
+        timesteps: torch.Tensor,
+        alphas_cumprod: torch.Tensor,
+        num_train_timesteps: int,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Forward for pmf_v_loss_lpips mode (v-loss + LPIPS).
+
+        Args:
+            x0_pred: Predicted x0, shape (B, 2, H, W).
+            x0: Target x0, shape (B, 2, H, W).
+            x0_mask: Original mask for lesion weighting, shape (B, 1, H, W).
+            x_t: Noisy samples, shape (B, 2, H, W).
+            timesteps: Current timesteps, shape (B,).
+            alphas_cumprod: Alpha cumulative products, shape (T,).
+            num_train_timesteps: Total timesteps T.
+
+        Returns:
+            Tuple of (total_loss, details_dict).
+        """
+        if x0_pred is None or x0 is None:
+            raise ValueError("pmf_v_loss_lpips mode requires x0_pred and x0")
+        if x_t is None or timesteps is None or alphas_cumprod is None:
+            raise ValueError("pmf_v_loss_lpips mode requires x_t, timesteps, and alphas_cumprod")
+        if num_train_timesteps is None:
+            raise ValueError("pmf_v_loss_lpips mode requires num_train_timesteps")
+
+        # Convert x0_pred to velocity
+        v_pred = self._x0_pred_to_velocity(x0_pred, x_t, timesteps, alphas_cumprod)
+
+        # Compute velocity target
+        v_target = self._compute_v_target(x0, x_t, timesteps, alphas_cumprod)
+
+        # Split channels
+        v_pred_img = v_pred[:, 0:1]
+        v_pred_msk = v_pred[:, 1:2]
+        v_target_img = v_target[:, 0:1]
+        v_target_msk = v_target[:, 1:2]
+
+        # Image channel loss (L2, optionally lesion-weighted)
+        if self.use_lesion_weighting_image and x0_mask is not None:
+            loss_img = lesion_weighted_mse(
+                v_pred_img,
+                v_target_img,
+                x0_mask,
+                self.lesion_weight_image,
+                self.background_weight_image,
+            )
+        else:
+            loss_img = F.mse_loss(v_pred_img, v_target_img)
+
+        # Mask channel loss (L2, optionally lesion-weighted)
+        if self.use_lesion_weighting_mask and x0_mask is not None:
+            loss_msk = lesion_weighted_mse(
+                v_pred_msk,
+                v_target_msk,
+                x0_mask,
+                self.lesion_weight_mask,
+                self.background_weight_mask,
+            )
+        else:
+            loss_msk = F.mse_loss(v_pred_msk, v_target_msk)
+
+        # LPIPS loss on image channel (using x0_pred, not v_pred)
+        loss_lpips, lpips_details = self.lpips(x0_pred, x0, timesteps, num_train_timesteps)
+
+        # Combine losses: [v_img, v_mask, lpips]
+        total_loss, details = self.loss([loss_img, loss_msk, loss_lpips])
+
+        # Add named losses to details
+        details["loss_image"] = loss_img.detach()
+        details["loss_mask"] = loss_msk.detach()
+        details["loss_v_image"] = loss_img.detach()
+        details["loss_v_mask"] = loss_msk.detach()
+        details["loss_lpips"] = loss_lpips.detach()
+        details["loss_mode"] = "pmf_v_loss_lpips"
+        details.update(lpips_details)
 
         return total_loss, details
 

@@ -599,10 +599,19 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
-        # Compute x0_pred if using FFL mode (mse_ffl_groups or mse_lp_norm_ffl_groups)
-        x0_pred = None
+        # Determine which loss mode we're using
         loss_mode = self.cfg.loss.get("mode", "mse_channels")
-        if loss_mode in ("mse_ffl_groups", "mse_lp_norm_ffl_groups"):
+
+        # pMF modes that need x0_pred
+        pmf_modes = ("pmf_x0_loss", "pmf_v_loss", "pmf_x0_loss_lpips", "pmf_v_loss_lpips")
+        ffl_modes = ("mse_ffl_groups", "mse_lp_norm_ffl_groups")
+        needs_x0_pred = loss_mode in pmf_modes or loss_mode in ffl_modes
+
+        # Compute x0_pred if needed
+        x0_pred = None
+        x_t_original = None  # Store original x_t for v-loss computation
+
+        if needs_x0_pred:
             # For x0_pred, use x_t without extra channels (self-cond and/or anatomical prior)
             # x_t may have been concatenated with:
             # - self-conditioning (2ch)
@@ -617,14 +626,32 @@ class JSDDPMLightningModule(pl.LightningModule):
                 x_t_for_recon = x_t[:, :2]  # (B, 2, H, W) - extract original noisy channels
             else:
                 x_t_for_recon = x_t
+
+            # Store original x_t for pMF v-loss computation
+            x_t_original = x_t_for_recon
+
             x0_pred = self._predict_x0(x_t_for_recon, model_output, timesteps)
-            # CRITICAL: Clamp x0_pred to valid range before FFT to prevent instability
+            # CRITICAL: Clamp x0_pred to valid range before FFT/LPIPS to prevent instability
             x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
 
         # Compute loss with mask for channel-separated multi-task learning
-        loss, loss_details = self.criterion(
-            model_output, target, mask, x0=x0, x0_pred=x0_pred
-        )
+        # For pMF modes, pass additional arguments
+        if loss_mode in pmf_modes:
+            loss, loss_details = self.criterion(
+                model_output,
+                target,
+                mask,
+                x0=x0,
+                x0_pred=x0_pred,
+                x_t=x_t_original,
+                timesteps=timesteps,
+                alphas_cumprod=self.alphas_cumprod,
+                num_train_timesteps=self.scheduler.num_train_timesteps,
+            )
+        else:
+            loss, loss_details = self.criterion(
+                model_output, target, mask, x0=x0, x0_pred=x0_pred
+            )
 
         # Log metrics
         self.log("train/loss", loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
@@ -666,6 +693,17 @@ class JSDDPMLightningModule(pl.LightningModule):
             self.log("train/sigma_ffl_group", loss_details["sigma_group_1"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
             self.log("train/group_loss_mse", loss_details["group_0_loss"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
             self.log("train/group_loss_ffl", loss_details["group_1_loss"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+
+        # Log pMF-specific metrics (LPIPS and v-loss)
+        if "loss_lpips" in loss_details:
+            self.log("train/loss_lpips", loss_details["loss_lpips"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+        if "lpips_image" in loss_details:
+            self.log("train/lpips_image", loss_details["lpips_image"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+        if "lpips_gated_fraction" in loss_details:
+            self.log("train/lpips_gated_fraction", loss_details["lpips_gated_fraction"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+        if "loss_v_image" in loss_details:
+            self.log("train/loss_v_image", loss_details["loss_v_image"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
+            self.log("train/loss_v_mask", loss_details["loss_v_mask"], on_step=True, on_epoch=True, sync_dist=True, batch_size=B)
 
         return loss
 
@@ -874,10 +912,19 @@ class JSDDPMLightningModule(pl.LightningModule):
         # Get target for loss
         target = self._get_target(x0, noise, timesteps)
 
-        # Compute x0_pred if using FFL mode (mse_ffl_groups or mse_lp_norm_ffl_groups)
-        x0_pred = None
+        # Determine which loss mode we're using
         loss_mode = self.cfg.loss.get("mode", "mse_channels")
-        if loss_mode in ("mse_ffl_groups", "mse_lp_norm_ffl_groups"):
+
+        # pMF modes that need x0_pred
+        pmf_modes = ("pmf_x0_loss", "pmf_v_loss", "pmf_x0_loss_lpips", "pmf_v_loss_lpips")
+        ffl_modes = ("mse_ffl_groups", "mse_lp_norm_ffl_groups")
+        needs_x0_pred = loss_mode in pmf_modes or loss_mode in ffl_modes
+
+        # Compute x0_pred if needed
+        x0_pred = None
+        x_t_original = None  # Store original x_t for v-loss computation
+
+        if needs_x0_pred:
             # For x0_pred, use x_t without extra channels (self-cond and/or anatomical prior)
             # x_t may have been concatenated with:
             # - self-conditioning (2ch)
@@ -892,14 +939,32 @@ class JSDDPMLightningModule(pl.LightningModule):
                 x_t_for_recon = x_t[:, :2]  # (B, 2, H, W) - extract original noisy channels
             else:
                 x_t_for_recon = x_t
+
+            # Store original x_t for pMF v-loss computation
+            x_t_original = x_t_for_recon
+
             x0_pred = self._predict_x0(x_t_for_recon, model_output, timesteps)
-            # CRITICAL: Clamp x0_pred to valid range before FFT to prevent instability
+            # CRITICAL: Clamp x0_pred to valid range before FFT/LPIPS to prevent instability
             x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
 
         # Compute loss with mask for channel-separated multi-task learning
-        loss, loss_details = self.criterion(
-            model_output, target, mask, x0=x0, x0_pred=x0_pred
-        )
+        # For pMF modes, pass additional arguments
+        if loss_mode in pmf_modes:
+            loss, loss_details = self.criterion(
+                model_output,
+                target,
+                mask,
+                x0=x0,
+                x0_pred=x0_pred,
+                x_t=x_t_original,
+                timesteps=timesteps,
+                alphas_cumprod=self.alphas_cumprod,
+                num_train_timesteps=self.scheduler.num_train_timesteps,
+            )
+        else:
+            loss, loss_details = self.criterion(
+                model_output, target, mask, x0=x0, x0_pred=x0_pred
+            )
 
         # ========== Quality metrics via RECONSTRUCTION at fixed timesteps ==========
         # Reconstruction-based validation: noise x0 to t, denoise back, compare with original x0
@@ -1023,6 +1088,17 @@ class JSDDPMLightningModule(pl.LightningModule):
             self.log("val/sigma_ffl_group", loss_details["sigma_group_1"], sync_dist=True, batch_size=B)
             self.log("val/group_loss_mse", loss_details["group_0_loss"], sync_dist=True, batch_size=B)
             self.log("val/group_loss_ffl", loss_details["group_1_loss"], sync_dist=True, batch_size=B)
+
+        # Log pMF-specific metrics (LPIPS and v-loss)
+        if "loss_lpips" in loss_details:
+            self.log("val/loss_lpips", loss_details["loss_lpips"], sync_dist=True, batch_size=B)
+        if "lpips_image" in loss_details:
+            self.log("val/lpips_image", loss_details["lpips_image"], sync_dist=True, batch_size=B)
+        if "lpips_gated_fraction" in loss_details:
+            self.log("val/lpips_gated_fraction", loss_details["lpips_gated_fraction"], sync_dist=True, batch_size=B)
+        if "loss_v_image" in loss_details:
+            self.log("val/loss_v_image", loss_details["loss_v_image"], sync_dist=True, batch_size=B)
+            self.log("val/loss_v_mask", loss_details["loss_v_mask"], sync_dist=True, batch_size=B)
 
         if len(ANCHORS) != 0:
             return {"loss": loss, **all_metrics}
