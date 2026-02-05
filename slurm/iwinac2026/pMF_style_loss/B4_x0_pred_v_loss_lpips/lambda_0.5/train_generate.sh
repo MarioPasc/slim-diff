@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J iwinac_pmf_B3a_v_loss_lpips_0.1
+#SBATCH -J iwinac_pmf_B4b_v_loss_lpips_0.5
 #SBATCH --time=3-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -17,13 +17,13 @@ echo "Job started at: $(date)"
 # ========================================================================
 # EXPERIMENT CONFIGURATION
 # ========================================================================
-EXPERIMENT_NAME="iwinac_pmf_B3a_v_loss_lpips_0.1"
+EXPERIMENT_NAME="iwinac_pmf_B4b_v_loss_lpips_0.5"
 CONDA_ENV_NAME="jsddpm"
 
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/slim-diff"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
 RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/iwinac_pmf_ablation/${EXPERIMENT_NAME}"
-CONFIG_FILE="${REPO_SRC}/slurm/iwinac2026/pMF_style_loss/B3_x0_pred_v_loss_lpips/lambda_0.1/config.yaml"
+CONFIG_FILE="${REPO_SRC}/slurm/iwinac2026/pMF_style_loss/B4_x0_pred_v_loss_lpips/lambda_0.5/config.yaml"
 
 # ========================================================================
 # GENERATION CONFIGURATION

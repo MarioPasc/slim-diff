@@ -23,7 +23,7 @@ CONDA_ENV_NAME="jsddpm"
 REPO_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/slim-diff"
 DATA_SRC="/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy"
 RESULTS_DST="/mnt/home/users/tic_163_uma/mpascual/fscratch/results/iwinac_pmf_ablation/${EXPERIMENT_NAME}"
-CONFIG_FILE="${REPO_SRC}/slurm/iwinac2026/pMF_style_loss/B3_x0_pred_v_loss_lpips/lambda_0.1/config.yaml"
+CONFIG_FILE="${REPO_SRC}/slurm/iwinac2026/pMF_style_loss/B4_x0_pred_v_loss_lpips/lambda_0.1/config.yaml"
 
 # ========================================================================
 # GENERATION CONFIGURATION
