@@ -605,6 +605,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         # pMF modes that need x0_pred
         pmf_modes = ("pmf_x0_loss", "pmf_v_loss", "pmf_x0_loss_lpips", "pmf_v_loss_lpips")
         ffl_modes = ("mse_ffl_groups", "mse_lp_norm_ffl_groups")
+        # Modes that require clamping for numerical stability (LPIPS/FFL use VGG features)
+        modes_needing_clamp = ("pmf_x0_loss_lpips", "pmf_v_loss_lpips") + ffl_modes
         needs_x0_pred = loss_mode in pmf_modes or loss_mode in ffl_modes
 
         # Compute x0_pred if needed
@@ -631,8 +633,10 @@ class JSDDPMLightningModule(pl.LightningModule):
             x_t_original = x_t_for_recon
 
             x0_pred = self._predict_x0(x_t_for_recon, model_output, timesteps)
-            # CRITICAL: Clamp x0_pred to valid range before FFT/LPIPS to prevent instability
-            x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
+            # Only clamp for modes that need it (LPIPS/FFL use VGG features that require bounded input)
+            # For pmf_x0_loss and pmf_v_loss, clamping kills gradients and prevents learning
+            if loss_mode in modes_needing_clamp:
+                x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
 
         # Compute loss with mask for channel-separated multi-task learning
         # For pMF modes, pass additional arguments
@@ -918,6 +922,8 @@ class JSDDPMLightningModule(pl.LightningModule):
         # pMF modes that need x0_pred
         pmf_modes = ("pmf_x0_loss", "pmf_v_loss", "pmf_x0_loss_lpips", "pmf_v_loss_lpips")
         ffl_modes = ("mse_ffl_groups", "mse_lp_norm_ffl_groups")
+        # Modes that require clamping for numerical stability (LPIPS/FFL use VGG features)
+        modes_needing_clamp = ("pmf_x0_loss_lpips", "pmf_v_loss_lpips") + ffl_modes
         needs_x0_pred = loss_mode in pmf_modes or loss_mode in ffl_modes
 
         # Compute x0_pred if needed
@@ -944,8 +950,10 @@ class JSDDPMLightningModule(pl.LightningModule):
             x_t_original = x_t_for_recon
 
             x0_pred = self._predict_x0(x_t_for_recon, model_output, timesteps)
-            # CRITICAL: Clamp x0_pred to valid range before FFT/LPIPS to prevent instability
-            x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
+            # Only clamp for modes that need it (LPIPS/FFL use VGG features that require bounded input)
+            # For pmf_x0_loss and pmf_v_loss, clamping kills gradients and prevents learning
+            if loss_mode in modes_needing_clamp:
+                x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
 
         # Compute loss with mask for channel-separated multi-task learning
         # For pMF modes, pass additional arguments
