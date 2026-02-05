@@ -193,7 +193,7 @@ loss:
 
   perceptual:
     enabled: true
-    vgg_weights_path: null  # Set to weights/lpips/vgg16_features.pth for offline HPC
+    vgg_weights_path: /mnt/home/users/tic_163_uma/mpascual/fscratch/weights_lpips/lpips/vgg16_features.pth  # Set to weights/lpips/vgg16_features.pth for offline HPC
     lpips_weights_path: null
     loss_weight: 0.5  # LAMBDA = 0.5
     t_threshold: 0.5
