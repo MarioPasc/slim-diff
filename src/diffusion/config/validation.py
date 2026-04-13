@@ -117,6 +117,38 @@ def validate_model_config(cfg: DictConfig) -> None:
                 "postprocessing.zbin_priors.priors_filename to be specified."
             )
 
+    # Validate bottleneck_mode (ICIP 2026 camera-ready decoupled ablation).
+    bottleneck_mode = str(model_cfg.get("bottleneck_mode", "shared")).lower()
+    if bottleneck_mode not in ("shared", "decoupled"):
+        raise ValueError(
+            f"model.bottleneck_mode must be 'shared' or 'decoupled', "
+            f"got {bottleneck_mode!r}."
+        )
+    if bottleneck_mode == "decoupled":
+        dec_cfg = model_cfg.get("decoupled_bottleneck", {}) or {}
+        channels_per_path = dec_cfg.get("channels_per_path", None)
+        if channels_per_path is not None:
+            if not isinstance(channels_per_path, int) or channels_per_path <= 0:
+                raise ValueError(
+                    f"model.decoupled_bottleneck.channels_per_path must be a "
+                    f"positive int, got {channels_per_path!r}."
+                )
+            groups = dec_cfg.get(
+                "norm_num_groups_path", model_cfg.get("norm_num_groups", 32)
+            )
+            if channels_per_path % int(groups) != 0:
+                raise ValueError(
+                    f"model.decoupled_bottleneck.channels_per_path "
+                    f"({channels_per_path}) must be divisible by "
+                    f"norm_num_groups_path ({groups})."
+                )
+        extra = dec_cfg.get("extra_resnet_blocks", 0)
+        if not isinstance(extra, int) or extra < 0:
+            raise ValueError(
+                f"model.decoupled_bottleneck.extra_resnet_blocks must be a "
+                f"non-negative int, got {extra!r}."
+            )
+
 
 def validate_cfg_config(cfg: DictConfig) -> None:
     """Validate classifier-free guidance configuration.

@@ -54,6 +54,11 @@ from src.diffusion.model.components.anatomical_encoder import (
     build_anatomical_encoder,
     build_enhanced_anatomical_encoder,
 )
+from src.diffusion.model.decoupled_unet import (
+    DecoupledMiddleBlock,
+    build_decoupled_middle_block,
+    count_middle_params,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -256,12 +261,38 @@ def build_model(
         encoder_params = sum(p.numel() for p in anatomical_encoder.parameters())
         logger.info(f"Built AnatomicalPriorEncoder ({encoder_version}): {encoder_params:,} params")
 
+    # 6. Bottleneck mode — optional decoupled ablation (ICIP 2026 camera-ready).
+    #    Post-construction surgery: swap the stock middle_block for a
+    #    DecoupledMiddleBlock without altering the rest of the UNet.
+    bottleneck_mode = str(model_cfg.get("bottleneck_mode", "shared")).lower()
+    if bottleneck_mode == "decoupled":
+        shared_params = count_middle_params(model.middle_block)
+        model.middle_block = build_decoupled_middle_block(
+            cfg, original_middle_block=model.middle_block
+        )
+        decoupled_params = count_middle_params(model.middle_block)
+        logger.info(
+            "Bottleneck mode: DECOUPLED (independent paths). "
+            "Middle block params: shared=%d → decoupled=%d (Δ=%+.4f%%).",
+            shared_params,
+            decoupled_params,
+            100.0 * (decoupled_params - shared_params) / max(shared_params, 1),
+        )
+    elif bottleneck_mode == "shared":
+        logger.info("Bottleneck mode: SHARED (stock MONAI mid block).")
+    else:
+        raise ValueError(
+            f"Unknown model.bottleneck_mode={bottleneck_mode!r}. "
+            f"Expected 'shared' or 'decoupled'."
+        )
+
     # Log model info
     n_params = sum(p.numel() for p in model.parameters())
     logger.info(
         f"Built DiffusionModelUNet: {n_params:,} params. "
         f"Anatomical Conditioning: {use_anatomical_conditioning} "
-        f"(method: {anatomical_method if use_anatomical_conditioning else 'N/A'})"
+        f"(method: {anatomical_method if use_anatomical_conditioning else 'N/A'}), "
+        f"bottleneck_mode={bottleneck_mode}"
     )
 
     return model, anatomical_encoder

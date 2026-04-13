@@ -85,6 +85,7 @@ Documentation = "https://github.com/mpascualgonzalez/slim-diff#readme"
 
 [project.scripts]
 slimdiff-cache = "src.diffusion.data.caching:main"
+slimdiff-kfold = "src.diffusion.data.kfold:main"
 slimdiff-train = "src.diffusion.training.runners.train:main"
 slimdiff-generate = "src.diffusion.training.runners.generate:main"
 slimdiff-generate-spec = "src.diffusion.training.runners.generate_from_spec:main"

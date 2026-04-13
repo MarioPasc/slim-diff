@@ -606,3 +606,42 @@ def get_all_subject_infos(
         logger.info(f"Split '{split_name}': {len(infos)} subjects")
 
     return result
+
+
+def create_kfold_splits(
+    cache_dir: Path,
+    n_folds: int = 3,
+    seed: int = 42,
+) -> list[DatasetSplit]:
+    """Return a list of :class:`DatasetSplit` objects, one per fold.
+
+    Thin bridge over :class:`src.diffusion.data.kfold.KFoldManager` so callers
+    that already accept :class:`DatasetSplit` can iterate folds uniformly.
+    The fixed-test override applies: every returned split shares the same
+    ``test_subjects`` (derived from the source ``test.csv``), while
+    ``train_subjects`` / ``val_subjects`` rotate according to stratified
+    K-fold.
+
+    Args:
+        cache_dir: Path to a slice cache containing ``train.csv`` / ``val.csv``
+            / ``test.csv``.
+        n_folds: Number of folds.
+        seed: Random seed forwarded to ``StratifiedKFold``.
+
+    Returns:
+        ``list[DatasetSplit]`` of length ``n_folds``.
+    """
+    # Imported lazily to avoid a circular import at module load time
+    # (kfold.py currently only imports logger from diffusion.utils).
+    from src.diffusion.data.kfold import KFoldManager
+
+    manager = KFoldManager(cache_dir=cache_dir, n_folds=n_folds, seed=seed)
+    folds = manager.create_folds()
+    return [
+        DatasetSplit(
+            train_subjects=list(f.train_subjects),
+            val_subjects=list(f.val_subjects),
+            test_subjects=list(f.test_subjects),
+        )
+        for f in folds
+    ]
