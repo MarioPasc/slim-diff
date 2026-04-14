@@ -350,6 +350,54 @@ def test_no_slice_appears_twice(mock_cache):
         )
 
 
+def test_single_class_pool_falls_back_to_kfold(tmp_path: Path, caplog):
+    """When every pool patient has the same has_lesion label (e.g. the FCD
+    epilepsy cohort where all 78 patients have a lesion), StratifiedKFold is
+    infeasible; the manager must fall back to plain KFold and record
+    ``stratify_by: null`` in the meta JSON.
+    """
+    import logging
+
+    cache_dir = tmp_path / "single_class_cache"
+    cache_dir.mkdir()
+
+    pool_subjects = [f"sub-{i:03d}" for i in range(12)]
+    test_subjects = [f"sub-t{i:02d}" for i in range(6)]
+
+    train_rows, val_rows, test_rows = [], [], []
+    for s in pool_subjects[:8]:
+        train_rows.extend(_build_rows_for_subject(s, "train", has_lesion=True))
+    for s in pool_subjects[8:]:
+        val_rows.extend(_build_rows_for_subject(s, "val", has_lesion=True))
+    for s in test_subjects:
+        test_rows.extend(_build_rows_for_subject(s, "test", has_lesion=True))
+
+    _write_csv(cache_dir / "train.csv", train_rows)
+    _write_csv(cache_dir / "val.csv", val_rows)
+    _write_csv(cache_dir / "test.csv", test_rows)
+
+    manager = KFoldManager(cache_dir, n_folds=3, seed=42)
+    with caplog.at_level(logging.WARNING):
+        folds = manager.create_folds()
+    assert any("single-class" in rec.message for rec in caplog.records)
+
+    pool = set(pool_subjects)
+    val_seen: dict[str, int] = {s: 0 for s in pool}
+    for fold in folds:
+        assert set(fold.train_subjects).isdisjoint(fold.val_subjects)
+        assert set(fold.train_subjects).isdisjoint(fold.test_subjects)
+        for s in fold.val_subjects:
+            val_seen[s] += 1
+    assert all(c == 1 for c in val_seen.values())
+
+    manager.write_fold_csvs()
+    meta_path = cache_dir / "folds" / "folds_meta.json"
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+    assert meta["stratify_by"] is None
+    assert meta["global_lesion_ratio_pool"] == 1.0
+
+
 def test_pool_derivation(mock_cache):
     cache_dir, subjects_by_split = mock_cache
     manager = KFoldManager(cache_dir, n_folds=3, seed=42)

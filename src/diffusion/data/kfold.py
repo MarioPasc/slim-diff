@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold
 
 from src.diffusion.utils.logging import setup_logger
 
@@ -113,6 +113,7 @@ class KFoldManager:
         self._rows: list[dict[str, str]] | None = None
         self._fieldnames: tuple[str, ...] | None = None
         self._folds: list[FoldAssignment] | None = None
+        self._stratified: bool = True
 
     # ------------------------------------------------------------------ load
 
@@ -229,23 +230,41 @@ class KFoldManager:
         n_pos = int((y == 1).sum())
         n_neg = int((y == 0).sum())
         min_class = min(n_pos, n_neg)
-        if min_class < self.n_folds:
+
+        # 5. K-fold on the pool. When both classes are present with ≥ n_folds
+        #    members each, stratify; when the pool is single-class (common for
+        #    disease-only cohorts like the FCD epilepsy dataset where every
+        #    patient has a lesion), fall back to plain KFold — stratification
+        #    is trivial and StratifiedKFold refuses to split.
+        if min_class == 0:
+            logger.warning(
+                "Pool is single-class (%d has_lesion, %d no_lesion); using "
+                "plain KFold — stratification is degenerate.", n_pos, n_neg,
+            )
+            splitter = KFold(
+                n_splits=self.n_folds,
+                shuffle=True,
+                random_state=self.seed,
+            )
+            self._stratified = False
+        elif min_class < self.n_folds:
             raise ValueError(
                 f"StratifiedKFold infeasible: minimum class count {min_class} "
                 f"< n_folds {self.n_folds}. Pool has {n_pos} has_lesion and "
                 f"{n_neg} no_lesion patients."
             )
+        else:
+            splitter = StratifiedKFold(
+                n_splits=self.n_folds,
+                shuffle=True,
+                random_state=self.seed,
+            )
+            self._stratified = True
 
-        # 5. Stratified K-fold on the pool; held-out → val.
-        skf = StratifiedKFold(
-            n_splits=self.n_folds,
-            shuffle=True,
-            random_state=self.seed,
-        )
         pool_arr = np.asarray(pool)
         folds: list[FoldAssignment] = []
         for fold_id, (train_idx, val_idx) in enumerate(
-            skf.split(np.zeros(len(pool)), y)
+            splitter.split(np.zeros(len(pool)), y)
         ):
             val_subjects = tuple(sorted(pool_arr[val_idx].tolist()))
             train_subjects = tuple(sorted(pool_arr[train_idx].tolist()))
@@ -400,7 +419,7 @@ class KFoldManager:
             "schema_version": _SCHEMA_VERSION,
             "n_folds": self.n_folds,
             "random_state": self.seed,
-            "stratify_by": "has_lesion",
+            "stratify_by": "has_lesion" if self._stratified else None,
             "fixed_test": True,
             "n_patients_total": len(all_subjects),
             "n_patients_pool": len(pool),
