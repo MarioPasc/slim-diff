@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+#SBATCH -J slimdiff_cr_build
+#SBATCH --time=06:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --constraint=cpu
+#SBATCH --output=%x.%j.out
+#SBATCH --error=%x.%j.err
+
 # =============================================================================
 # build_cache_and_kfold.sh — ICIP 2026 camera-ready prereq builder
 # =============================================================================
@@ -15,13 +24,6 @@
 #
 # SLURM resource overrides come from picasso_paths.yaml → slurm.build.
 # =============================================================================
-#SBATCH -J slimdiff_cr_build
-#SBATCH --time=06:00:00
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --output=%x.%j.out
-#SBATCH --error=%x.%j.err
 
 set -euo pipefail
 
