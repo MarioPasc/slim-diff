@@ -31,28 +31,30 @@ START_TIME=$(date +%s)
 echo "Job started at: $(date)"
 
 # =============================================================================
+# BOOTSTRAP — hardcoded Picasso defaults
+# =============================================================================
+# These two values are the only hardcoded paths in the script; every other
+# path comes from picasso_paths.yaml (which we can only read AFTER activating
+# the conda env, since the loader uses PyYAML). Both can be overridden by
+# exporting the variable before `sbatch` if you ever need a different repo
+# checkout or conda env for this single run.
+REPO_SRC="${REPO_SRC:-/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/slim-diff}"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-slimdiff}"
+
+# =============================================================================
+# STEP 0 — CONDA ENV ACTIVATION (must precede YAML loading)
+# =============================================================================
+# shellcheck disable=SC1091
+source "${REPO_SRC}/slurm/camera_ready/_activate_conda.sh"
+
+# =============================================================================
 # LOAD PATHS FROM YAML
 # =============================================================================
-# Under sbatch, $0 points into /var/spool/slurmd/, not the repo. Resolution
-# order:
-#   1) $PATHS_YAML (explicit override)
-#   2) $SLURM_SUBMIT_DIR/slurm/camera_ready/picasso_paths.yaml
-#      (recommended: `sbatch slurm/camera_ready/<script>.sh` from repo root)
-#   3) $(dirname "$0")/picasso_paths.yaml (direct invocation `bash …`)
-if [ -z "${PATHS_YAML:-}" ]; then
-    if [ -n "${SLURM_SUBMIT_DIR:-}" ] \
-        && [ -f "${SLURM_SUBMIT_DIR}/slurm/camera_ready/picasso_paths.yaml" ]; then
-        PATHS_YAML="${SLURM_SUBMIT_DIR}/slurm/camera_ready/picasso_paths.yaml"
-    else
-        PATHS_YAML="$(cd "$(dirname "$0")" && pwd)/picasso_paths.yaml"
-    fi
-fi
-LOADER="$(dirname "${PATHS_YAML}")/_load_paths.py"
+PATHS_YAML="${PATHS_YAML:-${REPO_SRC}/slurm/camera_ready/picasso_paths.yaml}"
+LOADER="${REPO_SRC}/slurm/camera_ready/_load_paths.py"
 
 if [ ! -f "${PATHS_YAML}" ]; then
     echo "ERROR: ${PATHS_YAML} not found." >&2
-    echo "Hint: sbatch from the repo root (sbatch slurm/camera_ready/<script>.sh)" >&2
-    echo "      or export PATHS_YAML=/abs/path/to/picasso_paths.yaml before sbatch." >&2
     exit 1
 fi
 if [ ! -f "${LOADER}" ]; then
@@ -60,6 +62,8 @@ if [ ! -f "${LOADER}" ]; then
     exit 1
 fi
 
+# Loader's output may override CONDA_ENV_NAME / REPO_SRC — harmless; we've
+# already activated and cd'd using the bootstrap defaults.
 eval "$(python "${LOADER}" "${PATHS_YAML}")"
 
 echo "Loaded paths:"
@@ -70,30 +74,6 @@ echo "  CACHE_CONFIG_TEMPLATE = ${CACHE_CONFIG_TEMPLATE}"
 echo "  KFOLD_N_FOLDS         = ${KFOLD_N_FOLDS}"
 echo "  KFOLD_SEED            = ${KFOLD_SEED}"
 echo "  CONDA_ENV_NAME        = ${CONDA_ENV_NAME}"
-
-# =============================================================================
-# CONDA ENV ACTIVATION
-# =============================================================================
-module_loaded=0
-for m in miniconda3 Miniconda3 anaconda3 Anaconda3 miniforge mambaforge; do
-  if module avail 2>/dev/null | grep -qi "^${m}[[:space:]]"; then
-    module load "$m" && module_loaded=1 && break
-  fi
-done
-if [ "$module_loaded" -eq 0 ]; then
-  echo "[env] no conda module loaded; assuming conda already in PATH."
-fi
-
-if command -v conda >/dev/null 2>&1; then
-  # shellcheck disable=SC1091
-  source "$(conda info --base)/etc/profile.d/conda.sh" || true
-  conda activate "${CONDA_ENV_NAME}" 2>/dev/null || source activate "${CONDA_ENV_NAME}"
-else
-  source activate "${CONDA_ENV_NAME}"
-fi
-
-echo "[python] $(which python)"
-python -c "import sys; print('Python', sys.version.split()[0])"
 
 # =============================================================================
 # STEP 1 — SLICE CACHE

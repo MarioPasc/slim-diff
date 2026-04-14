@@ -22,9 +22,20 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PATHS_YAML="${SCRIPT_DIR}/picasso_paths.yaml"
-LOADER="${SCRIPT_DIR}/_load_paths.py"
+# =============================================================================
+# BOOTSTRAP — hardcoded Picasso defaults
+# =============================================================================
+# Only these two paths are hardcoded; everything else comes from
+# picasso_paths.yaml. Activating the conda env first ensures the YAML loader
+# (PyYAML) is available even when the launcher is invoked from a bare shell.
+REPO_SRC="${REPO_SRC:-/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/slim-diff}"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-slimdiff}"
+
+# shellcheck disable=SC1091
+source "${REPO_SRC}/slurm/camera_ready/_activate_conda.sh"
+
+PATHS_YAML="${PATHS_YAML:-${REPO_SRC}/slurm/camera_ready/picasso_paths.yaml}"
+LOADER="${REPO_SRC}/slurm/camera_ready/_load_paths.py"
 
 if [ ! -f "${PATHS_YAML}" ]; then
     echo "ERROR: ${PATHS_YAML} not found." >&2
