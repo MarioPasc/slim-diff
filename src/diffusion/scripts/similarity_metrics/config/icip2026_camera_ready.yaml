@@ -1,0 +1,54 @@
+# ICIP 2026 Camera-Ready Fold-Aware Evaluation Configuration
+#
+# Drives `slimdiff-metrics fold-eval` (equivalently `python -m
+# src.diffusion.scripts.similarity_metrics.fold_evaluation`) across the
+# 3 folds x 2 architectures = 6 experiment cells produced by TASK-03.
+#
+# All paths are nullable overrides — supply them via CLI or set them here.
+# See `docs/icip2026/rebuttal_plans/TASK-04_fold_aware_evaluation_pipeline.md`.
+
+experiment:
+  name: "icip2026_camera_ready"
+  type: "fold_evaluation"
+
+folds:
+  n_splits: 3
+
+architectures:
+  - shared
+  - decoupled
+
+paths:
+  # Parent directory containing the per-cell dirs (e.g. `slimdiff_cr_shared_fold_0/`).
+  results_root: null
+  # Slice cache root; must contain `folds/folds_meta.json` + `folds/fold_K/test.csv`.
+  cache_dir: null
+  # Output directory for the 4 produced artifacts.
+  output_dir: null
+  # Python str.format template; substitutes {results_root}, {architecture}, {fold}.
+  cell_dir_template: "{results_root}/slimdiff_cr_{architecture}_fold_{fold}"
+
+metrics:
+  kid:
+    enabled: true
+    subset_size: 1000
+    num_subsets: 100
+    degree: 3
+  lpips:
+    enabled: true
+    net: vgg
+    n_pairs: 1000
+  mmd_mf:
+    enabled: true
+    min_lesion_size_px: 5
+    subset_size: 500
+    num_subsets: 100
+    degree: 3
+    normalize_features: true
+
+compute:
+  device: "cuda:0"
+  batch_size: 32
+  seed: 42
+  # Cap the number of replicas merged per cell (null = use all).
+  max_replicas: null

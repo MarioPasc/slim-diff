@@ -619,6 +619,13 @@ def cmd_feature_nn(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fold_eval(args: argparse.Namespace) -> int:
+    """Forward all remaining args to fold_evaluation.main."""
+    from .fold_evaluation import main as fold_eval_main
+
+    return fold_eval_main(list(args.fold_eval_args))
+
+
 def cmd_plot(args: argparse.Namespace) -> int:
     """Generate plots from existing CSV files or config.
 
@@ -738,6 +745,14 @@ def cmd_plot(args: argparse.Namespace) -> int:
 
 def main():
     """Main CLI entry point."""
+    # `fold-eval` has its own full argparse (see fold_evaluation.build_parser).
+    # Forward `sys.argv[2:]` directly so its flags (including --help) are not
+    # intercepted by this top-level parser. This short-circuit preserves
+    # backward compatibility for every other subcommand.
+    if len(sys.argv) >= 2 and sys.argv[1] == "fold-eval":
+        from .fold_evaluation import main as fold_eval_main
+        sys.exit(fold_eval_main(sys.argv[2:]))
+
     parser = argparse.ArgumentParser(
         prog="slimdiff-metrics",
         description="Compute and analyze similarity metrics (KID, FID, LPIPS, MMD-MF) for SLIM-Diff experiments",
@@ -1135,6 +1150,19 @@ Examples:
         help="Directory containing mask metrics CSVs. If not specified, defaults to {output_dir}/../mask_metrics/.",
     )
     p_plot.set_defaults(func=cmd_plot)
+
+    # ===== fold-eval (camera-ready) =====
+    # The actual dispatch is the short-circuit at the top of main(). This
+    # subparser registration only makes `fold-eval` appear in --help listings
+    # and rejects misuse when it reaches this point (e.g. via ``args.func``
+    # never being set).
+    p_fe = subparsers.add_parser(
+        "fold-eval",
+        help="Fold-aware KID/LPIPS/MMD-MF evaluation for the ICIP 2026 camera-ready",
+        add_help=False,
+    )
+    p_fe.add_argument("fold_eval_args", nargs=argparse.REMAINDER)
+    p_fe.set_defaults(func=cmd_fold_eval)
 
     # Parse and execute
     args = parser.parse_args()

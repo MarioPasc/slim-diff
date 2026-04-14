@@ -1,0 +1,82 @@
+# =============================================================================
+# Picasso paths for the ICIP 2026 camera-ready pipeline.
+# =============================================================================
+# Single source of truth consumed by every script under slurm/camera_ready/:
+#
+#   * launch_camera_ready.sh       — 6-cell training+generation grid
+#   * build_cache_and_kfold.sh     — slice cache + 3-fold CSVs
+#   * run_fold_eval.sh             — fold-aware similarity metrics
+#   * run_posthoc.sh               — tau sweep + cross-fold stats + LaTeX tables
+#
+# Edit paths + knobs here, then submit jobs in order:
+#   1) sbatch build_cache_and_kfold.sh
+#   2) bash   launch_camera_ready.sh          (fans out 6 sbatch submissions)
+#   3) sbatch run_fold_eval.sh                (after all 6 generation jobs finish)
+#   4) sbatch run_posthoc.sh                  (after fold-eval completes)
+# =============================================================================
+
+paths:
+  # Repo checkout on Picasso
+  repo_src: /mnt/home/users/tic_163_uma/mpascual/fscratch/repos/slim-diff
+  # Raw NIfTI cohort root (slice_cache/ will live inside here)
+  data_src: /mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy
+  # Parent of slimdiff_cr_{arch}_fold_{k}/, eval_output/, posthoc_output/
+  results_root: /mnt/home/users/tic_163_uma/mpascual/execs/slimdiff/results
+  # Leave empty to derive as ${data_src}/slice_cache
+  cache_dir: "/mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/epilepsy/slice_cache"
+  # Leave empty to derive as ${results_root}/eval_output
+  eval_output_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/slimdiff/results/eval_output"
+  # Leave empty to derive as ${results_root}/posthoc_output
+  posthoc_output_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/slimdiff/results/posthoc_output"
+
+env:
+  conda_env: slimdiff
+
+cache:
+  # Template path, relative to repo_src. Copied + sed-patched into
+  # ${results_root}/cache_epilepsy.yaml before invoking slimdiff-cache.
+  config_template: src/diffusion/config/cache/epilepsy.yaml
+
+kfold:
+  n_folds: 3
+  seed: 42
+
+eval:
+  # Template path, relative to repo_src
+  config_template: src/diffusion/scripts/similarity_metrics/config/icip2026_camera_ready.yaml
+  device: "cuda:0"
+
+posthoc:
+  # Empty → use DEFAULT_TAU_VALUES (the 9-point sweep).
+  # Override with a space-separated list, e.g. "-0.2 -0.1 0.0 0.1 0.2"
+  tau_values: ""
+  min_lesion_size_px: 5
+  subset_size: 500
+  num_subsets: 100
+  # Optional: path (absolute or relative to repo_src) to per-cell early-stopping
+  # epochs (CSV fold,architecture,epoch; or JSON). Empty → skip the block.
+  early_stopping_csv: ""
+
+slurm:
+  # Cache + kfold build
+  build:
+    time: "06:00:00"
+    cpus_per_task: 8
+    mem: "32G"
+    partition: ""          # empty → don't set --partition
+    constraint: "cpu"         # empty → don't set --constraint
+  # Fold-aware metrics (GPU)
+  fold_eval:
+    time: "12:00:00"
+    cpus_per_task: 16
+    mem: "64G"
+    partition: ""
+    constraint: "dgx"      # KID/LPIPS on GPU
+    gres: "gpu:1"
+  # Post-hoc analyses (CPU)
+  posthoc:
+    time: "06:00:00"
+    cpus_per_task: 8
+    mem: "32G"
+    partition: ""
+    constraint: "cpu"

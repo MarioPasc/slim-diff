@@ -1,0 +1,330 @@
+# SLIM-Diff Camera-Ready Template — SHARED bottleneck
+#
+# This is the CANONICAL template for the ICIP 2026 camera-ready `shared`
+# architecture cells. Derived from `slurm/icip2026/lp_ablation/x0/lp_1.5/x0_lp_1.5.yaml`
+# (best ICIP run: x0 + L_p p=1.5 + self-conditioning, DDIM-300, eta=0.2, cosine).
+#
+# Divergences from the reference template, documented for reviewers:
+#   - trainer uses devices=2 strategy="ddp"  (reference had devices=1 strategy="auto")
+#   - training.max_epochs: 1000              (reference had 500; early stopping at
+#                                             patience=25 ends training long before)
+#   - model.bottleneck_mode: "shared"        (TASK-01 integration; explicit)
+#   - experiment.name / output_dir / wandb contains `fold_K` placeholder
+#   - data.cache_dir points at per-fold subdirectory (TASK-02 output layout)
+#
+# To instantiate for a specific fold K in {0, 1, 2}, replace the literal
+# string `fold_K` everywhere with `fold_{K}`. This is what the six per-cell
+# configs under `slurm/camera_ready/{shared,decoupled}_fold_{0,1,2}/` already do.
+
+
+# =============================================================================
+# Experiment Metadata
+# =============================================================================
+experiment:
+  name: "slimdiff_cr_shared_fold_K"
+  output_dir: "./outputs/camera_ready/slimdiff_cr_shared_fold_K"
+  seed: 33
+
+# =============================================================================
+# Data Configuration (DATASET-AGNOSTIC)
+# =============================================================================
+data:
+  # Per-fold cache dir produced by `slimdiff-kfold`. On Picasso this is
+  # sed-rewritten to the absolute mount path by the SLURM script.
+  cache_dir: "./data/slice_cache/folds/fold_K"
+
+  # Data loader settings (dataset-agnostic)
+  batch_size: 16
+  num_workers: 0  # Set to 0 to avoid CUDA multiprocessing issues
+  pin_memory: true
+
+  transforms:
+    target_spacing: [1.25, 1.25, 1.25]  # mm - resampled volume cropped to 160^3 via roi_size
+    roi_size: [160, 160, 160]
+    intensity_norm:
+      type: "percentile"
+      lower: 0.5
+      upper: 99.5
+      b_min: -1.0
+      b_max: 1.0
+      clip: true
+
+  slice_sampling:
+    z_range: [34, 115]
+    filter_empty_brain: true
+    brain_threshold: -0.9
+    brain_min_fraction: 0.05
+
+  lesion_oversampling:
+    enabled: true
+    mode: "balance"
+    weight: 3.0
+
+# =============================================================================
+# Conditioning Configuration
+# =============================================================================
+conditioning:
+  z_bins: 30
+
+  use_sinusoidal: true
+  max_z: 159
+
+  cfg:
+    enabled: false
+    null_token: 60
+    dropout_prob: 0.1
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+model:
+  type: "DiffusionModelUNet"
+  spatial_dims: 2
+  in_channels: 2
+  out_channels: 2
+
+  anatomical_conditioning: false
+  anatomical_conditioning_method: "concat"
+  cross_attention_dim: 256
+
+  anatomical_encoder:
+    hidden_dims: [32, 64, 128]
+    downsample_factor: 8
+    positional_encoding: "sinusoidal"
+    norm_num_groups: 8
+
+  channels: [64, 128, 256, 256]
+  attention_levels: [false, false, true, true]
+  num_res_blocks: 2
+  num_head_channels: 32
+
+  norm_name: "GROUP"
+  norm_num_groups: 32
+
+  use_class_embedding: true
+  dropout: 0.0
+  resblock_updown: false
+  with_conditioning: false
+
+  # --- ICIP 2026 camera-ready: bottleneck ablation (TASK-01) ---------------
+  # bottleneck_mode is the ONLY field that differs between shared and
+  # decoupled cells. The `decoupled_bottleneck` subtree is carried by both
+  # templates so the two configs are structurally identical after popping
+  # `bottleneck_mode` (acceptance Test 3). When bottleneck_mode="shared",
+  # the factory ignores `decoupled_bottleneck` entirely.
+  bottleneck_mode: "shared"
+  decoupled_bottleneck:
+    channels_per_path: null       # null => channels[-1] // 2 = 128
+    extra_resnet_blocks: 2        # TASK-01: yields Δ=+0.503% vs shared (27.03M vs 26.89M)
+
+# =============================================================================
+# Diffusion Scheduler Configuration
+# =============================================================================
+scheduler:
+  type: "DDPM"
+  num_train_timesteps: 1000
+
+  schedule: "cosine"
+
+  beta_start: 0.0015
+  beta_end: 0.0195
+  sig_range: 6.0
+
+  prediction_type: "sample"       # x0-prediction (MONAI calls x0 "sample")
+  clip_sample: true
+  clip_sample_range: 1.0
+
+# =============================================================================
+# Sampler Configuration (for generation/visualization)
+# =============================================================================
+sampler:
+  type: "DDIM"
+  num_inference_steps: 300
+  eta: 0.2
+
+  guidance_scale: 1.0
+
+# =============================================================================
+# Training Configuration
+# =============================================================================
+training:
+  batch_size: 16
+  num_workers: 0
+  pin_memory: true
+
+  accelerator: "gpu"
+  devices: 2                      # Camera-ready: both requested GPUs (was 1 in ablation)
+  strategy: "ddp"                 # Camera-ready: real DDP (was "auto" in ablation)
+
+  self_conditioning:
+    enabled: true
+    probability: 0.5
+
+  optimizer:
+    type: "AdamW"
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+
+  lr_scheduler:
+    type: "CosineAnnealingLR"
+    T_max: null                   # Defaults to max_epochs if null
+    eta_min: 1.0e-6
+
+  max_epochs: 1000                # Early stopping at patience=25 ends training well before this
+  max_steps: null
+
+  precision: "16-mixed"
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: "norm"
+  accumulate_grad_batches: 1
+
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+
+  early_stopping:
+    enabled: true
+    monitor: "val/loss"
+    patience: 25
+    mode: "min"
+
+  ema:
+    enabled: true
+    decay: 0.999
+    update_every: 1
+    update_start_step: 0
+    store_on_cpu: true
+    use_buffers: true
+    use_for_validation: true
+    export_to_checkpoint: true
+
+# =============================================================================
+# Loss Configuration — x0 + Lp (p=1.5), no FFL, no uncertainty weighting
+# =============================================================================
+loss:
+  mode: "mse_lp_norm"
+
+  lp_norm:
+    p: 1.5
+
+  uncertainty_weighting:
+    enabled: false
+    initial_log_vars: [0.0, 0.0]
+    learnable: true
+    clamp_range: [-5.0, 5.0]
+
+  group_uncertainty_weighting:
+    enabled: false
+    initial_log_vars: [0.0, 0.5]
+    learnable: true
+    clamp_range: [-5.0, 5.0]
+    intra_group_weights: [1.0, 1.0, 1.0]
+
+  ffl:
+    enabled: false
+    loss_weight: 1.0
+    alpha: 1.35
+    patch_factor: 2
+    ave_spectrum: false
+    log_matrix: true
+    batch_matrix: false
+
+  lesion_weighted_image:
+    enabled: true
+    lesion_weight: 1.0
+    background_weight: 1.0
+
+  lesion_weighted_mask:
+    enabled: true
+    lesion_weight: 1.0
+    background_weight: 1.0
+
+# =============================================================================
+# Postprocessing Configuration
+# =============================================================================
+postprocessing:
+  zbin_priors:
+    enabled: false
+    priors_filename: "zbin_priors_brain_roi.npz"
+    prob_threshold: 0.20
+    dilate_radius_px: 1
+    gaussian_sigma_px: 0.7
+    min_component_px: 500
+    n_first_bins: 5
+    max_components_for_first_bins: 3
+    relaxed_threshold_factor: 0.1
+    fallback: "prior"
+    apply_to: ["validation", "visualization", "generation"]
+    background_value: -1.0
+    use_prior_directly: true
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  log_every_n_steps: 50
+
+  logger:
+    type: "wandb"
+    wandb:
+      project: "jsddpm-epilepsy"
+      entity: "mario-pg02-icai-org"
+      name: "slimdiff_cr_shared_fold_K"
+      tags: ["epilepsy", "diffusion", "jsddpm", "icip2026", "camera_ready", "shared", "fold_K"]
+      notes: "ICIP 2026 camera-ready: shared bottleneck, fold K"
+      offline: true
+
+  checkpointing:
+    save_top_k: 1
+    monitor: "val/loss"
+    mode: "min"
+    save_last: false
+    every_n_epochs: 1
+    filename: "jsddpm-{epoch:04d}-{val_loss:.4f}"
+
+  callbacks:
+    gradient_norm:
+      enabled: true
+      log_every_n_steps: 100
+
+    snr:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+
+    prediction_quality:
+      enabled: true
+      log_every_n_epochs: 5
+      n_samples: 100
+      timestep_bins: 10
+
+# =============================================================================
+# Visualization Configuration
+# =============================================================================
+visualization:
+  enabled: true
+  every_n_epochs: 1
+
+  z_bins_to_show: null
+  n_samples_per_condition: 1
+
+  overlay:
+    enabled: true
+    alpha: 0.5
+    color: [255, 0, 0]
+    threshold: 0.3
+
+  save_png: true
+  save_npz: false
+
+# =============================================================================
+# Generation Configuration (for runners/generate.py)
+# =============================================================================
+generation:
+  n_per_condition: 100
+  z_bins: null
+  classes: [0, 1]
+  output_format: "npz"
+  save_individual: true
+  create_index_csv: true
