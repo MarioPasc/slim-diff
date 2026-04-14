@@ -25,6 +25,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+#SBATCH --constraint=cpu
 #SBATCH --output=%x.%j.out
 #SBATCH --error=%x.%j.err
 
@@ -36,12 +37,30 @@ echo "Job started at: $(date)"
 # =============================================================================
 # LOAD PATHS FROM YAML
 # =============================================================================
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PATHS_YAML="${PATHS_YAML:-${SCRIPT_DIR}/picasso_paths.yaml}"
-LOADER="${SCRIPT_DIR}/_load_paths.py"
+# Under sbatch, $0 points into /var/spool/slurmd/, not the repo. Resolution
+# order:
+#   1) $PATHS_YAML (explicit override)
+#   2) $SLURM_SUBMIT_DIR/slurm/camera_ready/picasso_paths.yaml
+#      (recommended: `sbatch slurm/camera_ready/<script>.sh` from repo root)
+#   3) $(dirname "$0")/picasso_paths.yaml (direct invocation `bash …`)
+if [ -z "${PATHS_YAML:-}" ]; then
+    if [ -n "${SLURM_SUBMIT_DIR:-}" ] \
+        && [ -f "${SLURM_SUBMIT_DIR}/slurm/camera_ready/picasso_paths.yaml" ]; then
+        PATHS_YAML="${SLURM_SUBMIT_DIR}/slurm/camera_ready/picasso_paths.yaml"
+    else
+        PATHS_YAML="$(cd "$(dirname "$0")" && pwd)/picasso_paths.yaml"
+    fi
+fi
+LOADER="$(dirname "${PATHS_YAML}")/_load_paths.py"
 
 if [ ! -f "${PATHS_YAML}" ]; then
     echo "ERROR: ${PATHS_YAML} not found." >&2
+    echo "Hint: sbatch from the repo root (sbatch slurm/camera_ready/<script>.sh)" >&2
+    echo "      or export PATHS_YAML=/abs/path/to/picasso_paths.yaml before sbatch." >&2
+    exit 1
+fi
+if [ ! -f "${LOADER}" ]; then
+    echo "ERROR: ${LOADER} not found." >&2
     exit 1
 fi
 
