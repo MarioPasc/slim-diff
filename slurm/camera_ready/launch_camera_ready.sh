@@ -63,10 +63,12 @@ echo ""
 
 SBATCH_EXPORT="ALL,REPO_SRC=${REPO_SRC},DATA_SRC=${DATA_SRC},RESULTS_ROOT=${RESULTS_ROOT},CONDA_ENV_NAME=${CONDA_ENV_NAME}"
 
+CELLS_DIR="${REPO_SRC}/slurm/camera_ready"
+
 SUBMITTED=0
 for arch in shared decoupled; do
     for fold in 0 1 2; do
-        JOB_DIR="${SCRIPT_DIR}/${arch}_fold_${fold}"
+        JOB_DIR="${CELLS_DIR}/${arch}_fold_${fold}"
         JOB_SCRIPT="${JOB_DIR}/train_generate.sh"
         CONFIG_FILE="${JOB_DIR}/config.yaml"
 
