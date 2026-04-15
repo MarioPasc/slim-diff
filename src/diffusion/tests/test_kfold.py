@@ -350,6 +350,41 @@ def test_no_slice_appears_twice(mock_cache):
         )
 
 
+def test_filepath_resolves_from_fold_dir(mock_cache):
+    """`cache_dir / row["filepath"]` from the dataset must hit the same
+    on-disk NPZ as the source CSV, even though the fold CSV lives two levels
+    deeper. The fixture NPZs don't actually exist; we only check that the
+    resolved absolute path normalises back to ``{source_cache}/<original>``.
+    """
+    cache_dir, _ = mock_cache
+    manager = KFoldManager(cache_dir, n_folds=3, seed=42)
+    manager.write_fold_csvs()
+
+    source_filepaths: set[str] = set()
+    for split in ("train", "val", "test"):
+        for row in _load_csv_rows(cache_dir / f"{split}.csv"):
+            source_filepaths.add(row["filepath"])
+
+    for fold_id in range(3):
+        fold_dir = cache_dir / "folds" / f"fold_{fold_id}"
+        for split in ("train", "val", "test"):
+            for row in _load_csv_rows(fold_dir / f"{split}.csv"):
+                fp = row["filepath"]
+                # Simulates `SlicesCSVDataset`'s `cache_dir / row["filepath"]`.
+                resolved = (fold_dir / fp).resolve()
+                expected_prefix = (cache_dir).resolve()
+                assert str(resolved).startswith(str(expected_prefix) + "/"), (
+                    f"Fold {fold_id}/{split}: {fp} resolved to {resolved}, "
+                    f"outside source cache {expected_prefix}"
+                )
+                # Path must equal cache_dir / <one of the source rel paths>.
+                rel_to_source = resolved.relative_to(expected_prefix).as_posix()
+                assert rel_to_source in source_filepaths, (
+                    f"Fold {fold_id}/{split}: resolved path {rel_to_source} "
+                    f"not in source CSV filepaths."
+                )
+
+
 def test_single_class_pool_falls_back_to_kfold(tmp_path: Path, caplog):
     """When every pool patient has the same has_lesion label (e.g. the FCD
     epilepsy cohort where all 78 patients have a lesion), StratifiedKFold is

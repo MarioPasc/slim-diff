@@ -336,14 +336,28 @@ class KFoldManager:
             val_set = set(fold.val_subjects)
             test_set = set(fold.test_subjects)
 
+            # `filepath` in source CSVs is stored relative to the source
+            # cache_dir. Per-fold CSVs live one or more levels deeper (default
+            # `{cache_dir}/folds/fold_N/`), and `SlicesCSVDataset` resolves
+            # rows via `self.cache_dir / row["filepath"]`. Rewrite the column
+            # as a path relative to the fold dir so the join still lands on
+            # the real NPZ. Absolute filepaths are preserved verbatim.
+            rel_prefix = os.path.relpath(self.cache_dir, fold_dir)
+
             # Partition rows; rewrite the "split" column so downstream
-            # consumers reading row["split"] see a consistent value.
+            # consumers reading row["split"] see a consistent value, and
+            # rebase "filepath" onto the fold dir.
             per_split: dict[str, list[dict[str, str]]] = {
                 "train": [], "val": [], "test": [],
             }
             for row in rows:
                 sid = row["subject_id"]
                 new_row = dict(row)
+                fp = new_row.get("filepath", "")
+                if fp and not os.path.isabs(fp):
+                    new_row["filepath"] = os.path.normpath(
+                        os.path.join(rel_prefix, fp)
+                    )
                 if sid in train_set:
                     new_row["split"] = "train"
                     per_split["train"].append(new_row)
