@@ -243,11 +243,16 @@ def _load_replicas(
         zbin_parts.append(np.asarray(data["zbin"], dtype=np.int32))
         domain_parts.append(np.asarray(data["domain"], dtype=np.int32))
 
+    n_loaded = len(files)
     synth_images = np.concatenate(images_parts, axis=0)
+    del images_parts
     synth_masks = np.concatenate(masks_parts, axis=0)
+    del masks_parts
     synth_zbins = np.concatenate(zbin_parts, axis=0)
+    del zbin_parts
     synth_domains = np.concatenate(domain_parts, axis=0)
-    return synth_images, synth_masks, synth_zbins, synth_domains, len(files)
+    del domain_parts
+    return synth_images, synth_masks, synth_zbins, synth_domains, n_loaded
 
 
 # ------------------------------------------------------------------------ public

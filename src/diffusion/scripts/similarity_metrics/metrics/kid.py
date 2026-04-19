@@ -50,12 +50,15 @@ def preprocess_for_inception(
         Tensor: (N, 3, 299, 299) tensor. uint8 in [0, 255] if output_uint8=True,
                 otherwise float32 in [0, 1].
     """
+    # Ensure float32 before arithmetic (callers may pass float16)
+    images = np.asarray(images, dtype=np.float32)
+
     # Denormalize [-1, 1] -> [0, 1]
     images = (images + 1.0) / 2.0
     images = np.clip(images, 0.0, 1.0)
 
     # Convert to torch tensor
-    images = torch.from_numpy(images).float()  # (N, H, W)
+    images = torch.from_numpy(images)  # (N, H, W) already float32
 
     # Add channel dimension and replicate 3x
     images = images.unsqueeze(1)  # (N, 1, H, W)
@@ -218,9 +221,13 @@ class KIDComputer:
     ) -> MetricResult:
         """Compute KID between real and synthetic images.
 
+        Preprocessing (channel replication + resize to 299×299) is done
+        per-batch inside ``_update_metric_batched`` to avoid materialising
+        the full ``(N, 3, 299, 299)`` tensor in RAM.
+
         Args:
-            real_images: (N, H, W) float32 array in [-1, 1].
-            synth_images: (N, H, W) float32 array in [-1, 1].
+            real_images: (N, H, W) float array in [-1, 1] (float16 or float32).
+            synth_images: (N, H, W) float array in [-1, 1] (float16 or float32).
             show_progress: Whether to show progress bar.
 
         Returns:
@@ -236,10 +243,6 @@ class KIDComputer:
             subset_size = max(min_samples // 2, 10)
             print(f"Warning: Reducing subset_size to {subset_size}")
 
-        # Preprocess images
-        real_prep = preprocess_for_inception(real_images)
-        synth_prep = preprocess_for_inception(synth_images)
-
         # Initialize KID metric
         kid_metric = KernelInceptionDistance(
             feature=2048,
@@ -249,12 +252,12 @@ class KIDComputer:
             normalize=True,
         )
 
-        # Extract features and update metric
+        # Preprocess + extract features per batch (avoids full-array copy)
         self._update_metric_batched(
-            kid_metric, real_prep, is_real=True, show_progress=show_progress
+            kid_metric, real_images, is_real=True, show_progress=show_progress
         )
         self._update_metric_batched(
-            kid_metric, synth_prep, is_real=False, show_progress=show_progress
+            kid_metric, synth_images, is_real=False, show_progress=show_progress
         )
 
         # Compute KID
@@ -278,19 +281,22 @@ class KIDComputer:
     def _update_metric_batched(
         self,
         kid_metric: KernelInceptionDistance,
-        images: torch.Tensor,
+        images: np.ndarray,
         is_real: bool,
         show_progress: bool = True,
     ) -> None:
-        """Update KID metric with batched feature extraction.
+        """Update KID metric with per-batch preprocessing and feature extraction.
+
+        Preprocessing (denorm → 3-channel → resize 299 → uint8) happens
+        per-batch so the full ``(N, 3, 299, 299)`` tensor never exists.
 
         Args:
             kid_metric: TorchMetrics KID instance.
-            images: (N, 3, 299, 299) preprocessed images.
+            images: (N, H, W) numpy array in [-1, 1] (float16 or float32).
             is_real: True for real images, False for synthetic.
             show_progress: Whether to show progress bar.
         """
-        N = images.shape[0]
+        N = len(images)
         kid_metric = kid_metric.to(self.device)
 
         iterator = range(0, N, self.batch_size)
@@ -299,8 +305,9 @@ class KIDComputer:
             iterator = tqdm(iterator, desc=desc, leave=False)
 
         for i in iterator:
-            batch = images[i : i + self.batch_size].to(self.device)
-            kid_metric.update(batch, real=is_real)
+            batch = preprocess_for_inception(images[i : i + self.batch_size])
+            kid_metric.update(batch.to(self.device), real=is_real)
+            del batch
 
         kid_metric.cpu()
         torch.cuda.empty_cache()

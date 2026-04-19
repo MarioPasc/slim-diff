@@ -39,8 +39,11 @@ def preprocess_for_lpips(
     Returns:
         Tensor: (N, 3, H, W) float32 tensor in [-1, 1].
     """
+    # Ensure float32 (callers may pass float16)
+    images = np.asarray(images, dtype=np.float32)
+
     # Convert to torch tensor
-    images = torch.from_numpy(images).float()  # (N, H, W)
+    images = torch.from_numpy(images)  # (N, H, W) already float32
 
     # Add channel dimension and replicate 3x
     images = images.unsqueeze(1)  # (N, 1, H, W)
@@ -116,12 +119,12 @@ class LPIPSComputer:
         """Compute LPIPS between random pairs of real and synthetic images.
 
         Samples n_pairs random (real, synth) pairs and computes mean LPIPS.
-        This gives a measure of how perceptually different synthetic images
-        are from real images.
+        Preprocessing is done per-batch on the selected pairs only, so the
+        full ``(N, 3, H, W)`` tensor is never materialised.
 
         Args:
-            real_images: (N, H, W) float32 array in [-1, 1].
-            synth_images: (M, H, W) float32 array in [-1, 1].
+            real_images: (N, H, W) float array in [-1, 1] (float16 or float32).
+            synth_images: (M, H, W) float array in [-1, 1] (float16 or float32).
             n_pairs: Number of random pairs to sample.
             seed: Random seed for reproducibility.
             show_progress: Whether to show progress bar.
@@ -141,14 +144,11 @@ class LPIPSComputer:
         real_idx = np.random.choice(n_real, n_pairs, replace=True)
         synth_idx = np.random.choice(n_synth, n_pairs, replace=True)
 
-        # Preprocess images
-        real_prep = preprocess_for_lpips(real_images)
-        synth_prep = preprocess_for_lpips(synth_images)
-
         # Get model
         model = self._get_model()
 
-        # Compute LPIPS in batches
+        # Compute LPIPS in batches — preprocess per-batch to avoid
+        # materialising the full (N, 3, H, W) tensor.
         lpips_values = []
         iterator = range(0, n_pairs, self.batch_size)
         if show_progress:
@@ -159,19 +159,22 @@ class LPIPSComputer:
                 batch_real_idx = real_idx[i : i + self.batch_size]
                 batch_synth_idx = synth_idx[i : i + self.batch_size]
 
-                batch_real = real_prep[batch_real_idx].to(self.device)
-                batch_synth = synth_prep[batch_synth_idx].to(self.device)
+                batch_real = preprocess_for_lpips(
+                    real_images[batch_real_idx]
+                ).to(self.device)
+                batch_synth = preprocess_for_lpips(
+                    synth_images[batch_synth_idx]
+                ).to(self.device)
 
-                # Compute LPIPS
                 if LPIPS_BACKEND == "lpips":
                     lpips_batch = model(batch_real, batch_synth)
                     lpips_values.extend(lpips_batch.cpu().numpy().flatten().tolist())
                 else:
-                    # torchmetrics computes mean over batch
                     lpips_batch = model(batch_real, batch_synth)
                     lpips_values.append(float(lpips_batch.cpu().item()))
 
-        # Clean up
+                del batch_real, batch_synth
+
         torch.cuda.empty_cache()
 
         # Compute statistics

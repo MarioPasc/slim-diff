@@ -168,10 +168,9 @@ def compute_cell_metrics(
 ) -> tuple[CellMetrics, dict[str, float]]:
     """Compute KID, LPIPS, and MMD-MF for one cell.
 
-    Memory strategy: float32 casts of the synthetic tensors are produced
-    on-demand per metric and released before the next metric runs. This keeps
-    peak RSS bounded by one cell's float32 image volume (~9 GB at 180 k
-    samples).
+    Memory strategy: KID and LPIPS accept raw float16 arrays and preprocess
+    per-batch internally, so the full ``(N, 3, 299, 299)`` tensor is never
+    materialised. Only MMD-MF needs a transient float32 copy of masks.
 
     Returns
     -------
@@ -196,7 +195,6 @@ def compute_cell_metrics(
     kid_mean = float("nan")
     kid_std = float("nan")
     if kid_cfg.get("enabled", True):
-        synth_f32 = data.synth_images_f32()
         kid_computer = KIDComputer(
             subset_size=int(kid_cfg.get("subset_size", 1000)),
             num_subsets=int(kid_cfg.get("num_subsets", 100)),
@@ -205,18 +203,17 @@ def compute_cell_metrics(
             batch_size=batch_size,
         )
         kid_result = kid_computer.compute(
-            data.real_images, synth_f32, show_progress=False,
+            data.real_images, data.synth_images, show_progress=False,
         )
         kid_mean = float(kid_result.value)
         kid_std = float(kid_result.std) if kid_result.std is not None else float("nan")
-        del synth_f32, kid_computer, kid_result
+        del kid_computer, kid_result
         _release_gpu_memory(device)
 
     # -------- LPIPS ----------------------------------------------------------
     lpips_mean = float("nan")
     lpips_std = float("nan")
     if lpips_cfg.get("enabled", True):
-        synth_f32 = data.synth_images_f32()
         lpips_computer = LPIPSComputer(
             net=str(lpips_cfg.get("net", "vgg")),
             device=device,
@@ -224,14 +221,14 @@ def compute_cell_metrics(
         )
         lpips_result = lpips_computer.compute_pairwise(
             data.real_images,
-            synth_f32,
+            data.synth_images,
             n_pairs=int(lpips_cfg.get("n_pairs", 1000)),
             seed=seed,
             show_progress=False,
         )
         lpips_mean = float(lpips_result.value)
         lpips_std = float(lpips_result.std) if lpips_result.std is not None else float("nan")
-        del synth_f32, lpips_computer, lpips_result
+        del lpips_computer, lpips_result
         _release_gpu_memory(device)
 
     # -------- MMD-MF + per-feature Wasserstein -------------------------------
