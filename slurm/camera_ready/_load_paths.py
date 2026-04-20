@@ -11,7 +11,7 @@ strings are emitted verbatim (the shell treats them as unset-but-present).
 Keys emitted (stable contract for downstream scripts):
 
 - Paths: ``REPO_SRC``, ``DATA_SRC``, ``RESULTS_ROOT``, ``CACHE_DIR``,
-  ``EVAL_OUTPUT_DIR``, ``POSTHOC_OUTPUT_DIR``
+  ``EVAL_OUTPUT_DIR``, ``POSTHOC_OUTPUT_DIR``, ``TORCH_HOME``
 - Env  : ``CONDA_ENV_NAME``
 - Cache: ``CACHE_CONFIG_TEMPLATE``
 - Kfold: ``KFOLD_N_FOLDS``, ``KFOLD_SEED``
@@ -68,6 +68,9 @@ def main(yaml_path: str) -> int:
     _emit("CACHE_DIR", cache_dir)
     _emit("EVAL_OUTPUT_DIR", eval_output_dir)
     _emit("POSTHOC_OUTPUT_DIR", posthoc_output_dir)
+
+    torch_home = paths.get("torch_home") or f"{results_root}/.torch"
+    _emit("TORCH_HOME", torch_home)
 
     _emit("CONDA_ENV_NAME", env.get("conda_env", "jsddpm"))
 

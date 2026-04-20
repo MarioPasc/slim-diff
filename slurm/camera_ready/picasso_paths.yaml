@@ -11,7 +11,7 @@
 # Edit paths + knobs here, then submit jobs in order:
 #   1) sbatch build_cache_and_kfold.sh
 #   2) bash   launch_camera_ready.sh          (fans out 6 sbatch submissions)
-#   3) sbatch run_fold_eval.sh                (after all 6 generation jobs finish)
+#   3) bash   run_fold_eval.sh                (downloads weights + sbatch _fold_eval_job.sh)
 #   4) sbatch run_posthoc.sh                  (after fold-eval completes)
 # =============================================================================
 
@@ -28,6 +28,9 @@ paths:
   eval_output_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/slimdiff/results/eval_output"
   # Leave empty to derive as ${results_root}/posthoc_output
   posthoc_output_dir: "/mnt/home/users/tic_163_uma/mpascual/execs/slimdiff/results/posthoc_output"
+  # Torch hub cache for pretrained weights (VGG16 for LPIPS, InceptionV3 for KID).
+  # run_fold_eval.sh pre-downloads on the login node; _fold_eval_job.sh sets TORCH_HOME.
+  torch_home: "/mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/torch"
 
 env:
   conda_env: slimdiff
