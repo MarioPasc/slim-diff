@@ -76,15 +76,19 @@ class TauSensitivityResult:
 
 def _binarize_to_signed(
     continuous: NDArray, tau: float,
-) -> NDArray[np.float32]:
+) -> NDArray[np.int8]:
     """Binarise continuous masks at tau, returning values in ``{-1, +1}``.
 
     The ``{-1, +1}`` output convention is what
     :class:`MorphologicalFeatureExtractor` expects: it internally re-thresholds
     at ``mask > 0``, which is exact for this output regardless of input dtype.
+
+    Uses int8 to avoid materialising a full float32 copy of the mask volume
+    (1 byte vs 4 bytes per voxel).
     """
-    cont_f32 = np.asarray(continuous, dtype=np.float32)
-    return np.where(cont_f32 > float(tau), 1.0, -1.0).astype(np.float32)
+    out = np.full(continuous.shape, np.int8(-1))
+    out[continuous > tau] = np.int8(1)
+    return out
 
 
 def compute_tau_sensitivity(
@@ -122,11 +126,9 @@ def compute_tau_sensitivity(
         normalize_features=normalize_features,
     )
 
-    # Extract real features once (cached via the computer's internal id-keyed
-    # cache, but we extract explicitly here so the cache miss happens outside
-    # the tau loop).
+    # Extract real features once; data.real_masks is already float32.
     real_features = computer.extract_features(
-        np.asarray(data.real_masks, dtype=np.float32),
+        data.real_masks,
         show_progress=False,
         desc=f"real_fold{data.fold}_{data.architecture}",
     )
@@ -150,18 +152,16 @@ def compute_tau_sensitivity(
         )
         n_lesions = int(synth_features.shape[0])
 
-        # Seed for reproducible subsampling.
         np.random.seed(seed)
-        # `compute()` requires the raw masks to fill in n_real / n_synth in
-        # the returned MetricResult; pass them but override the features so
-        # re-extraction is skipped.
+        # compute() only uses masks for len() when features are pre-supplied.
         result, _, _ = computer.compute(
-            real_masks=np.asarray(data.real_masks, dtype=np.float32),
+            real_masks=data.real_masks,
             synth_masks=synth_binarised,
             show_progress=False,
             real_features=real_features,
             synth_features=synth_features,
         )
+        del synth_binarised, synth_features
 
         tau_list.append(float(tau))
         mmd_list.append(float(result.value))

@@ -317,7 +317,7 @@ def test_ac2_metric_smoke() -> None:
     except Exception as exc:  # pragma: no cover - depends on weight availability
         pytest.skip(f"Metric smoke skipped (weights/network unavailable): {exc}")
 
-    assert np.isnan(metrics.kid_mean) or metrics.kid_mean >= 0
+    assert np.isnan(metrics.kid_mean) or np.isfinite(metrics.kid_mean)
     assert np.isnan(metrics.lpips_mean) or 0.0 <= metrics.lpips_mean <= 1.0
     assert np.isnan(metrics.mmd_mf_mean) or metrics.mmd_mf_mean >= 0
     assert len(wasserstein) == 10

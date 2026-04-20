@@ -80,6 +80,6 @@ slurm:
   posthoc:
     time: "06:00:00"
     cpus_per_task: 8
-    mem: "32G"
+    mem: "48G"
     partition: ""
     constraint: "cpu"
