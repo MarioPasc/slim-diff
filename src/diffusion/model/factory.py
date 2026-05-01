@@ -131,6 +131,12 @@ def build_model(
     cond_cfg = cfg.conditioning
     z_bins = cond_cfg.z_bins
 
+    # 0. IndependentTwinDDPM early dispatch (zero-coupling baseline)
+    model_type = str(model_cfg.get("type", "DiffusionModelUNet"))
+    if model_type == "IndependentTwinDDPM":
+        from src.diffusion.model.independent_twin import build_independent_twin
+        return build_independent_twin(cfg), None
+
     # 1. Check for Anatomical Conditioning Toggle and Method
     # Default to False if not present to ensure backward compatibility
     use_anatomical_conditioning = model_cfg.get("anatomical_conditioning", False)

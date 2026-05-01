@@ -227,12 +227,16 @@ def load_model_with_ema(
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # Load Lightning module (weights_only=False needed for OmegaConf in checkpoint)
-    lit_module = JSDDPMLightningModule.load_from_checkpoint(
-        str(checkpoint_path),
-        cfg=cfg,
-        map_location=device,
-        weights_only=False,
-    )
+    model_type = cfg.model.get("type", "DiffusionModelUNet")
+    if model_type == "IndependentTwinDDPM":
+        from src.diffusion.training.lit_modules_twin import IndependentTwinLightningModule
+        lit_module = IndependentTwinLightningModule.load_from_checkpoint(
+            str(checkpoint_path), cfg=cfg, map_location=device, weights_only=False,
+        )
+    else:
+        lit_module = JSDDPMLightningModule.load_from_checkpoint(
+            str(checkpoint_path), cfg=cfg, map_location=device, weights_only=False,
+        )
     lit_module.eval()
     lit_module.to(device)
 

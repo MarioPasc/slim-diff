@@ -399,7 +399,12 @@ def train(cfg: DictConfig) -> None:
 
     # Create model
     logger.info("Creating model...")
-    model = JSDDPMLightningModule(cfg)
+    model_type = cfg.model.get("type", "DiffusionModelUNet")
+    if model_type == "IndependentTwinDDPM":
+        from src.diffusion.training.lit_modules_twin import IndependentTwinLightningModule
+        model = IndependentTwinLightningModule(cfg)
+    else:
+        model = JSDDPMLightningModule(cfg)
 
     # Create callbacks and logger
     callbacks = build_callbacks(cfg)
