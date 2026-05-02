@@ -67,6 +67,14 @@ class IndependentTwinLightningModule(pl.LightningModule):
         self.cfg_dropout = cfg.conditioning.cfg.dropout_prob
         self.null_token = get_null_token(cfg.conditioning.z_bins)
 
+        # Callback compatibility: attributes expected by DiagnosticsCallback,
+        # PredictionQualityCallback, VisualizationCallback, etc.
+        self._use_self_conditioning = False
+        self._use_anatomical_conditioning = False
+        self._anatomical_method = "concat"
+        self._anatomical_encoder = None
+        self._zbin_priors = None
+
         # Cache scheduler buffers
         self._register_scheduler_buffers()
 
