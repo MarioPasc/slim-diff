@@ -608,7 +608,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--architecture",
         type=str,
         default=None,
-        choices=["shared", "decoupled"],
+        choices=["shared", "decoupled", "zero_coupling"],
         help="Single-cell architecture.",
     )
     parser.add_argument("--max-replicas", type=int, default=None)

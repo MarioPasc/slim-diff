@@ -319,9 +319,10 @@ def load_fold_eval_data(
     cache_dir = Path(cache_dir)
     results_root = Path(results_root)
 
-    if architecture not in ("shared", "decoupled"):
+    if architecture not in ("shared", "decoupled", "zero_coupling"):
         raise ValueError(
-            f"architecture must be 'shared' or 'decoupled', got {architecture!r}"
+            "architecture must be 'shared', 'decoupled', or 'zero_coupling', "
+            f"got {architecture!r}"
         )
 
     meta_path = cache_dir / "folds" / "folds_meta.json"

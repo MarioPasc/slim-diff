@@ -34,6 +34,16 @@ METRIC_DECIMALS: dict[str, int] = {
 ARCH_LABELS: dict[str, str] = {
     "shared": "Shared (ours)",
     "decoupled": "Decoupled",
+    "zero_coupling": "Zero-coupling",
+}
+
+# Filename slug for tau-sensitivity tables. ``zero_coupling`` is emitted as
+# ``zerocoupled`` to keep the past-participle convention used by ``shared``
+# and ``decoupled``.
+_TAU_TABLE_SLUG: dict[str, str] = {
+    "shared": "shared",
+    "decoupled": "decoupled",
+    "zero_coupling": "zerocoupled",
 }
 
 
@@ -124,13 +134,19 @@ def generate_ablation_table(
             )
         return " & ".join(cells) + r" \\"
 
-    present = [a for a in ("decoupled", "shared") if a in summary.index]
+    present = [a for a in ("decoupled", "zero_coupling", "shared") if a in summary.index]
     body_rows = "\n".join(row(a) for a in present)
 
+    if "zero_coupling" in present:
+        caption_arches = (
+            r"Shared vs.\ decoupled vs.\ zero-coupling bottleneck"
+        )
+    else:
+        caption_arches = r"Shared vs.\ decoupled bottleneck"
     body = (
         r"\begin{table}[t]" "\n"
         r"\centering" "\n"
-        r"\caption{Shared vs.\ decoupled bottleneck ($x_0$-prediction, $L_{\gamma=1.5}$). "
+        rf"\caption{{{caption_arches} ($x_0$-prediction, $L_{{\gamma=1.5}}$). "
         r"Mean $\pm$ std across 3 stratified folds. Lower is better; best value per "
         r"column in \textbf{bold}.}" "\n"
         r"\label{tab:ablation}" "\n"
@@ -312,10 +328,11 @@ def generate_all_tables(
     written.append(main_path)
 
     if tau_csv is not None and Path(tau_csv).exists():
-        for arch in ("shared", "decoupled"):
+        for arch in ("shared", "decoupled", "zero_coupling"):
             df = pd.read_csv(tau_csv)
             if arch in df["architecture"].unique():
-                tau_path = tables_dir / f"table_tau_sensitivity_{arch}.tex"
+                slug = _TAU_TABLE_SLUG.get(arch, arch)
+                tau_path = tables_dir / f"table_tau_sensitivity_{slug}.tex"
                 generate_tau_sensitivity_table(tau_csv, tau_path, architecture=arch)
                 written.append(tau_path)
     else:

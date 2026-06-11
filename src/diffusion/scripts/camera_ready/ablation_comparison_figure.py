@@ -254,9 +254,20 @@ def render_ablation_grid(
     overlay_color: tuple[int, int, int] = (255, 0, 0),
     tau: float = 0.0,
     dpi: int = 300,
+    zero_coupling_sel: SelectedSamples | None = None,
 ) -> plt.Figure:
+    synth_blocks: list[tuple[str, SelectedSamples, str, bool]] = [
+        ("Shared", shared_sel, "shared", True),
+        ("Decoupled", decoupled_sel, "decoupled", True),
+    ]
+    if zero_coupling_sel is not None:
+        synth_blocks.append(
+            ("Zero-coupling", zero_coupling_sel, "zero_coupling", True)
+        )
+    blocks = (*synth_blocks, ("Real", real_sel, None, False))
+
     n_cols = len(zbins)
-    n_rows = 3  # shared, decoupled, real
+    n_rows = len(blocks)
     cell_w = fig_width / (n_cols + 0.25)
     # Leave headroom for the KID annotations on top of each synthetic cell.
     fig_h = min(n_rows * cell_w * 1.15 + 0.5, 9.0)
@@ -294,12 +305,6 @@ def render_ablation_grid(
     def _find(sel: SelectedSamples, zb: int) -> int | None:
         hits = np.where(sel.zbins == zb)[0]
         return int(hits[0]) if hits.size else None
-
-    blocks = (
-        ("Shared", shared_sel, "shared", True),
-        ("Decoupled", decoupled_sel, "decoupled", True),
-        ("Real", real_sel, None, False),
-    )
 
     for ri, (row_label, sel, arch_key, annotate) in enumerate(blocks):
         # Row label column.
@@ -408,6 +413,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--dpi", type=int, default=300)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--max-replicas", type=int, default=None)
+    p.add_argument(
+        "--include-zero-coupling",
+        action="store_true",
+        help="Render a 4th row for the zero-coupling architecture.",
+    )
     p.add_argument("--verbose", action="store_true")
     return p.parse_args()
 
@@ -430,6 +440,15 @@ def main(argv: list[str] | None = None) -> Path:
     shared_reps = load_replicas_concat(shared_dir, max_replicas=args.max_replicas)
     decoupled_reps = load_replicas_concat(decoupled_dir, max_replicas=args.max_replicas)
 
+    zero_coupling_reps = None
+    if args.include_zero_coupling:
+        zero_coupling_dir = resolve_cell_dir(
+            args.results_root, "zero_coupling", args.fold
+        )
+        zero_coupling_reps = load_replicas_concat(
+            zero_coupling_dir, max_replicas=args.max_replicas
+        )
+
     # Reference pool drawn from epilepsy-condition real slices on the fold.
     ref_block = load_real_samples(
         cache_dir=args.cache_dir,
@@ -447,6 +466,16 @@ def main(argv: list[str] | None = None) -> Path:
     decoupled_sel, decoupled_notes = _select_per_zbin(
         decoupled_reps, reference, args.zbins, args.condition, args.tau
     )
+    zero_coupling_sel = None
+    zero_coupling_notes: list[str] | None = None
+    if zero_coupling_reps is not None:
+        zero_coupling_sel, zero_coupling_notes = _select_per_zbin(
+            zero_coupling_reps,
+            reference,
+            args.zbins,
+            args.condition,
+            args.tau,
+        )
     real_sel, real_notes = _select_real_per_zbin(
         cache_dir=args.cache_dir,
         fold=args.fold,
@@ -468,28 +497,35 @@ def main(argv: list[str] | None = None) -> Path:
         overlay_color=tuple(args.overlay_color),
         tau=args.tau,
         dpi=args.dpi,
+        zero_coupling_sel=zero_coupling_sel,
     )
 
-    dump_selection_sidecar(
-        output_path,
-        {
-            "figure": "ablation_comparison_v2",
-            "layout": "rows=(shared,decoupled,real); cols=zbins",
-            "seed": args.seed,
-            "fold": args.fold,
-            "zbins": list(args.zbins),
-            "condition": args.condition,
-            "kid_summary_csv": str(args.kid_summary_csv) if args.kid_summary_csv else None,
-            "shared": selected_to_dict(shared_sel),
-            "decoupled": selected_to_dict(decoupled_sel),
-            "real": selected_to_dict(real_sel),
-            "notes": {
-                "shared": shared_notes,
-                "decoupled": decoupled_notes,
-                "real": real_notes,
-            },
-        },
+    layout = (
+        "rows=(shared,decoupled,zero_coupling,real); cols=zbins"
+        if zero_coupling_sel is not None
+        else "rows=(shared,decoupled,real); cols=zbins"
     )
+    sidecar: dict = {
+        "figure": "ablation_comparison_v2",
+        "layout": layout,
+        "seed": args.seed,
+        "fold": args.fold,
+        "zbins": list(args.zbins),
+        "condition": args.condition,
+        "kid_summary_csv": str(args.kid_summary_csv) if args.kid_summary_csv else None,
+        "shared": selected_to_dict(shared_sel),
+        "decoupled": selected_to_dict(decoupled_sel),
+        "real": selected_to_dict(real_sel),
+        "notes": {
+            "shared": shared_notes,
+            "decoupled": decoupled_notes,
+            "real": real_notes,
+        },
+    }
+    if zero_coupling_sel is not None:
+        sidecar["zero_coupling"] = selected_to_dict(zero_coupling_sel)
+        sidecar["notes"]["zero_coupling"] = zero_coupling_notes
+    dump_selection_sidecar(output_path, sidecar)
     plt.close("all")
     return output_path
 
