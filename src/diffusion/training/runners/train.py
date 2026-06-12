@@ -403,6 +403,11 @@ def train(cfg: DictConfig) -> None:
     if model_type == "IndependentTwinDDPM":
         from src.diffusion.training.lit_modules_twin import IndependentTwinLightningModule
         model = IndependentTwinLightningModule(cfg)
+    elif model_type == "BottleneckSharedTwinDDPM":
+        from src.diffusion.training.lit_modules_bottleneck_shared import (
+            BottleneckSharedTwinLightningModule,
+        )
+        model = BottleneckSharedTwinLightningModule(cfg)
     else:
         model = JSDDPMLightningModule(cfg)
 

@@ -131,11 +131,18 @@ def build_model(
     cond_cfg = cfg.conditioning
     z_bins = cond_cfg.z_bins
 
-    # 0. IndependentTwinDDPM early dispatch (zero-coupling baseline)
+    # 0. Twin-style early dispatch (zero-coupling and bottleneck-only baselines).
+    #    Both architectures build their own UNets (in=1/out=1) and never go
+    #    through the joint DiffusionModelUNet path below.
     model_type = str(model_cfg.get("type", "DiffusionModelUNet"))
     if model_type == "IndependentTwinDDPM":
         from src.diffusion.model.independent_twin import build_independent_twin
         return build_independent_twin(cfg), None
+    if model_type == "BottleneckSharedTwinDDPM":
+        from src.diffusion.model.bottleneck_shared_twin import (
+            build_bottleneck_shared_twin,
+        )
+        return build_bottleneck_shared_twin(cfg), None
 
     # 1. Check for Anatomical Conditioning Toggle and Method
     # Default to False if not present to ensure backward compatibility

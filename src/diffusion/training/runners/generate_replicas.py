@@ -233,6 +233,13 @@ def load_model_with_ema(
         lit_module = IndependentTwinLightningModule.load_from_checkpoint(
             str(checkpoint_path), cfg=cfg, map_location=device, weights_only=False,
         )
+    elif model_type == "BottleneckSharedTwinDDPM":
+        from src.diffusion.training.lit_modules_bottleneck_shared import (
+            BottleneckSharedTwinLightningModule,
+        )
+        lit_module = BottleneckSharedTwinLightningModule.load_from_checkpoint(
+            str(checkpoint_path), cfg=cfg, map_location=device, weights_only=False,
+        )
     else:
         lit_module = JSDDPMLightningModule.load_from_checkpoint(
             str(checkpoint_path), cfg=cfg, map_location=device, weights_only=False,
